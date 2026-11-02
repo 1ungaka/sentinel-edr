@@ -109,10 +109,14 @@ Details and caveats in [docs/evaluation.md](docs/evaluation.md).
 
 ## Project
 
-This repository is the **engine**: detection content, scanning library,
-evaluation harness and, next, an MCP server, under MIT. Fleet state,
-response and the resident sensor are inherently stateful and belong to a
-separate control plane; the split is by persona, not by withholding features.
+This repository is the **engine and agent**: detection content, scanning
+library, MCP server, evaluation harness, and all on-host prevention/response
+(quarantine, restore, block, kill, canaries), under MIT. **Detection and
+prevention are free and unmetered, forever.** The only paid artifact is a
+separate control plane whose job is *managing a fleet of these free agents* from
+one pane — central policy, cross-host timelines, multi-tenancy — inherently
+stateful server-side work that adds no detect-or-prevent capability a single
+free agent lacks. The paywall is multi-agent management, not withheld features.
 The roadmap, the reasoning and the measurements behind each phase are in
 [PLAN.md](PLAN.md).
 

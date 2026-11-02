@@ -18,18 +18,24 @@ fixtures. The rules, in priority order:
 
 ## Product shape
 
-Two artifacts, two audiences, two licenses.
+Two artifacts, two audiences, one paid line — and that line is **multi-agent
+management only**. All detection and all prevention are free.
 
-| | `cau` (this repo) | `cau-console` (proprietary) |
+| | `cau` (this repo — engine **and** agent) | `cau-console` (proprietary) |
 |---|---|---|
-| License | MIT | Commercial, per protected host |
-| What it is | The **engine**: detection content, scanning library, MCP server, evaluation harness | The **control plane**: fleet management, policy, detection lifecycle, response, model registry, dashboard |
-| Persona | Analyst / developer / CI | Operator / SOC / platform team |
-| Deploy | Anywhere, air-gapped | Fleet of agents + web console |
+| License | MIT, free, unmetered | Commercial |
+| What it is | Everything that **finds and stops** threats on a host: all detection content and scanning, the MCP server, the evaluation harness, **and all prevention/response on the host** (quarantine, restore, block, kill, canaries) | Only the **multi-agent management GUI**: the web console that runs *a fleet of the free agents* from one pane — inventory, central policy distribution, cross-host incident timelines, multi-tenancy, RBAC/SSO, cross-tenant pivoting |
+| Persona | Analyst / developer / CI / single-host or standalone-agent operator | SOC / platform team managing many agents centrally |
+| Deploy | Anywhere, air-gapped, one host or a standalone agent — fully functional alone | A web console over a fleet of the free agents |
 
-The split is persona-based, not crippled-features-based. The OSS engine stays genuinely
-useful standalone so it gets adopted; the console is sold because fleet state, response
-authority, and governance are inherently stateful and cannot live in a scanner.
+The paywall is **management at fleet scale, nothing else**. Detection and
+prevention are free on every host, forever: a single agent detects *and*
+responds (quarantine, block, kill) with no license and no metering. The console
+is sold only because coordinating, distributing policy to, and governing *many*
+agents from one pane is inherently stateful server-side work — it adds **no
+detection or prevention capability the free agent lacks**. Nothing a lone agent
+can do is ever moved behind the paywall; the paid surface is structurally the
+multi-agent pane, not a crippled feature of the agent.
 
 ---
 
@@ -520,8 +526,9 @@ evaluation record are excluded from shortlists regardless of quality, and this p
 boldness only counts if it is externally checked.
 
 **4. Published pricing + public TCO calculator.**
-Per-sensor list price, volume tiers, and the agent matrix (sensors metered, analysis
-agents unmetered — already decided in pricing mechanics) as a public page sourced from a
+Managed-agent console tiers and volume pricing (detection and prevention are free and
+unmetered; only the multi-agent management console is licensed — already decided in
+pricing mechanics) as a public page sourced from a
 checked-in `pricing.toml`. Falcon's pricing is opaque per-host licensing and procurement
 teams compare against list prices. Give them a downloadable TCO model with the honest
 assumption rows.
@@ -705,8 +712,9 @@ is part of the deliverable.
   parser-fuzzing gate).
 - [x] Quarantine + canary primitives in the OSS engine: quarantine DB with
   integrity-checked restore, decoy/canary files as cheap ground truth for the behavior
-  engine. The console ships full response by design; OSS analysts still need an honest
-  quarantine, and today the engine has nowhere to put found files.
+  engine. Prevention is free: full on-host response (quarantine, restore, block, kill)
+  ships in the engine/agent, not behind the paywall — the console only *manages* it
+  across many agents. Today the engine already has an honest place to put found files.
   **Shipped 2026-11-02.** `internal/quarantine` is a directory-backed vault
   (`cau quarantine add|list|restore|verify|delete`): every entry is XOR-masked at
   rest — never a runnable PE/ELF on disk, never re-flagged by a scanner pointed at the
@@ -1736,16 +1744,24 @@ hosts actually are — with honesty about what EOL means, and without laundering
 
 ---
 
-# CAU Console — paid tier
+# CAU Console — the paid multi-agent management tier
 
-**License: per protected host.** One console, four agent types.
+**The console is the only paid artifact, and it only *manages many agents*.**
+License is per managed-agent tier (or per console deployment), enforced in the
+console server alone. The agents themselves — all detection and all on-host
+prevention — are free and unmetered. One console, four agent types; the console
+coordinates and governs them, it does not add any detect-or-prevent capability
+an agent lacks on its own.
 
 ## Agent types
 
 **1. Sensor agents** — `cau-sensor`, resident. Everything stateful lives here: real-time
 and scheduled scanning, filesystem/process event subscription, memory scanning, quarantine,
 restore, process kill. *This is where Episodes 8+ (fileless, AMSI/ETW tampering, memory)
-land, because it cannot live in a stateless OSS scanner.* Metered entity.
+land, because it needs resident state the stateless CLI cannot keep.* **Free and
+unmetered (MIT):** all detection and all on-host prevention — quarantine, restore, block,
+kill — ship in the agent with no license check. The console only *manages* these agents;
+it never unlocks a response the agent cannot already perform alone.
 
 **2. Scan nodes** — `cau-scanner`, stateless container workers. Bulk scanning of repos,
 CI pipelines, artifact stores, blob storage. Central queue, work-stealing, result cache
@@ -1798,32 +1814,38 @@ become implants, and the exclusion list outlives every review that approved it.
 
 ## Licensing mechanics
 
-- Metered at the **sensor** layer, per protected host. License enforcement lives in the
-  closed-source sensor binary only — if it lives in the OSS engine it will be stripped.
-- Stable host identity, signed license files, node-locked or floating.
-- **AI/MCP agents are unmetered.** Host-based pricing would otherwise punish the exact
-  extensibility that makes the OSS engine worth adopting. Actions are bounded by host
-  count, not by agent count.
-- 1-year term with host-count tiers; air-gapped renewal path for regulated buyers.
+- **Detection and prevention are free and unmetered — there is no per-host charge.**
+  The agent (all detection plus all on-host response: quarantine, restore, block, kill,
+  canaries) is MIT and carries no license check at all. Metering a host, or gating any
+  response action, is explicitly forbidden: it would punish the exact capability that
+  makes the agent worth deploying.
+- **The only metered thing is the multi-agent management console.** License enforcement
+  lives solely in the closed-source console server — the pane that manages a fleet. If a
+  license check appears in the agent or the engine it is a bug; it will be stripped and
+  it protects nothing the free agent doesn't already give away.
+- Charging shape: the management console is licensed per deployment, or tiered by the
+  number of agents it manages, and multi-tenancy is priced per tenant — exact numbers
+  stay in `pricing.toml` (Phase 7 #4), never in prose.
+- 1-year term with managed-agent tiers; air-gapped renewal path for regulated buyers.
 
-### Paid surfaces (dashboard + multi-tenancy)
+### Paid surface (the multi-agent management GUI — and nothing else)
 
-- **The dashboard is paid by design, not crippled into it.** The web console — fleet
-  inventory, policy editor, incident timelines, detection-content lifecycle, governance
-  surfaces — runs only from the licensed console. The OSS side stays complete for its
-  persona (CLI, JSON/SARIF output, MCP tools, eval harness): single-fleet technical
-  operators pay nothing and lose nothing they were promised.
-- **Multi-tenancy is the second paid surface.** Org → group → host hierarchy, tenant
+- **The fleet management console is the one paid surface, paid by design, not crippled
+  into it.** The web GUI that runs *many agents* from one pane — fleet inventory, central
+  policy distribution, cross-host incident timelines, fleet-scale detection-content
+  lifecycle, governance surfaces — runs only from the licensed console. A single agent
+  (and the CLI, JSON/SARIF output, MCP tools, eval harness, and *all on-host prevention*)
+  stays complete and free: a lone operator pays nothing and loses nothing, including the
+  ability to block, quarantine and kill.
+- **Multi-tenancy is part of that same surface.** Org → group → host hierarchy, tenant
   isolation and quota, RBAC/SSO, and cross-tenant pivoting are console-licensed. The
-  engine itself has no tenant concept — single-fleet by design — so the paywall lives on
-  inherently stateful server-side capability, not on fake feature-caps in the engine.
-- Charging shape: sensors meter per protected host (above), the dashboard is licensed
-  per console deployment or tiered by managed host count, and multi-tenancy is priced
-  per tenant — exact numbers stay in `pricing.toml` (Phase 7 #4), never in prose.
-- Enforcement lives in the console server + sensor binaries only, mirroring the
-  licensing-leak rule. A license check must never appear in engine code, and paid
-  features must always be things the free version *structurally cannot host* — that is
-  what keeps the split honest at renewal time.
+  agent has no tenant concept — single-host by design — so the paywall lives on
+  inherently stateful, multi-agent server-side capability, not on feature-caps in the
+  agent or engine.
+- The boundary is structural: a paid feature must be something the free agent
+  *cannot host alone* — coordination across many agents — never a detection or
+  prevention capability withheld from a single host. That is what keeps the split honest
+  at renewal time.
 
 ### Free reporting — normal commercial use
 
@@ -1840,10 +1862,12 @@ become implants, and the exclusion list outlives every review that approved it.
   `/etc/cau` — matching the existing discovery order), man pages, shell completions,
   and a systemd timer unit for scheduled scans writing reports to a configurable
   directory.
-- [ ] The free/paid reporting boundary rides existing lines: anything a single run can
-  emit is free; anything that requires server-side state (fleet rollups, history,
-  cross-tenant views, compliance packs) is a console surface. Same structural rule the
-  paid-surfaces section enforces — reporting introduces no artificial cripples.
+- [ ] The free/paid reporting boundary rides the single-agent vs. multi-agent line:
+  anything a single agent can emit about its own host — per-run artifacts, its local
+  history, its own prevention/response record — is free; only *cross-agent* rollups
+  (fleet-wide views, cross-tenant pivoting) are a console surface. Same structural rule
+  the paid-surface section enforces — reporting introduces no artificial cripples, and
+  detection and prevention are never on the paid side of the line.
 
 ## Repo layout
 
@@ -2960,17 +2984,22 @@ remaining NOVEL-012 surface, each with its own FP gate:
 
 ## Risks
 
-- **Adoption vs. revenue.** OSS engine too weak → nobody adopts. Too strong → nobody pays.
-  Mitigation: the persona split above. The OSS core is complete for analyst/CI work; the
-  console is sold on fleet state and response authority, which the engine cannot offer.
-- **Licensing leak.** Per-host enforcement in an MIT-licensed binary is unenforceable.
-  Mitigation: enforcement only in the sensor binary; the engine refuses to be the license
-  boundary.
-- **AI agent licensing ambiguity.** Settle the "unmetered agents, host-bounded actions"
-  policy before building governance surfaces, not after.
-- **Feature migration.** Memory/fileless detection is the strongest differentiator and it
-  lands in the closed repo by necessity. Keep the OSS roadmap honest about what it will
-  never do rather than teasing it.
+- **Adoption vs. revenue.** Free detection+prevention too weak → nobody adopts. The paid
+  console too thin → nobody pays. Mitigation: the paid line is *multi-agent management*,
+  which is inherently stateful server-side value a single free agent structurally cannot
+  provide — not a withheld detection or prevention feature. Single-host users get a
+  complete product free (detect *and* respond); buyers pay to run and govern a fleet from
+  one pane.
+- **Licensing leak.** A license check in a free binary is unenforceable. Mitigation:
+  enforcement lives only in the closed console server (the multi-agent pane); the agent
+  and engine carry no license boundary at all — there is nothing to leak because the
+  agent gives away all detection and prevention by design.
+- **AI agent licensing ambiguity.** Agents are unmetered; only the console that manages
+  many of them is licensed. Settle this before building governance surfaces, not after.
+- **Feature migration.** Memory/fileless detection and response are strong
+  differentiators, and they ship **free in the agent** — the differentiator that earns
+  revenue is managing many agents, not the per-host capability. Keep the roadmap honest:
+  the paywall never creeps onto a single host's detect-or-prevent surface.
 - **Scope creep from gap-sweeping.** This plan has had five self-audit passes and keeps
   growing; the discipline that keeps it honest is that every added row must earn its
   phase, its owner and its Phase-1-measurable test. Mitigation: the design-debt audit

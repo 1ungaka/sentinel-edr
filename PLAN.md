@@ -71,6 +71,10 @@ detail and the open items. Everything here is measured and gated in CI
 - Response primitives: an integrity-sealed quarantine vault
   (`cau quarantine`, XOR-neutralized at rest, fail-closed restore) and
   decoy/canary files with a baseline tamper check (`cau canary`).
+- Obfuscation-chain peeler (`cau peel`, `internal/peeler`): a bounded,
+  budget-walled tree unwrap (base64/base32/hex, gzip/zlib/flate/bzip2) where
+  depth is the signal; `peel-exhausted` is a first-class outcome and a revealed
+  payload flags only at chain depth >= 2 (0/116,201 benign FP). T1027 (partial).
 - MCP server (`cau-mcp`): the engine over JSON-RPC on stdio (with an optional
   streamable-HTTP transport, `--http <addr>`) — nine tools
   (scan/explain/test-and-draft-rules/coverage), signature and coverage
@@ -95,8 +99,10 @@ follow-up worth taking: widen the expectation to track genuinely-uncovered
 techniques as new published gaps, so the counterfactual stays visible.
 
 **Not yet shipped (see phases):** intelligence feeds
-and the EU-framework bindings (Phase 4), the ML ladder (Phase 5), the full
-layer-peeler and the NOVEL-012 follow-ups (Phase 10 / Phase 12), firmware and
+and the EU-framework bindings (Phase 4), the ML ladder (Phase 5), the
+layer-peeler's follow-ons (the entropy/structural estimator, emulation fallback
+and scan-path wiring — the bounded tree core shipped 2026-11-02) and the other
+NOVEL-012 items (Phase 10 / Phase 12), firmware and
 the broader format/plane sweeps (Phases 8-9), and the entire console/sensor
 control plane (proprietary).
 
@@ -755,20 +761,37 @@ catch and how to catch it, not how to build it. This Phase 4-connected work maps
   the honest path for detection-first research to be upstreamed. Started: stego findings
   and fusion evidence carry `novel` (NOVEL-001) beside `technique` (T1027) in JSON and
   SARIF; the full `frameworks` object and the submission drafts remain Phase 4 work.
-- [ ] `internal/peeler`: bounded unpeeling pipeline walking the candidate *tree* via
+- [x] `internal/peeler`: bounded unpeeling pipeline walking the candidate *tree* via
   parallel unwrap (the DoS design below). Over-cap yields a `peel-exhausted` outcome
   routed to emulation fallback — an honest result rendered first-class — never
   silent-clean.
-- [ ] Chain-depth estimator as a cheap pre-pass: entropy-segment profiling plus
+  **First increment shipped 2026-11-02.** `internal/peeler` + `cau peel`: a bounded,
+  concurrent tree walk where every applicable reversible layer decoder (base64/base32/
+  hex, gzip/zlib/flate/bzip2 — decode only, never execute) spawns a child, under one
+  **global per-sample budget** shared across every branch (nodes, decoded bytes, depth,
+  frontier width, wall clock), so adding layers adds latency, not spend. `peel-exhausted`
+  is a first-class, scored outcome (never silent clean). A revealed payload is a finding
+  only at depth >= 2 (a *chain*); a single ordinary layer is `scanner/encchain`'s job, so
+  the two divide the work without double-counting benign compression. Measured
+  **0 / 116,201 benign files** flagged (`/usr/bin`, `/usr/share/doc`,
+  `/usr/lib/python3`, `/usr/share/nmap`); depth-sweep and bomb-cap tests plus `FuzzPeel`
+  (in `make fuzz`) back it. **Open follow-ons:** the entropy/structural estimator
+  (routing below — this increment uses cheap per-layer `Detect`, not segment profiling),
+  the emulation-sidecar fallback, scan-path wiring (a `ScanResult` facet + fusion), and
+  per-tenant fairness.
+- [~] Chain-depth estimator as a cheap pre-pass: entropy-segment profiling plus
   structural fingerprints (overlay chains, packed-import tables, section anomalies)
   route samples to specialized peelers (archive / packer / script) before full peel cost
   is paid. Depth itself is a signal: layer counts above a threshold raise the score
   regardless of the payload verdict, so a chain that outlives the gate still flags.
   Provenance reconciles benign packers — nested packers inside official packages don't
   alert, the same FP rule as everything else.
-- [ ] Chain-signature model: each peel records the ordered transformation set it
+- [~] Chain-signature model: each peel records the ordered transformation set it
   removed; ordered chain patterns become family signatures — the multi-layer equivalent
   of a hash — and enter the same detection-content lifecycle with model cards.
+  Shipped: each peel records its ordered transform set and renders a stable
+  `PrimarySignature` (e.g. `base64>gzip>base64`). Open: promoting recurring signatures
+  into the detection-content lifecycle with model cards.
 - [ ] Emulation-sidecar fallback (Phase 5 runtime): peel-stalled samples run
   unpack-then-scan in the isolated sidecar — snapshot memory, scan the unpacked image,
   same budget caps as static peel.
@@ -776,39 +799,61 @@ catch and how to catch it, not how to build it. This Phase 4-connected work maps
   writable→RX transitions, write-then-execute patterns, self-decryption loops. A chain
   that defeats static peeling meets telemetry that doesn't care how many layers were
   applied.
-- [ ] Eval-time synthetic chains: the Phase 1 generator *composes* its own
+- [~] Eval-time synthetic chains: the Phase 1 generator *composes* its own
   obfuscation-path library into randomized chains for blue/red fixtures. Depth-swept
   FP/FN must stay flat as depth grows, and multi-layer fixtures land in CI as
   regression cases.
-- [ ] Peel-as-tree, not peel-as-chain: each layer's candidate continuations spawn as
+  Shipped in the peeler's own tests: a `compose` helper stacks the layer library over
+  an inert payload and the depth-sweep test asserts FP/FN stay flat 1..6 layers against
+  a benign twin. Open: folding the composer into the Phase 1 eval generator so the
+  chains run through the corpus gates, not only the package's unit tests.
+- [x] Peel-as-tree, not peel-as-chain: each layer's candidate continuations spawn as
   bounded speculative tasks on a work-stealing pool. The budget wall — cpu-ms, allocated
   bytes, syscall counts, wall-clock — is *global per sample*, shared across every
   branch: an attacker adds depth, not spend, and where the budget goes is the engine's
   choice, not the sample content's.
+  Shipped: children spawn on a bounded worker pool (semaphore; a full pool runs the
+  child inline, the deadlock-free bounded-recursion pattern) and the `Budget` is one
+  shared atomic accounting struct across every branch. The wall tracks nodes, decoded
+  bytes, depth, frontier width and wall-clock; cpu-ms/syscall accounting is not yet a
+  wall (wall-clock bounds time-to-verdict instead).
 - [ ] Estimator-guided task graph: the chain-depth estimator ranks the frontier;
   low-probability branches queue last and are cancelled mid-run when the budget counter
   passes its floor. A cancel carries its reason — "peel-exhausted (budget), branch-cancel
   at layer N" is a labeled outcome, not a generic failure.
-- [ ] Wall-clock bounded by construction: speculative parallel unwrap caps
+- [x] Wall-clock bounded by construction: speculative parallel unwrap caps
   time-to-verdict regardless of chain design — a stall-shaped chain burns its own
   budget, not the scan queue. Queue-level DoS dies at this row.
+  Shipped: a per-sample wall-clock deadline is checked cooperatively at every node and
+  latched as the exhaustion reason; `FuzzPeel` asserts termination within the budget.
 - [ ] CPU honesty, stated plainly: parallelism reduces latency, not cost — aggregate
   CPU per sample can rise. The DoS boundary is the budget wall plus fairness; the plan
   does not pretend the tree buys a free lunch.
 - [ ] Per-source fairness: tenant-level token buckets on the scan queue — a flood from
   one tenant can never consume the fleet's peel capacity. Ties to the multi-tenancy
   pricing row.
-- [ ] Content-addressed dedupe: peel artifacts land in a CAS keyed by blob hash — a
+- [x] Content-addressed dedupe: peel artifacts land in a CAS keyed by blob hash — a
   repeated identical chain costs O(1) after its first peel, and the duplicates-flood
   vector amortizes to nothing.
-- [ ] Bounded task-graph invariants: max in-flight children per node, no unbounded
+  Shipped: an in-peel `seen` set keyed by SHA-256 skips any sub-blob already visited
+  (unit-tested via two transforms that produce the same child). A persistent cross-scan
+  CAS stays a follow-on.
+- [~] Bounded task-graph invariants: max in-flight children per node, no unbounded
   queues, workers die on budget exhaustion, cancellation is cooperative. These are
   asserted by Phase 1 conformance tests, not just documented.
-- [ ] DoS honesty: Phase 9's decompression-bomb caps extend across the tree path —
+  Shipped in the peeler: frontier width is capped per node (`MaxChildren`), the worker
+  pool is a fixed-size semaphore (no unbounded queue), and cancellation is cooperative
+  (context + budget checks at every node). The invariants are asserted by the package's
+  own tests; promoting them to the Phase 1 conformance suite is the open part.
+- [~] DoS honesty: Phase 9's decompression-bomb caps extend across the tree path —
   "peel-exhausted, N layers observed" is still the rendering for anything that hits a
   wall, and CI depth-sweep fixtures assert the wall-clock cap holds across chain shapes
   while benchstat tracks the aggregate-CPU delta so the same-budget guarantee is
   measured, never assumed.
+  Shipped: every decode is bounded by the remaining output budget (the bomb cap extends
+  across the whole tree), exhaustion renders as `peel-exhausted` with a reason, and the
+  depth-sweep + bomb-cap + fuzz tests assert the caps hold. Open: the benchstat
+  aggregate-CPU tracking in CI.
 - [ ] ATT&CK framing: T1027 family (partial) with the chain-pattern classification
   itself drafted as an ATT&CK submission alongside the other NOVEL families.
 - [ ] Publication rule: detectors, synthetic fixtures and templates are public; the

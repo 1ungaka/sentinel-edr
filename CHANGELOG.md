@@ -56,6 +56,20 @@ cut a tagged release yet, so everything is under Unreleased.
   write and TLSH-parse errors.
 
 ### Added
+- **Obfuscation-chain peeler** (`cau peel`, `internal/peeler`): the first
+  increment of NOVEL-012 — a bounded, concurrent tree walk that removes
+  reversible layers (base64/base32/hex, gzip/zlib/flate/bzip2; decode only,
+  never execute) under a single global per-sample budget wall shared across
+  every branch, so adding layers costs latency, not spend. Chain *depth* is the
+  signal; `peel-exhausted` is a first-class, scored outcome, never a silent
+  clean. A revealed payload is a finding only at chain depth >= 2 (a single
+  ordinary layer stays `scanner/encchain`'s job), which is why it measured
+  0/116,201 false positives across `/usr/bin`, `/usr/share/doc`,
+  `/usr/lib/python3` and `/usr/share/nmap`. Each peel renders a stable chain
+  signature (e.g. `base64>gzip>base64`); CAS dedupe, a depth sweep, a
+  decompression-bomb cap, and `FuzzPeel` (in `make fuzz`) back it. Scan-path
+  wiring, the entropy/structural estimator, and the emulation fallback are
+  tracked as follow-ons in PLAN.md.
 - **Quarantine vault** (`cau quarantine`, `internal/quarantine`): a local,
   directory-backed store for files a scan flagged, giving the OSS engine
   somewhere to put found files short of deletion. Every entry is XOR-masked at

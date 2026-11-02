@@ -317,6 +317,29 @@ point-in-time comparison a cron job or task hook runs, not a live watch (that
 is the sensor's job). Exit codes: 0 all intact, 1 at least one tripped, 3
 failed, 4 usage.
 
+## cau peel
+
+```sh
+cau peel [--format text|json] [--max-depth n] [--max-nodes n]
+         [--max-output n] [--max-children n] [--timeout dur] <file>
+```
+
+Walks the obfuscation-chain tree of a file (NOVEL-012): at each node every
+applicable reversible layer decoder — base64, base32, hex, gzip, zlib, flate,
+bzip2 — spawns a child, under a single global per-sample budget wall shared
+across every branch (nodes, decoded bytes, depth, frontier width, wall clock).
+Because the budget is global, adding layers costs latency, never more total
+spend. The peeler only *decodes*; it never executes sample content.
+
+Chain *depth* is the signal: a revealed executable or script is a finding only
+at depth >= 2 (a real chain), because a single ordinary layer — a `.gz` of a
+binary, one base64 blob — is normal packaging and is the single-layer
+encoded-executable detector's job. A branch that hits a wall is reported as
+`peel-exhausted`, a first-class scored outcome, never a silent clean. Each peel
+renders a stable chain signature such as `base64>gzip>base64`. Exit codes: 0
+clean, 1 a chain revealed a payload or the peel was exhausted, 3 failed, 4
+usage.
+
 ## CI recipes
 
 GitHub Actions, uploading findings to code scanning:

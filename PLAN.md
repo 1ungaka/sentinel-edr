@@ -1098,13 +1098,18 @@ eBPF **enforcement** program.
   (kretprobe on `security_bprm_check`) — the "where BPF-LSM cannot serve" option the plan
   reserves. More capable than eBPF (arbitrary in-kernel C, no verifier, any hook), with
   the honest trade-off (out-of-tree, taints the kernel, needs Secure-Boot signing);
-  BPF-LSM stays the safer default. DKMS-packaged; **GitHub CI compiles both backends**
-  (a `kmod` job with `linux-headers`, an `ebpf` job with clang) on every push.
-- **Still open there** (needs hardware/VMM/kernel environments a build cannot exercise):
-  BPF-LSM *rich per-inode/path policy* (the CO-RE variant — recipe shipped in
-  `bpf/README.md`), vkernel guest introspection, kdump *capture* (a privileged
-  destructive response left to policy), and continuous real-time hooks. The rows below
-  track them.
+  BPF-LSM stays the safer default. DKMS-packaged.
+- Path-aware CO-RE BPF-LSM (`bpf/lsm_fileopen.bpf.c`): per-inode deny via `lsm/file_open`
+  + a `cau_blocked_inodes` map, inode read through `BPF_CORE_READ`.
+- The repo is published (`s-b-repo/cau-kernel`) with full docs (`docs/`), and **GitHub CI
+  builds everything green on every push** — four jobs: Go build/vet/race-test, the BPF-LSM
+  object + cilium/ebpf loader, the CO-RE object (bpftool-generated `vmlinux.h`), and the
+  kernel module (`linux-headers`). Parsers and the signed-baseline verifier are fuzzed.
+- **Still open there** (needs real hardware/VMM/root the build cannot exercise, not code
+  that is merely unwritten): wiring the CO-RE object into the Go loader's release pipeline,
+  **vkernel** guest introspection, **kdump capture** (a privileged destructive response
+  left to policy), TPM **quote-based** remote attestation (PCR *reads* ship), and
+  continuous real-time hooks. The rows below track them.
 
 **Sensor kernel components (Linux):**
 - [ ] BPF-LSM first: the sensor registers as an LSM (signed, package-managed) for real

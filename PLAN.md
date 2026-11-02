@@ -1082,15 +1082,18 @@ eBPF **enforcement** program.
   state inventory", "state-drift", "hardening posture report class", "kernel-memory
   access channels", "BPF surface inventory" and "cross-view/hidden-module" rows below, in
   userspace.
-- Enforcement (`bpf/lsm_guard.bpf.c`): a real **BPF-LSM** program on
-  `lsm/bprm_check_security` — an execution-freeze latch for tamper response, compiling to
-  a verified eBPF object. Loading needs root + `CONFIG_BPF_LSM` + `bpf` in
-  `/sys/kernel/security/lsm`.
+- Enforcement (`bpf/lsm_guard.bpf.c` + `cau-kernel enforce`): a real **BPF-LSM** program
+  on `lsm/bprm_check_security` — an execution-freeze latch for tamper response — compiled
+  to a verified eBPF object, **with a cilium/ebpf loader** (`enforce run` attaches and
+  pins the control map to bpffs; `enforce on|off|status` flip it; fail-open if the
+  resident process dies). Behind an `ebpf` build tag so the default sensor stays
+  dependency-free. Loading needs root + `CONFIG_BPF_LSM` + `bpf` in
+  `/sys/kernel/security/lsm`. GitHub CI builds both the default and the eBPF-tagged binary
+  on every push.
 - **Still open there** (the genuinely kernel-resident, hardware-anchored items): BPF-LSM
-  *live mediation* with rich policy and a Go loader (cilium/ebpf), the DKMS fallback
-  module, vkernel guest introspection, TPM/IMA boot-measured attestation, kdump capture,
-  and continuous real-time hooks. The rows below track them; `cau-kernel` is where they
-  land.
+  *rich per-inode/path policy* (the CO-RE variant), the DKMS fallback module, vkernel
+  guest introspection, TPM/IMA boot-measured attestation, kdump capture, and continuous
+  real-time hooks. The rows below track them; `cau-kernel` is where they land.
 
 **Sensor kernel components (Linux):**
 - [ ] BPF-LSM first: the sensor registers as an LSM (signed, package-managed) for real

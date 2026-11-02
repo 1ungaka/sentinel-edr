@@ -56,6 +56,16 @@ cut a tagged release yet, so everything is under Unreleased.
   write and TLSH-parse errors.
 
 ### Added
+- **Detection-content self-check / anti-tamper** (`cau selftest`,
+  `internal/selftest`): digests the signature database, YARA rules and fuzzy
+  database and compares them against a recorded baseline, so an attacker gutting
+  signatures or neutering a rule (ATT&CK T1562.001, Impair Defenses) is caught
+  rather than silently disabling the scanner. `--record` writes the baseline;
+  verification exits 1 and names each drifted resource. A **signed** baseline
+  (`--sign-key` / `--pubkey` / `$CAU_SELFTEST_PUBKEY`, Ed25519) is
+  tamper-resistant: rewriting the content *and* the manifest still fails because
+  the signature can't be forged. The systemd units run it as an `ExecStartPre`
+  before each scheduled scan.
 - **Automated background scanning** (`cau scan --interval <dur>`, plus systemd
   units in `packaging/systemd/`): a scheduled/resident scan daemon that re-scans
   on a fixed interval until `SIGINT`/`SIGTERM`, writing the report each cycle (a
@@ -236,6 +246,16 @@ cut a tagged release yet, so everything is under Unreleased.
   `--jobs` concurrency, resource discovery relative to the install prefix.
 
 ### Changed
+- **Durable atomic writes:** the quarantine vault and the update channel now
+  `fsync` the temp file before the rename (and best-effort `fsync` the
+  directory after), so a crash can never leave a renamed-in index or database
+  with torn or zero contents — the integrity seals only mean something if the
+  bytes they cover reached disk.
+- **Honest MCP sandbox claim:** the path-confinement comment and `docs/mcp.md`
+  no longer overstate the guarantee. Resolve-time symlink containment holds, but
+  access is by resolved path (not a retained `O_NOFOLLOW` descriptor), so a
+  component swapped after resolution is a residual TOCTOU; this is now stated
+  plainly rather than claimed closed.
 - The `cau-mcp` server now runs the full CLI detector set: the Shell Link
   (`lnk`), OLE macro (`ole`), PDF (`pdf`), ISO container (`iso`) and
   obfuscation-chain (`peel`) passes are enabled by default (each with a

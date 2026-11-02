@@ -15,6 +15,11 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# Defense in depth: verify detection content has not been tampered with before
+# each scan. Record the baseline once on a known-good install
+# (cau selftest --record, ideally --sign-key), then this fails the run if the
+# signature DB or rules drifted. Drop the "-" prefix to make drift hard-fail.
+ExecStartPre=-/usr/bin/cau selftest
 # Edit the scan target(s), format and output path for your host.
 ExecStart=/usr/bin/cau scan --dir / --format sarif --output /var/log/cau/scan.sarif --fail-on none --quiet
 # A finding must not make the unit "failed"; the report carries the verdict.

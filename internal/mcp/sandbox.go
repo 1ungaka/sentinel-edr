@@ -22,8 +22,16 @@ import (
 //     across an entire filesystem.
 //
 // Resolve follows every symlink with EvalSymlinks and re-checks containment on
-// the real path, so a component swapped for an out-of-root symlink after the
-// check cannot widen access: the resolved path is what callers open.
+// the real, fully-resolved path, which is what callers then open — so a symlink
+// *present at resolve time* can never widen access beyond the roots.
+//
+// Residual limitation, stated honestly: access is by path, not by a retained
+// O_NOFOLLOW file descriptor, so a path component swapped for an out-of-root
+// symlink in the window between Resolve and the caller's open is a classic
+// TOCTOU the path-based reopen cannot fully close. Closing it needs
+// openat/O_NOFOLLOW per component (platform-specific); until then the sandbox
+// is a strong confinement against static layouts and resolve-time symlinks, not
+// a guarantee against an attacker racing component swaps inside a granted root.
 type Sandbox struct {
 	roots       []string // absolute, symlink-resolved, cleaned
 	maxBytes    int64

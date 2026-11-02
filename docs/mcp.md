@@ -65,7 +65,11 @@ allowlist** given with one or more `--root` flags:
 
 - Every path a tool touches must resolve — with all symlinks followed — to a
   location inside a root. A symlink *inside* a root that points *outside* it is
-  rejected, not followed.
+  rejected, not followed. (Honest limit: access is by resolved path, not a
+  retained `O_NOFOLLOW` descriptor, so a component swapped for an out-of-root
+  symlink in the window between resolution and open is a residual TOCTOU; the
+  confinement holds against static layouts and resolve-time symlinks, not an
+  attacker racing component swaps inside a granted root.)
 - Files larger than `--max-bytes` (default 256 MiB) are refused before being
   read.
 - A directory with more than `--max-files` (default 10000) regular files is

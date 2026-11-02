@@ -1010,9 +1010,20 @@ T1091 (unimplemented in the corpus) is dropped.
 The sensor assumes it is a target: malware deploys kill-pools (T1562.001) explicitly
 against EDR. Countermeasures are integrity and redundancy — never camouflage:
 
+- **Detection-content integrity (engine-side, shipped 2026-11-02):** `cau selftest`
+  (`internal/selftest`) digests the signature database, the YARA rules and the fuzzy
+  database and compares them against a recorded baseline, so gutting signatures or
+  neutering a rule is caught (T1562.001) rather than silently disabling the scanner. A
+  plain baseline catches drift; an **Ed25519-signed** baseline verified against a pinned
+  key (`--sign-key` / `--pubkey` / `$CAU_SELFTEST_PUBKEY`) also defeats an attacker who
+  rewrites both the content and the manifest — the signature is the thing they cannot
+  forge. The shipped systemd units run it as an `ExecStartPre` before each scheduled
+  scan. The vault and the update channel are durable too: their atomic writers now fsync
+  before rename so a crash can't leave a renamed-in file with torn or zero contents.
 - **Binary identity:** self-hash at startup, verified against a signed release manifest
   (Phase 7 #1 attestations). Mismatch means fail-closed: halt detection, log, alert —
-  never run half-verified.
+  never run half-verified. (The signed-manifest machinery `cau selftest` and `cau update`
+  already use is the same Ed25519 pattern this needs.)
 - **Config integrity:** configs are root-owned, provenance-checked and signed; unsigned
   overrides alert instead of applying. No obfuscation of the config itself — clarity of
   the security state is a feature, and stego-encoded config would trip this program's

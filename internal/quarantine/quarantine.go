@@ -410,10 +410,25 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		tmp.Close()
 		return err
 	}
+	// fsync the data before the rename so a crash can never leave a renamed-in
+	// file with unflushed (zero or torn) contents — the vault's integrity seal
+	// is only meaningful if the bytes it covers actually reached disk.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	// Best-effort fsync of the directory so the rename itself is durable.
+	if d, derr := os.Open(dir); derr == nil {
+		_ = d.Sync()
+		_ = d.Close()
+	}
+	return nil
 }
 
 // xorMask returns data XOR-masked with key repeated to length. It is its own

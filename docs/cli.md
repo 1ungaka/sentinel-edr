@@ -404,6 +404,29 @@ public key (hex) comes from `--pubkey`, else `$CAU_UPDATE_PUBKEY`, else the
 key pinned in the build; with none configured, update refuses to install
 anything. Exit codes: 0 ok, 1 verification failed, 3 failed, 4 usage.
 
+## cau selftest
+
+```sh
+cau selftest --record [--sign-key priv.hex] [--manifest file]
+cau selftest [--pubkey pub.hex] [--manifest file]
+```
+
+Verifies that the engine's detection content — the signature database, the YARA
+rules, and the fuzzy database — has not been tampered with, so an attacker who
+guts signatures or neuters a rule (ATT&CK T1562.001, Impair Defenses) is caught
+instead of silently disabling the scanner. `--record` digests each resource and
+writes a baseline (`integrity.json` next to the signature database by default);
+without `--record` it recomputes and compares, exiting 1 and naming each drifted
+resource on any change. Directory resources (the rules) reduce to one canonical
+digest, so adding, removing, editing or renaming any rule file is detected.
+
+For tamper-*resistance* (not just drift detection), record a **signed** baseline
+with `--sign-key` and verify it with `--pubkey` (or `$CAU_SELFTEST_PUBKEY`):
+an attacker who rewrites both the content and the manifest still cannot forge
+the Ed25519 signature, so the check fails closed. Keep the signing key off the
+host; run `cau selftest --pubkey …` from a timer or before each scan. Exit
+codes: 0 intact, 1 drift or a bad/missing required signature, 3 failed, 4 usage.
+
 ## CI recipes
 
 GitHub Actions, uploading findings to code scanning:

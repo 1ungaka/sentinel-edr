@@ -64,6 +64,13 @@ type Server struct {
 	mu  sync.Mutex // serialises writes to the output stream
 	enc *json.Encoder
 
+	// callMu serialises request handling on the HTTP transport, where
+	// requests would otherwise run concurrently. The engine's scan path is
+	// per-call state, but the signature database's Add is not concurrency
+	// safe, so one request is dispatched at a time. The stdio transport is
+	// already serial and does not take it.
+	callMu sync.Mutex
+
 	initialized bool
 }
 

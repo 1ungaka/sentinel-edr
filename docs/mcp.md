@@ -7,10 +7,14 @@ same engine as the `cau` CLI — the same detectors, the same signature database
 the same YARA ruleset and the same ATT&CK coverage matrix — presented as an MCP
 server rather than a command line.
 
-The transport is JSON-RPC 2.0 over the line-delimited **stdio** transport (one
-JSON message per line). A streamable-HTTP transport is an intended follow-up;
-the protocol layer is transport-agnostic, so adding it does not change the
-tools.
+Two transports are supported, both JSON-RPC 2.0:
+
+- **stdio** (default): one JSON message per line on stdin/stdout.
+- **streamable HTTP** (`--http <addr>`): a single endpoint at `/mcp` that takes
+  a JSON-RPC message by POST and returns the response as `application/json`.
+
+The protocol layer is transport-agnostic, so the tools, resources and prompts
+behave identically on either.
 
 ## Running
 
@@ -19,7 +23,20 @@ cau-mcp --root /path/to/scan [--db ...] [--rules ...] [--fuzzy-db ...]
 ```
 
 `cau-mcp` reads requests on stdin and writes responses on stdout; all logging
-goes to stderr, so the stdout stream stays a clean JSON-RPC channel. Resources
+goes to stderr, so the stdout stream stays a clean JSON-RPC channel.
+
+To serve the HTTP transport instead, bind an address (loopback is strongly
+recommended — anyone who can reach the socket can drive the scanner within the
+`--root` sandbox):
+
+```
+cau-mcp --root /path/to/scan --http 127.0.0.1:8923
+```
+
+```
+curl -s -X POST localhost:8923/mcp \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mitre_coverage","arguments":{}}}'
+``` Resources
 (signature database, YARA rules, fuzzy database) are auto-discovered exactly as
 the CLI discovers them (see [Installation](installation.md)); override them with
 the same flags or the `CAU_SIGNATURES` / `CAU_RULES` / `CAU_FUZZY` environment

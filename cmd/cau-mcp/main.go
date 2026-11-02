@@ -9,6 +9,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -22,7 +23,10 @@ import (
 // version is overridden at build time: -ldflags "-X main.version=v1.2.3".
 var version = "0.4.0-dev"
 
-const serverName = "cau-mcp"
+const (
+	serverName = "cau-mcp"
+	httpPath   = "/mcp"
+)
 
 // stringList collects a repeatable flag (--root a --root b).
 type stringList []string
@@ -52,6 +56,7 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 	yaraTimeout := fs.Duration("yara-timeout", 10*time.Second, "per-file YARA scan budget")
 	maxBytes := fs.Int64("max-bytes", mcp.DefaultMaxBytes, "per-file size cap for file tools")
 	maxFiles := fs.Int("max-files", mcp.DefaultMaxDirFiles, "max files a single scan_dir may enumerate")
+	httpAddr := fs.String("http", "", "serve the streamable-HTTP transport on this address (e.g. 127.0.0.1:8923) instead of stdio")
 	showVersion := fs.Bool("version", false, "print version and exit")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -154,6 +159,25 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 		RulesPath: rulesPath,
 		SigDBPath: dbPath,
 	})
+
+	if *httpAddr != "" {
+		mux := http.NewServeMux()
+		mux.Handle(httpPath, srv.HTTPHandler())
+		httpSrv := &http.Server{
+			Addr:              *httpAddr,
+			Handler:           mux,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		logf("serving MCP over HTTP on %s%s (protocol %s)", *httpAddr, httpPath, mcp.ProtocolVersion)
+		if strings.HasPrefix(*httpAddr, "0.0.0.0") || strings.HasPrefix(*httpAddr, ":") {
+			logf("[warn] bound to a non-loopback address: anyone who can reach it can drive the scanner within the --root sandbox")
+		}
+		if err := httpSrv.ListenAndServe(); err != nil {
+			logf("http serve: %v", err)
+			return 1
+		}
+		return 0
+	}
 
 	logf("serving MCP on stdio (protocol %s)", mcp.ProtocolVersion)
 	if err := srv.Serve(stdin, stdout); err != nil {

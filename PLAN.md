@@ -303,7 +303,14 @@ Scope-note deviations from the sketch below, stated plainly:
   `cau://model/{name}/card` waits on the Phase 5 ML ladder. Neither is
   advertised until it exists.
 - `rule_review` ships (false-positive-risk assessment is detection quality, not
-  evasion); the streamable-HTTP transport is the remaining open item.
+  evasion).
+
+Follow-up shipped 2026-10-30: the **streamable-HTTP transport** (`cau-mcp
+--http <addr>`, `internal/mcp/http.go`) — a single `/mcp` endpoint taking a
+JSON-RPC message by POST and returning the response as `application/json`.
+Requests are dispatched one at a time (the signature database's Add is not
+concurrency safe); the server sends no unsolicited messages, so the JSON
+response subset is complete without SSE. Phase 3 is now feature-complete.
 
 ```
 cmd/cau-mcp/          # stdio primary, streamable-HTTP optional

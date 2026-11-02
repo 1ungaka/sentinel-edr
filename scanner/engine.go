@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cau-edr/cau/internal/peeler"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/iso"
 	"github.com/cau-edr/cau/scanner/lnk"
@@ -98,6 +100,12 @@ type Engine struct {
 	// ISOThreshold overrides iso.Threshold (0 = package default).
 	ISOThreshold int
 
+	// Peel enables the obfuscation-chain peeler (NOVEL-012). Its result rides
+	// on ScanResult.Peel.
+	Peel bool
+	// PeelThreshold overrides peeler.Threshold (0 = package default).
+	PeelThreshold int
+
 	// NoFusion leaves ScanResult.Fusion nil. Fusion is on by default because
 	// it costs nothing: it is a view over results already computed.
 	NoFusion bool
@@ -174,6 +182,13 @@ func (e *Engine) isoThreshold() int {
 		return e.ISOThreshold
 	}
 	return iso.Threshold
+}
+
+func (e *Engine) peelThreshold() int {
+	if e.PeelThreshold > 0 {
+		return e.PeelThreshold
+	}
+	return peeler.Threshold
 }
 
 // ScanFile runs every configured detector over one file. The heuristic result
@@ -397,6 +412,24 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 				FilePath:  path,
 				Size:      int(fi.Size()),
 				Threshold: e.isoThreshold(),
+				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+					fi.Size(), e.maxInMemory()),
+			}
+		}
+	}
+
+	// ── obfuscation-chain peeler ───────────────────────
+	if e.Peel {
+		if data != nil {
+			pr := peeler.New().Peel(context.Background(), data)
+			pr.FilePath = path
+			pr.Threshold = e.peelThreshold()
+			res.Peel = &pr
+		} else {
+			res.Peel = &peeler.Result{
+				FilePath:  path,
+				Size:      int(fi.Size()),
+				Threshold: e.peelThreshold(),
 				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
 					fi.Size(), e.maxInMemory()),
 			}

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cau-edr/cau/internal/peeler"
 	"github.com/cau-edr/cau/internal/report"
 	"github.com/cau-edr/cau/scanner"
 	"github.com/cau-edr/cau/scanner/encchain"
@@ -135,6 +136,7 @@ type scanFlags struct {
 	noOLE             bool
 	noPDF             bool
 	noISO             bool
+	noPeel            bool
 	fuzzyDB           string
 	heurThreshold     int
 	staticThreshold   int
@@ -144,6 +146,7 @@ type scanFlags struct {
 	oleThreshold      int
 	pdfThreshold      int
 	isoThreshold      int
+	peelThreshold     int
 	format, output    string
 	pretty            bool
 	failOn            string
@@ -182,6 +185,8 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&f.pdfThreshold, "pdf-threshold", pdf.Threshold, "score at which a PDF document match is reported suspicious")
 	fs.BoolVar(&f.noISO, "no-iso", false, "disable the ISO 9660 malicious-container pass")
 	fs.IntVar(&f.isoThreshold, "iso-threshold", iso.Threshold, "score at which an ISO container match is reported suspicious")
+	fs.BoolVar(&f.noPeel, "no-peel", false, "disable the obfuscation-chain peeler (NOVEL-012)")
+	fs.IntVar(&f.peelThreshold, "peel-threshold", peeler.Threshold, "score at which an obfuscation chain is reported suspicious")
 	fs.BoolVar(&f.noFusion, "no-fusion", false, "disable the fusion lattice (corroboration of sub-threshold detectors)")
 	fs.StringVar(&f.format, "format", "text", "output format: "+strings.Join(report.Formats, ", "))
 	fs.StringVar(&f.output, "output", "", "write the report to this file instead of stdout")
@@ -248,6 +253,10 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "[ERROR] --iso-threshold must be at least 1")
 		return report.ExitUsage
 	}
+	if f.peelThreshold < 1 {
+		fmt.Fprintln(stderr, "[ERROR] --peel-threshold must be at least 1")
+		return report.ExitUsage
+	}
 
 	opts := []report.Option{
 		report.WithToolName(toolName),
@@ -262,6 +271,7 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		report.WithOLEThreshold(f.oleThreshold),
 		report.WithPDFThreshold(f.pdfThreshold),
 		report.WithISOThreshold(f.isoThreshold),
+		report.WithPeelThreshold(f.peelThreshold),
 		report.WithIndent(f.pretty),
 	}
 	if f.dir != "" && len(targets) == 1 {
@@ -424,6 +434,11 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	} else {
 		status("[*] ISO container pass enabled (threshold %d)", f.isoThreshold)
 	}
+	if f.noPeel {
+		status("[*] Obfuscation-chain peeler disabled")
+	} else {
+		status("[*] Obfuscation-chain peeler enabled (threshold %d)", f.peelThreshold)
+	}
 	if f.noFusion {
 		status("[*] Fusion disabled")
 	}
@@ -449,6 +464,8 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		PDFThreshold:       f.pdfThreshold,
 		ISO:                !f.noISO,
 		ISOThreshold:       f.isoThreshold,
+		Peel:               !f.noPeel,
+		PeelThreshold:      f.peelThreshold,
 		NoFusion:           f.noFusion,
 		MaxInMemory:        f.maxInMemoryMiB << 20,
 		Jobs:               f.jobs,

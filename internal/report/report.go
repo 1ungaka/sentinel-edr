@@ -41,6 +41,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cau-edr/cau/internal/peeler"
 	"github.com/cau-edr/cau/scanner"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/fusion"
@@ -97,6 +98,8 @@ const (
 	DefaultPDFThreshold = pdf.DefaultThreshold
 	// DefaultISOThreshold mirrors iso.DefaultThreshold.
 	DefaultISOThreshold = iso.DefaultThreshold
+	// DefaultPeelThreshold mirrors peeler.DefaultThreshold.
+	DefaultPeelThreshold = peeler.DefaultThreshold
 )
 
 // TruncationMarker is appended to any string that was cut short. Blob-shaped
@@ -495,6 +498,29 @@ func isoBreached(i *iso.Result, fallback int) bool {
 	return i != nil && i.Skipped == "" && i.Score >= isoThresholdFor(i, fallback)
 }
 
+// PeelBreach returns the scan results whose peeler score reached the threshold.
+func (in Input) PeelBreach(threshold int) []scanner.ScanResult {
+	var out []scanner.ScanResult
+	for _, r := range in.Results {
+		if peelBreached(r.Peel, threshold) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func peelThresholdFor(p *peeler.Result, fallback int) int {
+	if p != nil && p.Threshold > 0 {
+		return p.Threshold
+	}
+	return fallback
+}
+
+// peelBreached is the single definition of "the obfuscation-chain peeler fired".
+func peelBreached(p *peeler.Result, fallback int) bool {
+	return p != nil && p.Skipped == "" && p.Score >= peelThresholdFor(p, fallback)
+}
+
 func stegoThresholdFor(s *stego.Result, fallback int) int {
 	if s != nil && s.Threshold > 0 {
 		return s.Threshold
@@ -556,6 +582,7 @@ type config struct {
 	oleThreshold       int
 	pdfThreshold       int
 	isoThreshold       int
+	peelThreshold      int
 	stat               StatFunc
 	now                func() time.Time
 
@@ -650,6 +677,9 @@ func WithPDFThreshold(n int) Option { return func(c *config) { c.pdfThreshold = 
 // WithISOThreshold records which threshold the ISO detector ran at.
 func WithISOThreshold(n int) Option { return func(c *config) { c.isoThreshold = n } }
 
+// WithPeelThreshold records which threshold the obfuscation-chain peeler ran at.
+func WithPeelThreshold(n int) Option { return func(c *config) { c.peelThreshold = n } }
+
 // WithStatFunc overrides how file sizes are resolved (os.Stat by default).
 func WithStatFunc(f StatFunc) Option { return func(c *config) { c.stat = f } }
 
@@ -714,6 +744,7 @@ func defaultConfig() config {
 		oleThreshold:        DefaultOLEThreshold,
 		pdfThreshold:        DefaultPDFThreshold,
 		isoThreshold:        DefaultISOThreshold,
+		peelThreshold:       DefaultPeelThreshold,
 		stat:                osFileSize,
 		now:                 time.Now,
 
@@ -776,6 +807,9 @@ func (c *config) normalize() {
 	}
 	if c.isoThreshold <= 0 {
 		c.isoThreshold = DefaultISOThreshold
+	}
+	if c.peelThreshold <= 0 {
+		c.peelThreshold = DefaultPeelThreshold
 	}
 	if c.stat == nil {
 		c.stat = osFileSize

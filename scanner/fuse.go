@@ -161,6 +161,14 @@ func (e *Engine) fuse(res *ScanResult, h *HeuristicResult) *fusion.Verdict {
 		sources = append(sources, src)
 	}
 
+	if pl := res.Peel; pl != nil {
+		src := fusion.Source{Name: fusion.SourcePeeler, Score: pl.Score, Threshold: pl.EffectiveThreshold(), Skipped: pl.Skipped}
+		for _, f := range pl.Findings {
+			src.Evidence = append(src.Evidence, fusion.Evidence{Label: f.Class, Detail: f.Detail, Technique: f.Technique, Novel: f.Novel, Weight: f.Score})
+		}
+		sources = append(sources, src)
+	}
+
 	if len(sources) == 0 {
 		return nil
 	}

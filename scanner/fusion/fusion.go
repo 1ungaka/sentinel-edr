@@ -420,4 +420,5 @@ const (
 	SourceOLE        = "ole"
 	SourcePDF        = "pdf"
 	SourceISO        = "iso"
+	SourcePeeler     = "peeler"
 )

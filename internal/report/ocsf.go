@@ -353,6 +353,18 @@ func (c config) ocsfFinding(doc Document, f File, now int64) ocsfFinding {
 		titleParts = append(titleParts, fmt.Sprintf("iso container %d/%d", is.Score, is.Threshold))
 		fi.Unmapped["iso"] = map[string]any{"score": is.Score, "threshold": is.Threshold, "classes": classes}
 	}
+	if pl := f.Peel; pl != nil && pl.Detected {
+		sources = append(sources, "peel")
+		var classes []string
+		for _, fd := range pl.Findings {
+			classes = append(classes, fd.Class)
+			if fd.Technique != "" {
+				techs[fd.Technique] = true
+			}
+		}
+		titleParts = append(titleParts, fmt.Sprintf("obfuscation chain %d/%d", pl.Score, pl.Threshold))
+		fi.Unmapped["peel"] = map[string]any{"score": pl.Score, "threshold": pl.Threshold, "outcome": pl.Outcome, "max_depth": pl.MaxDepth, "classes": classes}
+	}
 	if fu := f.Fusion; fu != nil {
 		for _, t := range fu.Techniques {
 			techs[t] = true

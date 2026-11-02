@@ -31,6 +31,7 @@ cau peel ./dropper.b64                                               # walk an o
 | **Static structure** (own PE and ELF parsers, entropy, TLSH / ssdeep / imphash) | is it *built* like something that hides? | SUSPICIOUS with labeled anomaly classes: packer, RWX sections or segments, forged build record, implausible signer, appended payload, stripped section table, non-system program interpreter, writable `RPATH`, libc interposer, unsigned kernel module, similarity to a known sample |
 | **Invisible codepoints** | does this text or code carry hidden codepoints? | SUSPICIOUS with every zero-width, bidi-override, TAG or variation-selector codepoint, its line, and the context rules that excused the rest |
 | **Encoded executable** (base64/hex, multi-layer) | is an executable hidden behind text encoding? | SUSPICIOUS with the decoded PE/ELF, the encoding and the layer depth |
+| **Obfuscation-chain peeler** (bounded tree unwrap, budget-walled) | is a payload stacked behind *several* encoding/compression layers? | SUSPICIOUS at chain depth ≥ 2 with the ordered chain signature (e.g. `base64>gzip>base64`); `peel-exhausted` when the budget wall is hit |
 | **Fusion** | do several detectors agree, even below their own thresholds? | one fused verdict naming the sources that agreed, their roles and techniques |
 
 Hash and YARA hits are MALICIOUS; scores are SUSPICIOUS and never promoted;

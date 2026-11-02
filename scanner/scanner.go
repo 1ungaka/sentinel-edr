@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cau-edr/cau/internal/peeler"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/fusion"
 	"github.com/cau-edr/cau/scanner/iso"
@@ -93,6 +94,11 @@ type ScanResult struct {
 	// email-smuggling shape, autorun.inf). nil when the detector did not run.
 	// A breach is the SUSPICIOUS tier.
 	ISO *iso.Result
+
+	// Peel is the obfuscation-chain analysis (NOVEL-012): a bounded tree unwrap
+	// of nested encoding/compression layers where chain depth is the signal.
+	// nil when the detector did not run. A breach is the SUSPICIOUS tier.
+	Peel *peeler.Result
 
 	// Fusion is the lattice's view over every detector that ran: which
 	// sources agreed, how strongly, and what techniques the agreeing evidence

@@ -67,9 +67,15 @@ cut a tagged release yet, so everything is under Unreleased.
   0/116,201 false positives across `/usr/bin`, `/usr/share/doc`,
   `/usr/lib/python3` and `/usr/share/nmap`. Each peel renders a stable chain
   signature (e.g. `base64>gzip>base64`); CAS dedupe, a depth sweep, a
-  decompression-bomb cap, and `FuzzPeel` (in `make fuzz`) back it. Scan-path
-  wiring, the entropy/structural estimator, and the emulation fallback are
-  tracked as follow-ons in PLAN.md.
+  decompression-bomb cap, and `FuzzPeel` (in `make fuzz`) back it. It is wired
+  into `cau scan` as a first-class detector (default on, `--no-peel` /
+  `--peel-threshold`): `ScanResult.Peel`, a `peeler` fusion source, the `peel` /
+  `peel_*` fields in text / JSON / SARIF / OCSF, and `peeler` content in
+  `cau coverage` (T1027). The eval gate is unchanged (recall / precision / FP /
+  FN flat) and a repo self-scan flags 0 of 291 files. The entropy/structural
+  estimator and emulation fallback are tracked as follow-ons in PLAN.md.
+- **JSON report schema 1.9.0**: added the optional per-file `peel` object and the
+  summary fields `peel_detections` / `peel_threshold` (additive, minor bump).
 - **Quarantine vault** (`cau quarantine`, `internal/quarantine`): a local,
   directory-backed store for files a scan flagged, giving the OSS engine
   somewhere to put found files short of deletion. Every entry is XOR-masked at

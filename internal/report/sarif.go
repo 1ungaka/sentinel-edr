@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cau-edr/cau/internal/peeler"
 	"github.com/cau-edr/cau/scanner"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/fusion"
@@ -46,6 +47,9 @@ const (
 	// SARIFRuleISOPrefix prefixes one rule per ISO class
 	// ("iso/lure.lnk-and-payload", "iso/autorun.inf", ...).
 	SARIFRuleISOPrefix = "iso/"
+	// SARIFRulePeelPrefix prefixes one rule per peeler class
+	// ("peel/revealed-executable", "peel/exhausted", ...).
+	SARIFRulePeelPrefix = "peel/"
 )
 
 // ── SARIF object model (only the subset the reporter emits) ──────────────────
@@ -281,6 +285,14 @@ func (r *SARIFReporter) build(in Input) sarifLog {
 				table.add(c.isoRule(f))
 			}
 		}
+		for _, res := range in.Results {
+			if !peelBreached(res.Peel, c.peelThreshold) {
+				continue
+			}
+			for _, f := range res.Peel.Findings {
+				table.add(c.peelRule(f))
+			}
+		}
 		if len(in.FusionCorroborated()) > 0 {
 			table.add(sarifRule{
 				ID:               SARIFRuleFusion,
@@ -403,6 +415,9 @@ func (r *SARIFReporter) build(in Input) sarifLog {
 		}
 		if res.ISO != nil {
 			results = c.appendISO(results, &table, res)
+		}
+		if res.Peel != nil {
+			results = c.appendPeel(results, &table, res)
 		}
 		if res.Fusion != nil {
 			results = c.appendFusion(results, &table, res)
@@ -940,6 +955,53 @@ func (c config) appendISO(results []sarifResult, table *ruleTable, res scanner.S
 		}
 		if f.Evidence != "" {
 			props["evidence"] = c.boundedMessage(f.Evidence)
+		}
+		results = append(results, sarifResult{
+			RuleID:              rule.ID,
+			RuleIndex:           table.index[rule.ID],
+			Level:               c.levelHeuristic,
+			Message:             sarifMessage{Text: c.boundedMessage(f.Detail)},
+			Locations:           []sarifLocation{c.location(res.FilePath, nil)},
+			PartialFingerprints: c.fingerprints(res),
+			Properties:          props,
+		})
+	}
+	return results
+}
+
+func (c config) peelRule(f peeler.Finding) sarifRule {
+	class := strings.TrimPrefix(f.Class, "peel.")
+	return sarifRule{
+		ID:               SARIFRulePeelPrefix + class,
+		Name:             "ObfuscationChain_" + strings.ToUpper(strings.ReplaceAll(class, ".", "_")),
+		ShortDescription: &sarifMessage{Text: "Obfuscation-chain signal (" + class + ")"},
+		FullDescription:  &sarifMessage{Text: "A bounded tree unwrap of nested encoding/compression layers revealed a multi-layer obfuscation chain (NOVEL-012). Chain depth is the signal; a revealed payload is reported only for a chain of at least two layers. Suspicious shape read by decoding, never by executing the sample."},
+		DefaultConfig:    &sarifRuleConfig{Level: c.levelHeuristic},
+		Properties:       map[string]interface{}{"kind": "peel"},
+	}
+}
+
+func (c config) appendPeel(results []sarifResult, table *ruleTable, res scanner.ScanResult) []sarifResult {
+	p := res.Peel
+	if !c.sarifIncludeHeuristics || !peelBreached(p, c.peelThreshold) {
+		return results
+	}
+	for _, f := range p.Findings {
+		rule := c.peelRule(f)
+		props := map[string]interface{}{
+			"score":      p.Score,
+			"threshold":  peelThresholdFor(p, c.peelThreshold),
+			"classScore": f.Score,
+			"maxDepth":   p.MaxDepth,
+		}
+		if f.Technique != "" {
+			props["technique"] = f.Technique
+		}
+		if f.Novel != "" {
+			props["novel"] = f.Novel
+		}
+		if p.PrimarySignature != "" {
+			props["chain"] = c.boundedMessage(p.PrimarySignature)
 		}
 		results = append(results, sarifResult{
 			RuleID:              rule.ID,

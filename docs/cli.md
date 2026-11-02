@@ -58,6 +58,7 @@ directories never.
 | `--no-ole` | off | disable the OLE compound-file (VBA macro) pass |
 | `--no-pdf` | off | disable the PDF malicious-document pass |
 | `--no-iso` | off | disable the ISO 9660 malicious-container pass |
+| `--no-peel` | off | disable the obfuscation-chain peeler (NOVEL-012) |
 | `--no-fusion` | off | disable the fusion lattice |
 | `--heuristic-threshold N` | 7 | heuristic score at which a file is SUSPICIOUS |
 | `--static-threshold N` | 8 | static anomaly score at which a file is SUSPICIOUS |
@@ -67,6 +68,7 @@ directories never.
 | `--ole-threshold N` | 8 | OLE macro score at which a file is SUSPICIOUS |
 | `--pdf-threshold N` | 8 | PDF document score at which a file is SUSPICIOUS |
 | `--iso-threshold N` | 8 | ISO container score at which a file is SUSPICIOUS |
+| `--peel-threshold N` | 50 | obfuscation-chain score at which a file is SUSPICIOUS (a depth-2 revealed chain scores 60) |
 | `--yara-timeout D` | 30s | per-file YARA budget; a timed-out scan keeps the matches it found and records a warning |
 | `--max-in-memory MiB` | 64 | larger files are streamed: hashing streams, YARA memory-maps, the heuristic, static and stego passes are skipped with the reason recorded |
 | `--jobs N` | CPUs | files scanned concurrently |

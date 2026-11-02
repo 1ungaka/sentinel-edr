@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/cau-edr/cau/internal/peeler"
 	"github.com/cau-edr/cau/scanner"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/fusion"
@@ -52,7 +53,11 @@ import (
 // 1.8.0 added the optional per-file "iso" object (ISO 9660 malicious-container
 // analysis) and the summary fields "iso_detections" / "iso_threshold"
 // (additive: minor bump).
-const JSONSchemaVersion = "1.8.0"
+//
+// 1.9.0 added the optional per-file "peel" object (obfuscation-chain peeler,
+// NOVEL-012) and the summary fields "peel_detections" / "peel_threshold"
+// (additive: minor bump).
+const JSONSchemaVersion = "1.9.0"
 
 // Overall and per-file verdict strings carried by the JSON document. They are
 // lower-case on purpose: they are enum values for machines, not banners.
@@ -94,6 +99,7 @@ type Summary struct {
 	OLEDetections       int `json:"ole_detections"`
 	PDFDetections       int `json:"pdf_detections"`
 	ISODetections       int `json:"iso_detections"`
+	PeelDetections      int `json:"peel_detections"`
 	// FusionDetections counts files the fusion lattice reports as suspicious
 	// although no single detector crossed its own threshold.
 	FusionDetections   int    `json:"fusion_detections"`
@@ -107,6 +113,7 @@ type Summary struct {
 	OLEThreshold       int    `json:"ole_threshold"`
 	PDFThreshold       int    `json:"pdf_threshold"`
 	ISOThreshold       int    `json:"iso_threshold"`
+	PeelThreshold      int    `json:"peel_threshold"`
 	Verdict            string `json:"verdict"`
 	FailOn             string `json:"fail_on"`
 	ExitCode           int    `json:"exit_code"`
@@ -129,6 +136,7 @@ type File struct {
 	OLE        *OLE        `json:"ole,omitempty"`
 	PDF        *PDF        `json:"pdf,omitempty"`
 	ISO        *ISO        `json:"iso,omitempty"`
+	Peel       *Peel       `json:"peel,omitempty"`
 	Fusion     *Fusion     `json:"fusion,omitempty"`
 	Warnings   []string    `json:"warnings,omitempty"`
 	Error      string      `json:"error,omitempty"`
@@ -576,6 +584,29 @@ type ISOFinding struct {
 	Evidence  string `json:"evidence,omitempty"`
 }
 
+// Peel is the per-file obfuscation-chain analysis (NOVEL-012).
+type Peel struct {
+	Score            int           `json:"score"`
+	Threshold        int           `json:"threshold"`
+	Detected         bool          `json:"detected"`
+	Skipped          string        `json:"skipped,omitempty"`
+	Outcome          string        `json:"outcome"`
+	MaxDepth         int           `json:"max_depth"`
+	PrimarySignature string        `json:"primary_signature,omitempty"`
+	Exhausted        bool          `json:"exhausted,omitempty"`
+	ExhaustReason    string        `json:"exhaust_reason,omitempty"`
+	Findings         []PeelFinding `json:"findings,omitempty"`
+}
+
+// PeelFinding is one obfuscation-chain detection signal.
+type PeelFinding struct {
+	Class     string `json:"class"`
+	Score     int    `json:"score"`
+	Technique string `json:"technique,omitempty"`
+	Novel     string `json:"novel,omitempty"`
+	Detail    string `json:"detail"`
+}
+
 // Fusion is the lattice's view over every detector that ran on the file.
 type Fusion struct {
 	Tier       string  `json:"tier"`
@@ -673,6 +704,7 @@ func (c config) buildDocument(in Input) Document {
 			OLEDetections:       len(in.OLEBreach(c.oleThreshold)),
 			PDFDetections:       len(in.PDFBreach(c.pdfThreshold)),
 			ISODetections:       len(in.ISOBreach(c.isoThreshold)),
+			PeelDetections:      len(in.PeelBreach(c.peelThreshold)),
 			FusionDetections:    len(in.FusionCorroborated()),
 			Errors:              in.ErrorCount(),
 			ElapsedMS:           in.Elapsed.Milliseconds(),
@@ -684,6 +716,7 @@ func (c config) buildDocument(in Input) Document {
 			OLEThreshold:        c.oleThreshold,
 			PDFThreshold:        c.pdfThreshold,
 			ISOThreshold:        c.isoThreshold,
+			PeelThreshold:       c.peelThreshold,
 			Verdict:             c.overallVerdict(in),
 			FailOn:              c.failOn.String(),
 			ExitCode:            code,
@@ -730,6 +763,7 @@ func (c config) overallVerdict(in Input) string {
 		len(in.StegoBreach(c.stegoThreshold)) > 0, len(in.EncChainBreach(c.encChainThreshold)) > 0,
 		len(in.LNKBreach(c.lnkThreshold)) > 0, len(in.OLEBreach(c.oleThreshold)) > 0,
 		len(in.PDFBreach(c.pdfThreshold)) > 0, len(in.ISOBreach(c.isoThreshold)) > 0,
+		len(in.PeelBreach(c.peelThreshold)) > 0,
 		len(in.FusionCorroborated()) > 0:
 		return JSONVerdictSuspicious
 	default:
@@ -827,6 +861,12 @@ func (c config) buildFile(p string, res *scanner.ScanResult, h *scanner.Heuristi
 		if res.ISO != nil {
 			f.ISO = c.buildISO(res.ISO)
 			if f.ISO.Detected && f.Verdict == JSONVerdictClean {
+				f.Verdict = JSONVerdictSuspicious
+			}
+		}
+		if res.Peel != nil {
+			f.Peel = c.buildPeel(res.Peel)
+			if f.Peel.Detected && f.Verdict == JSONVerdictClean {
 				f.Verdict = JSONVerdictSuspicious
 			}
 		}
@@ -1220,6 +1260,28 @@ func (c config) buildISO(i *iso.Result) *ISO {
 			Class: c.boundedMessage(f.Class), Score: f.Score,
 			Technique: c.boundedMessage(f.Technique),
 			Detail:    c.boundedMessage(f.Detail), Evidence: c.boundedMessage(f.Evidence),
+		})
+	}
+	return out
+}
+
+func (c config) buildPeel(p *peeler.Result) *Peel {
+	out := &Peel{
+		Score:            p.Score,
+		Threshold:        peelThresholdFor(p, c.peelThreshold),
+		Detected:         peelBreached(p, c.peelThreshold),
+		Skipped:          c.boundedMessage(p.Skipped),
+		Outcome:          string(p.Outcome),
+		MaxDepth:         p.MaxDepth,
+		PrimarySignature: c.boundedMessage(p.PrimarySignature),
+		Exhausted:        p.Exhausted,
+		ExhaustReason:    c.boundedMessage(p.ExhaustReason),
+	}
+	for _, f := range p.Findings {
+		out.Findings = append(out.Findings, PeelFinding{
+			Class: c.boundedMessage(f.Class), Score: f.Score,
+			Technique: c.boundedMessage(f.Technique), Novel: c.boundedMessage(f.Novel),
+			Detail: c.boundedMessage(f.Detail),
 		})
 	}
 	return out

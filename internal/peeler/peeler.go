@@ -25,9 +25,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
+
+func itoa(n int) string { return strconv.Itoa(n) }
 
 // Outcome is the terminal classification of a peel. Precedence when several
 // occur across branches: RevealedExecutable > RevealedScript > PeelExhausted >
@@ -59,7 +62,23 @@ type Chain struct {
 // lifecycle.
 func (c Chain) Signature() string { return strings.Join(c.Transforms, ">") }
 
-// Result is the peel verdict for one sample.
+// Finding is one peel signal, in the shape the engine's fusion lattice and the
+// reporters consume from every detector (Class / Detail / Technique / Novel /
+// Score). The peeler emits one per qualifying chain, plus one when the peel was
+// exhausted.
+type Finding struct {
+	// Class is a stable id ("peel.revealed-executable", "peel.exhausted", ...).
+	Class string `json:"class"`
+	Score int    `json:"score"`
+	// Technique and Novel carry the ATT&CK and plan ids for coverage.
+	Technique string `json:"technique,omitempty"`
+	Novel     string `json:"novel,omitempty"`
+	// Detail is human-readable (the chain signature, or the exhaustion reason).
+	Detail string `json:"detail"`
+}
+
+// Result is the peel verdict for one sample. The first block is the standalone
+// `cau peel` view; the second block is the detector contract the engine uses.
 type Result struct {
 	Outcome Outcome `json:"outcome"`
 	// Score is bounded [0,100]. Depth raises it regardless of the payload
@@ -80,11 +99,45 @@ type Result struct {
 	// NodesVisited and OutputBytes report the spend, for operators and tests.
 	NodesVisited int64 `json:"nodes_visited"`
 	OutputBytes  int64 `json:"output_bytes"`
+
+	// ── detector contract (set by the engine; empty for standalone peels) ──
+	FilePath  string    `json:"file_path,omitempty"`
+	Size      int       `json:"size,omitempty"`
+	Threshold int       `json:"threshold,omitempty"`
+	Skipped   string    `json:"skipped,omitempty"`
+	Findings  []Finding `json:"findings,omitempty"`
 }
 
 // Technique is the ATT&CK id this detector is evidence for (partial): the
-// T1027 obfuscation family. Depth and chain patterns are the evidence.
-const Technique = "T1027"
+// T1027 obfuscation family. Depth and chain patterns are the evidence. Novel is
+// the plan's detection-first id for chain depth as a signal.
+const (
+	Technique = "T1027"
+	Novel     = "NOVEL-012"
+)
+
+// DefaultThreshold is the score at or above which the peeler independently
+// reports SUSPICIOUS. A depth-2 revealed chain scores 60 and crosses it; a
+// peel-exhausted-only result scores 30 and corroborates through fusion without
+// flagging on its own, matching the measured 0-FP envelope.
+const DefaultThreshold = 50
+
+// Threshold is the score used when a caller passes none. A variable so a
+// deployment can retune without a recompile, like the other detectors.
+var Threshold = DefaultThreshold
+
+// EffectiveThreshold returns the threshold applied to this result.
+func (r *Result) EffectiveThreshold() int {
+	if r == nil || r.Threshold <= 0 {
+		return Threshold
+	}
+	return r.Threshold
+}
+
+// Detected reports whether the peeler independently crossed its threshold.
+func (r *Result) Detected() bool {
+	return r != nil && r.Skipped == "" && r.Score >= r.EffectiveThreshold()
+}
 
 // depthScoreThreshold is the layer count above which depth alone is treated as
 // suspicious. One encode of a legitimate blob (a single base64 of an asset) is
@@ -303,7 +356,39 @@ func (st *peel) finish(exhausted bool, reason string) Result {
 		r.PrimarySignature = chains[0].Signature()
 	}
 	r.Score = score(r)
+	r.Findings = buildFindings(r)
 	return r
+}
+
+// buildFindings renders the detector-contract findings from a scored result:
+// one per qualifying chain (depth >= minChainDepth revealing a payload) and one
+// for an exhausted peel. A plain clean result has no findings.
+func buildFindings(r Result) []Finding {
+	var out []Finding
+	for _, c := range r.Chains {
+		if c.Depth < minChainDepth {
+			continue
+		}
+		switch c.Terminal {
+		case OutcomeRevealedExecutable:
+			out = append(out, Finding{
+				Class: "peel.revealed-executable", Score: r.Score, Technique: Technique, Novel: Novel,
+				Detail: "executable revealed through " + c.Signature() + " (depth " + itoa(c.Depth) + ")",
+			})
+		case OutcomeRevealedScript:
+			out = append(out, Finding{
+				Class: "peel.revealed-script", Score: r.Score, Technique: Technique, Novel: Novel,
+				Detail: "script revealed through " + c.Signature() + " (depth " + itoa(c.Depth) + ")",
+			})
+		}
+	}
+	if r.Outcome == OutcomePeelExhausted {
+		out = append(out, Finding{
+			Class: "peel.exhausted", Score: r.Score, Technique: Technique, Novel: Novel,
+			Detail: "peel exhausted at " + itoa(r.MaxDepth) + " layers: " + r.ExhaustReason,
+		})
+	}
+	return out
 }
 
 // primaryChainSignature returns the signature of the deepest chain whose

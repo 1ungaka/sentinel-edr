@@ -71,10 +71,11 @@ detail and the open items. Everything here is measured and gated in CI
 - Response primitives: an integrity-sealed quarantine vault
   (`cau quarantine`, XOR-neutralized at rest, fail-closed restore) and
   decoy/canary files with a baseline tamper check (`cau canary`).
-- Obfuscation-chain peeler (`cau peel`, `internal/peeler`): a bounded,
-  budget-walled tree unwrap (base64/base32/hex, gzip/zlib/flate/bzip2) where
-  depth is the signal; `peel-exhausted` is a first-class outcome and a revealed
-  payload flags only at chain depth >= 2 (0/116,201 benign FP). T1027 (partial).
+- Obfuscation-chain peeler (`cau peel`, and a `peeler` detector + fusion source
+  wired into `cau scan`): a bounded, budget-walled tree unwrap (base64/base32/
+  hex, gzip/zlib/flate/bzip2) where depth is the signal; `peel-exhausted` is a
+  first-class outcome and a revealed payload flags only at chain depth >= 2
+  (0/116,201 benign FP, 0/291 on the repo). T1027 (partial).
 - MCP server (`cau-mcp`): the engine over JSON-RPC on stdio (with an optional
   streamable-HTTP transport, `--http <addr>`) — nine tools
   (scan/explain/test-and-draft-rules/coverage), signature and coverage
@@ -100,9 +101,9 @@ techniques as new published gaps, so the counterfactual stays visible.
 
 **Not yet shipped (see phases):** intelligence feeds
 and the EU-framework bindings (Phase 4), the ML ladder (Phase 5), the
-layer-peeler's follow-ons (the entropy/structural estimator, emulation fallback
-and scan-path wiring — the bounded tree core shipped 2026-11-02) and the other
-NOVEL-012 items (Phase 10 / Phase 12), firmware and
+layer-peeler's follow-ons (the entropy/structural estimator and emulation
+fallback — the bounded tree core and its scan-path wiring shipped 2026-11-02)
+and the other NOVEL-012 items (Phase 10 / Phase 12), firmware and
 the broader format/plane sweeps (Phases 8-9), and the entire console/sensor
 control plane (proprietary).
 
@@ -775,10 +776,15 @@ catch and how to catch it, not how to build it. This Phase 4-connected work maps
   the two divide the work without double-counting benign compression. Measured
   **0 / 116,201 benign files** flagged (`/usr/bin`, `/usr/share/doc`,
   `/usr/lib/python3`, `/usr/share/nmap`); depth-sweep and bomb-cap tests plus `FuzzPeel`
-  (in `make fuzz`) back it. **Open follow-ons:** the entropy/structural estimator
-  (routing below — this increment uses cheap per-layer `Detect`, not segment profiling),
-  the emulation-sidecar fallback, scan-path wiring (a `ScanResult` facet + fusion), and
-  per-tenant fairness.
+  (in `make fuzz`) back it. **Scan-path wiring shipped 2026-11-02 (second increment):**
+  the peeler is now a first-class engine detector — `ScanResult.Peel`, a `peeler` fusion
+  source, `--no-peel` / `--peel-threshold` (default on), the `peel` / `peel_*` fields
+  across text / JSON (schema 1.9.0) / SARIF / OCSF, and `peeler` content in the ATT&CK
+  coverage matrix (T1027, three classes). Measured safe: the eval gate is unchanged
+  (recall / precision / FP / FN flat) and a repo self-scan flagged 0 of 291 files.
+  **Open follow-ons:** the entropy/structural estimator (routing below — this increment
+  uses cheap per-layer `Detect`, not segment profiling), the emulation-sidecar fallback,
+  and per-tenant fairness.
 - [~] Chain-depth estimator as a cheap pre-pass: entropy-segment profiling plus
   structural fingerprints (overlay chains, packed-import tables, section anomalies)
   route samples to specialized peelers (archive / packer / script) before full peel cost

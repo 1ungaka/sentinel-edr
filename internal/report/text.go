@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/cau-edr/cau/internal/peeler"
 	"github.com/cau-edr/cau/scanner"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/fusion"
@@ -97,6 +98,9 @@ func (r *TextReporter) Write(w io.Writer, in Input) error {
 		}
 		if hasResult && res.ISO != nil {
 			c.writeISO(bw, res.ISO)
+		}
+		if hasResult && res.Peel != nil {
+			c.writePeel(bw, res.Peel)
 		}
 		if hasResult && res.Fusion != nil {
 			c.writeFusion(bw, res.FilePath, res.Fusion)
@@ -486,6 +490,36 @@ func (c config) writeISO(w io.Writer, i *iso.Result) {
 	fmt.Fprintln(w)
 }
 
+// writePeel renders the obfuscation-chain analysis when it fired.
+func (c config) writePeel(w io.Writer, p *peeler.Result) {
+	if p.Skipped != "" || !peelBreached(p, c.peelThreshold) {
+		return
+	}
+	path := c.boundedMessage(p.FilePath)
+	threshold := peelThresholdFor(p, c.peelThreshold)
+	fmt.Fprintf(w, " [!] DETECTED (obfuscation chain) — %s\n", path)
+	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
+	fmt.Fprintf(w, "     %-10s: %d / %d threshold\n", "Score", p.Score, threshold)
+	fmt.Fprintf(w, "     %-10s: %s (depth %d)\n", "Outcome", c.boundedMessage(string(p.Outcome)), p.MaxDepth)
+	if p.PrimarySignature != "" {
+		fmt.Fprintf(w, "     %-10s: %s\n", "Chain", c.boundedMessage(p.PrimarySignature))
+	}
+	fmt.Fprintln(w)
+	for _, f := range p.Findings {
+		tags := ""
+		if f.Technique != "" {
+			tags = "  (" + c.boundedMessage(f.Technique)
+			if f.Novel != "" {
+				tags += ", " + c.boundedMessage(f.Novel)
+			}
+			tags += ")"
+		}
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
+		fmt.Fprintf(w, "       %s\n", c.boundedMessage(f.Detail))
+	}
+	fmt.Fprintln(w)
+}
+
 // writeFusion renders the lattice's verdict when it adds something to what
 // the detectors already printed: a detection reached only by corroboration,
 // or a verdict several sources agreed on. A fused verdict that restates one
@@ -544,6 +578,7 @@ func (c config) writeSummary(w io.Writer, in Input) {
 	oleHits := len(in.OLEBreach(c.oleThreshold))
 	pdfHits := len(in.PDFBreach(c.pdfThreshold))
 	isoHits := len(in.ISOBreach(c.isoThreshold))
+	peelHits := len(in.PeelBreach(c.peelThreshold))
 	fused := len(in.FusionCorroborated())
 
 	fmt.Fprintln(w)
@@ -560,6 +595,7 @@ func (c config) writeSummary(w io.Writer, in Input) {
 	fmt.Fprintf(w, " OLE-macro detections  : %d\n", oleHits)
 	fmt.Fprintf(w, " PDF detections        : %d\n", pdfHits)
 	fmt.Fprintf(w, " ISO detections        : %d\n", isoHits)
+	fmt.Fprintf(w, " Chain-peel detections : %d\n", peelHits)
 	fmt.Fprintf(w, " Fused-only detections : %d\n", fused)
 	fmt.Fprintf(w, " Errors                : %d\n", in.ErrorCount())
 	fmt.Fprintf(w, " Exit code             : %d (%s)\n", code, reason)

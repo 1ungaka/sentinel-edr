@@ -1105,11 +1105,17 @@ eBPF **enforcement** program.
   builds everything green on every push** — four jobs: Go build/vet/race-test, the BPF-LSM
   object + cilium/ebpf loader, the CO-RE object (bpftool-generated `vmlinux.h`), and the
   kernel module (`linux-headers`). Parsers and the signed-baseline verifier are fuzzed.
+- CO-RE loader wiring (`enforce run --core` + `enforce block|unblock|blocked`): the
+  path-aware object is loaded from a file at runtime and its per-inode blocklist map is
+  driven from the CLI (resolve a path to its inode, deny opening it) — so a responder can
+  quarantine a specific dropped file while the host keeps running.
 - **Still open there** (needs real hardware/VMM/root the build cannot exercise, not code
-  that is merely unwritten): wiring the CO-RE object into the Go loader's release pipeline,
-  **vkernel** guest introspection, **kdump capture** (a privileged destructive response
-  left to policy), TPM **quote-based** remote attestation (PCR *reads* ship), and
-  continuous real-time hooks. The rows below track them.
+  that is merely unwritten): **vkernel** guest introspection (KVM/QEMU + libvmi), **kdump
+  capture** (a privileged destructive crash trigger left to policy), TPM **quote-based**
+  remote attestation (PCR *reads* and signed-baseline drift ship; a signed `TPM2_Quote`
+  needs TPM access this build environment lacks), and continuous real-time hooks /
+  live-mediation testing (needs root on a BPF-LSM kernel). Shipping these untested would
+  break measure-or-don't-ship; they are documented in `cau-kernel/docs/`.
 
 **Sensor kernel components (Linux):**
 - [ ] BPF-LSM first: the sensor registers as an LSM (signed, package-managed) for real

@@ -1,0 +1,41 @@
+# Resident daemon unit: runs `cau scan --interval` as a long-lived service that
+# re-scans on a fixed interval and shuts down cleanly on SIGTERM. Use this when
+# you want one always-on process (e.g. in a container) instead of the
+# timer-driven oneshot in cau-scan.service.
+#
+# This is a *scheduled* scanner, not a real-time file monitor: it rescans every
+# --interval. Real-time, kernel-level monitoring (fanotify/eBPF) is the resident
+# sensor's job, a separate component.
+#
+# Install: copy to /etc/systemd/system/, edit the target/interval, then:
+#   systemctl daemon-reload && systemctl enable --now cau-daemon.service
+[Unit]
+Description=CAU EDR resident scan daemon
+Documentation=https://github.com/s-b-repo/cau
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Edit the scan target(s) and --interval for your host.
+ExecStart=/usr/bin/cau scan --dir / --interval 1h --format sarif --output /var/log/cau/scan.sarif --fail-on none --quiet
+Restart=on-failure
+RestartSec=30
+# Graceful stop: the daemon exits 0 on SIGTERM after finishing the current pass.
+KillSignal=SIGTERM
+TimeoutStopSec=120
+Nice=15
+IOSchedulingClass=idle
+
+# Hardening (same posture as the oneshot unit).
+ProtectSystem=strict
+ReadWritePaths=/var/log/cau
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

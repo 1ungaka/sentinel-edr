@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cau-edr/cau/internal/peeler"
@@ -65,6 +67,7 @@ Scan examples:
   cau scan ./build --format json --fail-on heuristic
   cau scan ./dist --format ocsf --output findings.json   # OCSF Detection Findings
   cau scan --dir /mnt/usb --quarantine                    # detect AND prevent in one pass
+  cau scan --dir / --interval 1h --quiet                  # run as a background daemon (systemd: packaging/)
   cau scan --dir / --jobs 16 --no-heuristics --no-static --quiet
 
 Detectors: hash signatures, YARA, string/API heuristics, the static
@@ -146,6 +149,7 @@ type scanFlags struct {
 	noPeel            bool
 	quarantine        bool
 	quarantineStore   string
+	interval          time.Duration
 	fuzzyDB           string
 	signers           string
 	heurThreshold     int
@@ -200,6 +204,7 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&f.peelThreshold, "peel-threshold", peeler.Threshold, "score at which an obfuscation chain is reported suspicious")
 	fs.BoolVar(&f.quarantine, "quarantine", false, "after scanning, move files with a MALICIOUS verdict into the quarantine vault (free prevention; default off)")
 	fs.StringVar(&f.quarantineStore, "quarantine-store", "", "vault directory for --quarantine (default: the cau quarantine default)")
+	fs.DurationVar(&f.interval, "interval", 0, "daemon mode: re-scan every interval (e.g. 15m, 1h) until a termination signal; 0 scans once and exits")
 	fs.BoolVar(&f.noFusion, "no-fusion", false, "disable the fusion lattice (corroboration of sub-threshold detectors)")
 	fs.StringVar(&f.format, "format", "text", "output format: "+strings.Join(report.Formats, ", "))
 	fs.StringVar(&f.output, "output", "", "write the report to this file instead of stdout")
@@ -498,43 +503,97 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		FollowSymlinks:     f.followSymlinks,
 	}
 
-	// ── scan ──
-	start := time.Now()
-	in := report.Input{}
-	for _, target := range targets {
-		info, err := os.Stat(target)
-		if err != nil {
-			in.Results = append(in.Results, scanner.ScanResult{FilePath: target, Verdict: scanner.VerdictError, Error: err})
-			continue
+	// scanOnce runs every target through the engine once and returns the report
+	// Input (with prevention applied). It is the unit the daemon loop repeats.
+	scanOnce := func() report.Input {
+		start := time.Now()
+		in := report.Input{}
+		for _, target := range targets {
+			info, err := os.Stat(target)
+			if err != nil {
+				in.Results = append(in.Results, scanner.ScanResult{FilePath: target, Verdict: scanner.VerdictError, Error: err})
+				continue
+			}
+			if info.IsDir() {
+				status("[*] Scanning directory %s", target)
+				rs, hs := engine.ScanDirectory(target, nil)
+				in.Results = append(in.Results, rs...)
+				in.Heuristics = append(in.Heuristics, hs...)
+				continue
+			}
+			status("[*] Scanning %s", target)
+			r, h := engine.ScanFile(target)
+			in.Results = append(in.Results, r)
+			if h != nil {
+				in.Heuristics = append(in.Heuristics, *h)
+			}
 		}
-		if info.IsDir() {
-			status("[*] Scanning directory %s", target)
-			rs, hs := engine.ScanDirectory(target, nil)
-			in.Results = append(in.Results, rs...)
-			in.Heuristics = append(in.Heuristics, hs...)
-			continue
+		in.Elapsed = time.Since(start)
+
+		// Prevention (free): move confirmed-malicious files into the vault.
+		// Explicit --quarantine only; destructive, so MALICIOUS tier (hash/YARA)
+		// only, never sub-threshold suspicions.
+		if f.quarantine {
+			moved, qerr := autoQuarantine(f.quarantineStore, in.Results, status)
+			if qerr != nil {
+				fmt.Fprintf(stderr, "[ERROR] quarantine: %v\n", qerr)
+			}
+			status("[*] Quarantined %d malicious file(s)", moved)
 		}
-		status("[*] Scanning %s", target)
-		r, h := engine.ScanFile(target)
-		in.Results = append(in.Results, r)
-		if h != nil {
-			in.Heuristics = append(in.Heuristics, *h)
+		return in
+	}
+
+	// One-shot (default): scan once and exit with the policy's code.
+	if f.interval <= 0 {
+		return finish(scanOnce())
+	}
+
+	// Daemon mode: an automated background run. Re-scan every --interval until a
+	// termination signal, writing the report each cycle (the latest cycle's
+	// report, when --output is set). A per-cycle finding never exits the daemon;
+	// the loop exits 0 on a clean shutdown. This is the portable scheduled
+	// scanner — register it as a systemd service (see packaging/systemd) or a
+	// Windows service wrapper; real-time kernel monitoring is the sensor's job.
+	return runScanDaemon(f.interval, scanOnce, finish, status, stderr)
+}
+
+// runScanDaemon runs scanOnce on a fixed interval until SIGINT/SIGTERM, writing
+// the report each cycle via finish. It is the engine's automated background run:
+// a resident, scheduled scanner with no external dependency, suitable to run
+// under a systemd service, a container entrypoint, or a Windows service wrapper.
+// It returns ExitOK on a clean shutdown; a per-cycle finding is logged, not
+// fatal, because a daemon must keep running.
+func runScanDaemon(interval time.Duration, scanOnce func() report.Input, finish func(report.Input) int, status func(string, ...interface{}), stderr io.Writer) int {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sig)
+	stop := make(chan struct{})
+	go func() { <-sig; close(stop) }()
+
+	status("[*] Daemon mode: scanning every %s (Ctrl-C or SIGTERM to stop)", interval)
+	cycle := func() {
+		code := finish(scanOnce())
+		status("[*] Cycle complete (exit code would be %d in one-shot mode); next scan in %s", code, interval)
+	}
+	scanLoop(interval, cycle, stop)
+	status("[*] Shutting down the scan daemon")
+	return report.ExitOK
+}
+
+// scanLoop runs cycle immediately, then once per interval, until stop is closed.
+// It is the testable core of the scan daemon (no signals, no process state).
+func scanLoop(interval time.Duration, cycle func(), stop <-chan struct{}) {
+	cycle() // scan immediately, then on each tick
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			cycle()
 		}
 	}
-	in.Elapsed = time.Since(start)
-
-	// Prevention (free): move confirmed-malicious files into the vault. Explicit
-	// --quarantine only; it is destructive, so it acts solely on the MALICIOUS
-	// tier (hash/YARA), never on sub-threshold suspicions.
-	if f.quarantine {
-		moved, qerr := autoQuarantine(f.quarantineStore, in.Results, status)
-		if qerr != nil {
-			fmt.Fprintf(stderr, "[ERROR] quarantine: %v\n", qerr)
-		}
-		status("[*] Quarantined %d malicious file(s)", moved)
-	}
-
-	return finish(in)
 }
 
 func printBanner(w io.Writer) {

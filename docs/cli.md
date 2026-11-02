@@ -76,6 +76,7 @@ directories never.
 | `--follow-symlinks` | off | scan the targets of symbolic links to files |
 | `--quarantine` | off | **prevention**: after scanning, move files with a MALICIOUS verdict into the vault (hash/YARA tier only; never sub-threshold suspicions) |
 | `--quarantine-store <dir>` | default vault | vault directory for `--quarantine` |
+| `--interval <dur>` | 0 (one-shot) | **daemon mode**: re-scan every interval (e.g. `15m`, `1h`) until SIGINT/SIGTERM, writing the report each cycle; a finding never stops the daemon. Scheduled, not real-time. See `packaging/systemd/` for service units. |
 
 Hash signatures cannot be turned off: a signature database is required.
 

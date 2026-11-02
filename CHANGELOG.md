@@ -56,6 +56,14 @@ cut a tagged release yet, so everything is under Unreleased.
   write and TLSH-parse errors.
 
 ### Added
+- **Automated background scanning** (`cau scan --interval <dur>`, plus systemd
+  units in `packaging/systemd/`): a scheduled/resident scan daemon that re-scans
+  on a fixed interval until `SIGINT`/`SIGTERM`, writing the report each cycle (a
+  finding never stops the daemon; it exits 0 on a clean shutdown). It is portable
+  — register it as a systemd service (`cau-daemon.service`), a timer-driven
+  one-shot (`cau-scan.service` + `cau-scan.timer`), a container entrypoint, or a
+  Windows/`launchd` service. This is a *scheduled* scanner; real-time
+  kernel-level file monitoring remains the resident sensor's job.
 - **Scan-time prevention** (`cau scan --quarantine`): detect *and* prevent in one
   pass — after scanning, files with a MALICIOUS verdict (hash/YARA) are moved
   into the integrity-sealed vault, with the threat name recorded. Explicit and

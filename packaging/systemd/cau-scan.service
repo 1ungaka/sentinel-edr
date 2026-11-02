@@ -1,0 +1,38 @@
+# Oneshot scan unit, driven by cau-scan.timer. Runs a single cau scan and exits;
+# systemd handles the scheduling. This is the scheduled-scan pattern — prefer it
+# over the resident daemon when you only need periodic scans.
+#
+# Install: copy this file and cau-scan.timer to /etc/systemd/system/, edit the
+# scan path and options below, then:
+#   systemctl daemon-reload && systemctl enable --now cau-scan.timer
+#
+# Reports are written under ReadWritePaths; adjust the path and --output to taste.
+[Unit]
+Description=CAU EDR scheduled scan
+Documentation=https://github.com/s-b-repo/cau
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Edit the scan target(s), format and output path for your host.
+ExecStart=/usr/bin/cau scan --dir / --format sarif --output /var/log/cau/scan.sarif --fail-on none --quiet
+# A finding must not make the unit "failed"; the report carries the verdict.
+SuccessExitStatus=0 1 2
+Nice=15
+IOSchedulingClass=idle
+
+# Hardening: the scanner only reads the filesystem and writes its report dir.
+ProtectSystem=strict
+ReadWritePaths=/var/log/cau
+# Add ReadWritePaths for the quarantine vault if you pass --quarantine, e.g.:
+#   ReadWritePaths=/var/log/cau /var/lib/cau/quarantine
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1861,11 +1861,19 @@ become implants, and the exclusion list outlives every review that approved it.
   audit handoff ("what was checked, why this verdict"). The CLI banner and tagline are
   stderr persona only and never enter report artifacts; machine formats were already
   banner-free by design (`finish()` writes a document even on failed runs).
-- [ ] Linux-first packaging for normal commercial deployment: deb/rpm packages with the
+- [~] Linux-first packaging for normal commercial deployment: deb/rpm packages with the
   engine at the standard paths (resources under `/usr/share/cau`, config under
   `/etc/cau` — matching the existing discovery order), man pages, shell completions,
   and a systemd timer unit for scheduled scans writing reports to a configurable
   directory.
+  **Automated background run shipped 2026-11-02:** `cau scan --interval <dur>` is a
+  self-contained scan daemon (re-scans on the interval, writes the report each cycle,
+  exits 0 on `SIGTERM`), and `packaging/systemd/` ships both patterns — a timer-driven
+  one-shot (`cau-scan.service` + `cau-scan.timer`) and a resident daemon
+  (`cau-daemon.service`), hardened units writing to a configurable report dir, with a
+  README covering `--quarantine` and the Windows/`launchd` wrappers. It is a *scheduled*
+  scanner; real-time kernel monitoring stays the sensor's. **Open:** the deb/rpm
+  packages, man pages and shell completions.
 - [ ] The free/paid reporting boundary rides the single-agent vs. multi-agent line:
   anything a single agent can emit about its own host — per-run artifacts, its local
   history, its own prevention/response record — is free; only *cross-agent* rollups

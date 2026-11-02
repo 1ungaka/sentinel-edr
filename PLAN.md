@@ -1090,10 +1090,21 @@ eBPF **enforcement** program.
   dependency-free. Loading needs root + `CONFIG_BPF_LSM` + `bpf` in
   `/sys/kernel/security/lsm`. GitHub CI builds both the default and the eBPF-tagged binary
   on every push.
-- **Still open there** (the genuinely kernel-resident, hardware-anchored items): BPF-LSM
-  *rich per-inode/path policy* (the CO-RE variant), the DKMS fallback module, vkernel
-  guest introspection, TPM/IMA boot-measured attestation, kdump capture, and continuous
-  real-time hooks. The rows below track them; `cau-kernel` is where they land.
+- Boot attestation (`cau-kernel attest`): records/verifies TPM PCRs, the IMA
+  measurement-log summary, and kdump readiness against an Ed25519-signed baseline — a
+  changed PCR flags a different boot chain. Reads real PCRs; IMA degrades honestly off
+  root.
+- Second enforcement backend (`kmod/cau_guard.c`): a **loadable kernel module**
+  (kretprobe on `security_bprm_check`) — the "where BPF-LSM cannot serve" option the plan
+  reserves. More capable than eBPF (arbitrary in-kernel C, no verifier, any hook), with
+  the honest trade-off (out-of-tree, taints the kernel, needs Secure-Boot signing);
+  BPF-LSM stays the safer default. DKMS-packaged; **GitHub CI compiles both backends**
+  (a `kmod` job with `linux-headers`, an `ebpf` job with clang) on every push.
+- **Still open there** (needs hardware/VMM/kernel environments a build cannot exercise):
+  BPF-LSM *rich per-inode/path policy* (the CO-RE variant — recipe shipped in
+  `bpf/README.md`), vkernel guest introspection, kdump *capture* (a privileged
+  destructive response left to policy), and continuous real-time hooks. The rows below
+  track them.
 
 **Sensor kernel components (Linux):**
 - [ ] BPF-LSM first: the sensor registers as an LSM (signed, package-managed) for real

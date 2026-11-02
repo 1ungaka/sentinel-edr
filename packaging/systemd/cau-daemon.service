@@ -1,41 +1,93 @@
 # Resident daemon unit: runs `cau scan --interval` as a long-lived service that
-# re-scans on a fixed interval and shuts down cleanly on SIGTERM. Use this when
-# you want one always-on process (e.g. in a container) instead of the
-# timer-driven oneshot in cau-scan.service.
+# re-scans on a fixed interval, recovers from crashes, and shuts down cleanly on
+# SIGTERM. Use this when you want one always-on process (e.g. in a container)
+# instead of the timer-driven oneshot in cau-scan.service.
 #
 # This is a *scheduled* scanner, not a real-time file monitor: it rescans every
 # --interval. Real-time, kernel-level monitoring (fanotify/eBPF) is the resident
 # sensor's job, a separate component.
 #
-# Install: copy to /etc/systemd/system/, edit the target/interval, then:
+# Install: copy to /etc/systemd/system/, create the user and dirs (see below),
+# edit the target/interval, then:
 #   systemctl daemon-reload && systemctl enable --now cau-daemon.service
+
 [Unit]
 Description=CAU EDR resident scan daemon
 Documentation=https://github.com/s-b-repo/cau
 After=network-online.target
 Wants=network-online.target
+# Crash-loop guard: if the service restarts 5 times within 5 minutes, stop
+# trying and leave it failed for an operator, rather than spinning forever.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
-Type=simple
-# Edit the scan target(s) and --interval for your host.
-ExecStart=/usr/bin/cau scan --dir / --interval 1h --format sarif --output /var/log/cau/scan.sarif --fail-on none --quiet
-Restart=on-failure
-RestartSec=30
+# notify: the daemon signals readiness and pings a watchdog, so systemd can
+# detect a hang or a dead process and restart it (crash/hang auto-recovery).
+Type=notify
+NotifyAccess=main
+WatchdogSec=60s
+# The daemon also recovers from a panic *within* a scan cycle on its own; the
+# watchdog is the backstop for a true hang, deadlock, or hard crash.
+Restart=always
+RestartSec=10
 # Graceful stop: the daemon exits 0 on SIGTERM after finishing the current pass.
 KillSignal=SIGTERM
 TimeoutStopSec=120
 Nice=15
 IOSchedulingClass=idle
 
-# Hardening (same posture as the oneshot unit).
+# Defense in depth: verify detection content against a signed baseline before
+# (re)starting. Record it once on a known-good install (cau selftest --record
+# --sign-key); drop the leading "-" to make drift hard-fail the start.
+ExecStartPre=-/usr/bin/cau selftest
+# Edit the scan target(s) and --interval for your host.
+ExecStart=/usr/bin/cau scan --dir / --interval 1h --format sarif --output /var/log/cau/scan.sarif --fail-on none --quiet
+
+# ── Least privilege ─────────────────────────────────────────────────────────
+# Run as an unprivileged system user, not root. Scanning the whole filesystem
+# needs only the ability to read any file, granted narrowly via one capability
+# instead of full root. Create the user first:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin cau
+User=cau
+Group=cau
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+# State/report dirs owned by that user, created by systemd (mode 0750):
+#   StateDirectory -> /var/lib/cau, LogsDirectory -> /var/log/cau
+StateDirectory=cau
+LogsDirectory=cau
+UMask=0077
+
+# ── Sandbox / anti-tamper ───────────────────────────────────────────────────
+# The scanner only reads the filesystem and writes its own report/vault dirs.
 ProtectSystem=strict
-ReadWritePaths=/var/log/cau
+ReadWritePaths=/var/log/cau /var/lib/cau
 ProtectHome=read-only
 PrivateTmp=true
+PrivateDevices=true
 NoNewPrivileges=true
+# Hide every other process from the service and the service's own details from
+# other users — an attacker on the box cannot enumerate or read the daemon.
+ProtectProc=invisible
+ProcSubset=pid
 ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
 RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# Keep the W^X guard commented: it is the strongest step, but the libyara CGo
+# path can trip it on some builds. Enable it and test if your build is pure-Go.
+#MemoryDenyWriteExecute=true
 
 [Install]
 WantedBy=multi-user.target

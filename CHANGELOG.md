@@ -99,6 +99,36 @@ cut a tagged release yet, so everything is under Unreleased.
   one-shot (`cau-scan.service` + `cau-scan.timer`), a container entrypoint, or a
   Windows/`launchd` service. This is a *scheduled* scanner; real-time
   kernel-level file monitoring remains the resident sensor's job.
+- **Daemon crash & hang auto-recovery** (`cau scan --interval`). A long-lived
+  scanner is a target, so the daemon now supervises itself: every scan cycle
+  runs behind a panic barrier (`runCycle`) — a panic in a detector, report
+  writing, or quarantine is caught, logged with its stack, counted, and the
+  daemon continues to the next cycle instead of dying. Under a `Type=notify`
+  systemd unit it speaks the sd_notify protocol (new dependency-free
+  `internal/sdnotify`): `READY=1` on start, a `STATUS=` line per cycle, and a
+  `WATCHDOG=1` keep-alive on its own cadence (half `WatchdogSec`, independent of
+  the scan interval) — so a true hang, deadlock, OOM kill, or hard crash stops
+  the pings and systemd restarts the process, with `StartLimitBurst` capping a
+  crash-loop. All of it is a silent no-op with no `NOTIFY_SOCKET`, so a
+  hand-run or plain-container daemon still gets cycle-level recovery.
+- **Daemon process self-protection** (new `internal/harden`, Linux). On startup
+  the scan daemon makes its process **non-dumpable** (`PR_SET_DUMPABLE=0`) — the
+  kernel then refuses `ptrace`/`/proc/<pid>/mem` from a non-owner and emits no
+  core dump, closing the cheapest paths to reading its in-memory state (the
+  pinned trust anchor, the loaded signatures) — and sets **`no_new_privs`** so a
+  coerced `exec` cannot escalate. It also logs the running binary's own SHA-256
+  for comparison against the signed release (`cau verify-self`). Best-effort and
+  fail-open: a host that denies a step is reported, never fatal, because
+  detection must keep running. Stdlib-only (raw `prctl`), so the default build
+  stays dependency-free.
+- **Hardened systemd units.** `cau-daemon.service` / `cau-scan.service` now run
+  as an unprivileged `cau` user holding only `CAP_DAC_READ_SEARCH` (read any
+  file, no root), under a full sandbox: `ProtectProc=invisible` + `ProcSubset=pid`
+  (other users cannot see or inspect the process), `ProtectSystem=strict`,
+  `PrivateDevices`, `RestrictAddressFamilies`, `SystemCallFilter=@system-service`,
+  `LockPersonality`, `UMask=0077`, systemd-managed `StateDirectory`/`LogsDirectory`.
+  The daemon unit adds `Type=notify` + `WatchdogSec=60s` + `Restart=always` for
+  the recovery above.
 - **Scan-time prevention** (`cau scan --quarantine`): auto-detect *and* block in
   one pass — after scanning, flagged files are moved into the integrity-sealed
   vault, with the driving evidence recorded as the threat label. Explicit and

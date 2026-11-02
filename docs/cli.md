@@ -81,6 +81,31 @@ directories never.
 
 Hash signatures cannot be turned off: a signature database is required.
 
+### Daemon mode: crash recovery and self-protection
+
+When `--interval` is set, `cau scan` runs as a resident, self-supervising
+daemon rather than a one-shot:
+
+- **Crash recovery.** Every scan cycle runs behind a panic barrier — a panic in
+  any detector, in report writing, or in quarantine is caught, logged with its
+  stack, counted, and the daemon continues to the next cycle. One bad file or
+  bug never takes the service down.
+- **Hang/death recovery (systemd).** Under a `Type=notify` unit with
+  `WatchdogSec=`, the daemon signals readiness and pings the watchdog on its own
+  cadence (half the watchdog window), independent of the scan interval. A true
+  hang, deadlock, or hard crash stops the pings and systemd restarts the
+  process; a crash-loop is capped by `StartLimitBurst`. With no `NOTIFY_SOCKET`
+  (run by hand or in a plain container) these calls are silent no-ops and
+  cycle-level recovery still applies.
+- **Self-protection.** At startup the daemon makes its process **non-dumpable**
+  and sets **no-new-privs** (Linux) so its in-memory state (the pinned trust
+  anchor, the loaded signatures) cannot be read out via `ptrace`/`/proc/<pid>/mem`
+  or a core dump, and a coerced `exec` cannot escalate. It logs the running
+  binary's own SHA-256 so you can compare it to the signed release
+  (`cau verify-self`). The shipped unit wraps this in an unprivileged,
+  `ProtectProc=invisible`, syscall-filtered sandbox and runs `cau selftest`
+  before each start. See the [Anti-Tamper](../wiki/Anti-Tamper.md) guide.
+
 The `--signers` blocklist is a JSON array of `{thumbprint, thumbprint_sha256,
 serial, issuer, reason}` entries, or a line file of `<thumbprint-or-serial>|<issuer>|<reason>`
 (a 40-hex id is read as a SHA-1 thumbprint, 64-hex as SHA-256, anything else as a

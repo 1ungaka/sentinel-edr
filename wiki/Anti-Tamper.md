@@ -29,6 +29,40 @@ cau selftest --pubkey pub.hex              # fail-closed on a bad/missing signat
 Verify the running binary against the signed release `SHA256SUMS`. See
 [Updates and Self-Verification](Updates-and-Self-Verification).
 
+## The running daemon — process self-protection & recovery
+
+A resident scanner (`cau scan --interval …`) is a standing target, so the
+daemon protects itself and recovers from attempts to crash it:
+
+- **Memory cannot be read out.** On startup the daemon clears its *dumpable*
+  flag (`prctl(PR_SET_DUMPABLE, 0)`): the kernel then refuses `ptrace`-attach
+  and `/proc/<pid>/mem` reads from any non-owner, and the process produces no
+  core dump. That closes the two cheapest ways to lift its in-memory state — the
+  pinned Ed25519 trust anchor, the loaded signatures — off a running host.
+- **No privilege escalation from a coerced exec.** It sets `no_new_privs`, so
+  nothing it (or any child) executes can gain privileges via setuid/setgid or
+  file capabilities.
+- **Tamper-evidence at startup.** It logs the running binary's own SHA-256;
+  compare it to the signed release (`cau verify-self`) to confirm the on-disk
+  binary was not swapped.
+- **Crash auto-recovery.** Every scan cycle runs behind a panic barrier — a
+  panic in a detector, in report writing, or in quarantine is caught, logged,
+  counted, and the daemon continues. One hostile file can never take the
+  service down. (Per-file panics are *also* isolated inside the engine, so a
+  bad file degrades to a per-file error without even reaching the cycle
+  barrier.)
+- **Hang/death auto-recovery.** Under a `Type=notify` systemd unit with
+  `WatchdogSec=`, the daemon pings a watchdog on its own cadence; a hang,
+  deadlock, OOM kill, or hard crash stops the pings and systemd restarts it,
+  with `StartLimitBurst` capping a crash-loop.
+
+The shipped systemd units add the sandbox around all of this: an unprivileged
+user holding only `CAP_DAC_READ_SEARCH` (not root), `ProtectProc=invisible` (no
+other user can even see or inspect the process), a read-only system view, a
+`@system-service` syscall filter, private `/tmp` and devices, and `cau selftest`
+as `ExecStartPre` to refuse a start on tampered detection content. See
+[Running as a Service](Running-as-a-Service).
+
 ## The vault and updates fail closed
 
 - The quarantine vault is sealed with the SHA-256 of both the original and the

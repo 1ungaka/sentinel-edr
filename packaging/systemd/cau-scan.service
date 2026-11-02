@@ -27,17 +27,42 @@ SuccessExitStatus=0 1 2
 Nice=15
 IOSchedulingClass=idle
 
-# Hardening: the scanner only reads the filesystem and writes its report dir.
+# ── Least privilege ─────────────────────────────────────────────────────────
+# Run unprivileged; one capability grants read-any-file instead of full root.
+#   useradd --system --no-create-home --shell /usr/sbin/nologin cau
+User=cau
+Group=cau
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+StateDirectory=cau
+LogsDirectory=cau
+UMask=0077
+
+# ── Sandbox / anti-tamper ───────────────────────────────────────────────────
+# The scanner only reads the filesystem and writes its own report/vault dirs.
 ProtectSystem=strict
-ReadWritePaths=/var/log/cau
-# Add ReadWritePaths for the quarantine vault if you pass --quarantine, e.g.:
-#   ReadWritePaths=/var/log/cau /var/lib/cau/quarantine
+ReadWritePaths=/var/log/cau /var/lib/cau
+# For --quarantine, the vault lives under /var/lib/cau (already writable above).
 ProtectHome=read-only
 PrivateTmp=true
+PrivateDevices=true
 NoNewPrivileges=true
+ProtectProc=invisible
+ProcSubset=pid
 ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
 RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target

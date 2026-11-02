@@ -12,12 +12,16 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/cau-edr/cau/internal/harden"
 	"github.com/cau-edr/cau/internal/peeler"
+	"github.com/cau-edr/cau/internal/release"
 	"github.com/cau-edr/cau/internal/report"
+	"github.com/cau-edr/cau/internal/sdnotify"
 	"github.com/cau-edr/cau/scanner"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/iso"
@@ -579,25 +583,114 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 // under a systemd service, a container entrypoint, or a Windows service wrapper.
 // It returns ExitOK on a clean shutdown; a per-cycle finding is logged, not
 // fatal, because a daemon must keep running.
+//
+// Resilience and self-protection, applied here because a long-lived privileged
+// process is a target:
+//   - Self-protection: the process is made non-dumpable and no-new-privs
+//     (harden.Apply) so its in-memory state — the pinned trust anchor, the
+//     signature set — cannot be read out via ptrace/core dump, and a coerced
+//     exec cannot escalate.
+//   - Tamper-evidence: the running binary's own SHA-256 is logged at startup,
+//     so the operator can compare it to the signed release (cau verify-self).
+//   - Crash recovery: every scan cycle runs under a panic barrier, so a bug on
+//     one cycle is logged and the daemon continues rather than dying.
+//   - Hang/death recovery: when run under a systemd notify+watchdog unit, it
+//     pings the watchdog on its own cadence (independent of the scan interval),
+//     so a deadlock, a wedged call, or a crash trips an automatic restart.
 func runScanDaemon(interval time.Duration, scanOnce func() report.Input, finish func(report.Input) int, status func(string, ...interface{}), stderr io.Writer) int {
+	status("[*] %s", harden.Apply().Summary())
+	if digest, name, err := release.SelfDigest(); err == nil {
+		status("[*] Running binary: %s sha256=%s (compare with the signed release via 'cau verify-self')", name, digest)
+	} else {
+		status("[WARN] could not self-measure the running binary: %v", err)
+	}
+
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)
 	stop := make(chan struct{})
 	go func() { <-sig; close(stop) }()
 
+	// Watchdog keep-alive, driven by the unit's WatchdogSec (WATCHDOG_USEC).
+	// It runs on its own ticker so the long sleep between scans is never
+	// mistaken for a hang; it stops as soon as shutdown begins.
+	startWatchdog(stop, status)
+	if sdnotify.Enabled() {
+		_ = sdnotify.Ready()
+		_ = sdnotify.Status(fmt.Sprintf("ready; scanning every %s", interval))
+	}
+
 	status("[*] Daemon mode: scanning every %s (Ctrl-C or SIGTERM to stop)", interval)
+	var cycles, crashes uint64
 	cycle := func() {
-		code := finish(scanOnce())
-		status("[*] Cycle complete (exit code would be %d in one-shot mode); next scan in %s", code, interval)
+		cycles++
+		if sdnotify.Enabled() {
+			_ = sdnotify.Status(fmt.Sprintf("scanning (cycle %d)", cycles))
+		}
+		crashed := runCycle(func() {
+			code := finish(scanOnce())
+			status("[*] Cycle %d complete (exit code would be %d in one-shot mode); next scan in %s", cycles, code, interval)
+		}, status)
+		if crashed {
+			crashes++
+			status("[WARN] cycle %d crashed and was recovered; daemon continues (%d crash(es) so far)", cycles, crashes)
+		}
+		if sdnotify.Enabled() {
+			_ = sdnotify.Watchdog() // a completed cycle is proof of liveness
+			_ = sdnotify.Status(fmt.Sprintf("idle; %d cycle(s), %d recovered crash(es)", cycles, crashes))
+		}
 	}
 	scanLoop(interval, cycle, stop)
-	status("[*] Shutting down the scan daemon")
+
+	if sdnotify.Enabled() {
+		_ = sdnotify.Stopping()
+	}
+	status("[*] Shutting down the scan daemon (%d cycle(s), %d recovered crash(es))", cycles, crashes)
 	return report.ExitOK
+}
+
+// runCycle executes one scan cycle behind a panic barrier. A panic anywhere in
+// the cycle (a detector, report writing, quarantine) is caught, logged with its
+// stack, and reported as crashed — the daemon must survive one bad cycle. It
+// returns true when it recovered a panic.
+func runCycle(cycle func(), status func(string, ...interface{})) (crashed bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			crashed = true
+			status("[ERROR] recovered from a cycle panic: %v\n%s", r, debug.Stack())
+		}
+	}()
+	cycle()
+	return false
+}
+
+// startWatchdog begins pinging the systemd watchdog on the recommended cadence
+// (half the WatchdogSec window) until stop is closed. It is a no-op when the
+// unit has no watchdog configured, so a hand-run daemon spawns no goroutine.
+func startWatchdog(stop <-chan struct{}, status func(string, ...interface{})) {
+	every := sdnotify.WatchdogInterval()
+	if every <= 0 {
+		return
+	}
+	status("[*] systemd watchdog active: pinging every %s", every)
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-t.C:
+				_ = sdnotify.Watchdog()
+			}
+		}
+	}()
 }
 
 // scanLoop runs cycle immediately, then once per interval, until stop is closed.
 // It is the testable core of the scan daemon (no signals, no process state).
+// cycle is expected to contain its own panic barrier (see runCycle), so a
+// crashing cycle never breaks the loop.
 func scanLoop(interval time.Duration, cycle func(), stop <-chan struct{}) {
 	cycle() // scan immediately, then on each tick
 	ticker := time.NewTicker(interval)

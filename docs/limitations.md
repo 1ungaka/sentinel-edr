@@ -38,7 +38,7 @@ untouched sample) fails the test.
 
 | Transform | YARA / heuristics | Why |
 |---|---|---|
-| case fold (upper/lower) | **survives** | rules carry `nocase`; the wannacry rule was case-sensitive until this was measured and `nocase` added |
+| case fold (upper/lower) | **survives** | rules carry `nocase`; the harness surfaced two case-sensitivity gaps that review had missed — the whole wannacry rule, and the ransomware rule's extension strings (`.locked`, `.encrypted`, `.crypt`), both `ascii wide` without `nocase` so a `.LOCKED` note walked past them — and both were fixed by adding `nocase` |
 | UTF-16 widening, NUL-infixing | **survives** | the `ascii wide` modifier matches the widened form, so NUL-between-bytes is just UTF-16LE |
 | prefix / suffix junk | **survives** | the indicator strings are still present and contiguous |
 | base64 of the whole file | **evades** | the contiguous byte sequence is gone; this is the documented encoding gap, not a regression |

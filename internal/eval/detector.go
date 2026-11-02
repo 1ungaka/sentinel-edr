@@ -48,13 +48,37 @@ type Signal struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// DetectorScore is the numeric score a scored detector assigned a sample,
+// recorded even when the score stayed below the detector's firing threshold.
+// It is the raw material for the near-miss metric: a benign file that scored
+// just under the line is the one a threshold nudge would turn into a false
+// positive, and a clean corpus that never records sub-threshold scores can
+// only measure the false positives it already has, never how close it came.
+//
+// Binary detectors (hash, yara, fusion) have no margin — a byte pattern
+// either matches or it does not — so they do not emit a DetectorScore.
+type DetectorScore struct {
+	Detector  string `json:"detector"`
+	Score     int    `json:"score"`
+	Threshold int    `json:"threshold"`
+}
+
+// Margin is how far the score sat below the firing threshold. A margin of 0
+// or less means the detector fired (or was exactly at the line); a small
+// positive margin is a near miss.
+func (d DetectorScore) Margin() int { return d.Threshold - d.Score }
+
 // Finding is the result of scanning one sample with one detector.
 type Finding struct {
-	Path     string        `json:"path"`
-	Verdict  Verdict       `json:"verdict"`
-	Signals  []Signal      `json:"signals,omitempty"`
-	Duration time.Duration `json:"-"`
-	Err      error         `json:"-"`
+	Path    string   `json:"path"`
+	Verdict Verdict  `json:"verdict"`
+	Signals []Signal `json:"signals,omitempty"`
+	// Scores carries the numeric score of every scored detector that looked
+	// at the sample, including those that did not fire. Unset for detectors
+	// that have no notion of a score.
+	Scores   []DetectorScore `json:"scores,omitempty"`
+	Duration time.Duration   `json:"-"`
+	Err      error           `json:"-"`
 }
 
 // Detected reports whether any signal fired. This, not the verdict string, is
@@ -200,6 +224,7 @@ func (c *CompositeDetector) ScanFile(path string) (Finding, error) {
 		}
 		f = f.Normalize(d.Name())
 		out.Signals = append(out.Signals, f.Signals...)
+		out.Scores = append(out.Scores, f.Scores...)
 		if len(f.Signals) > 0 {
 			out.Verdict = VerdictMalicious
 		}

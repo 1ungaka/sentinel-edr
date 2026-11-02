@@ -40,14 +40,14 @@ code with its reason.
 ## JSON
 
 `--format json` writes a single self-describing document.
-`schema_version` is `1.3.0` and follows a strict contract: a patch bump
+`schema_version` is `1.10.0` and follows a strict contract: a patch bump
 changes nothing a consumer sees; a minor bump adds optional fields or enum
 values; only a major bump removes, renames or retypes anything. Consumers
 should ignore unknown fields.
 
 ```jsonc
 {
-  "schema_version": "1.3.0",
+  "schema_version": "1.10.0",
   "tool": { "name": "CAU EDR", "version": "v0.4.0", "tagline": "..." },
   "generated_at": "2026-10-25T09:47:00Z",
   "root": "./dist",                      // present when --dir was the only target

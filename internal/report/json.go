@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/cau-edr/cau/internal/frameworks"
 	"github.com/cau-edr/cau/internal/peeler"
 	"github.com/cau-edr/cau/scanner"
 	"github.com/cau-edr/cau/scanner/encchain"
@@ -57,7 +58,12 @@ import (
 // 1.9.0 added the optional per-file "peel" object (obfuscation-chain peeler,
 // NOVEL-012) and the summary fields "peel_detections" / "peel_threshold"
 // (additive: minor bump).
-const JSONSchemaVersion = "1.9.0"
+//
+// 1.10.0 added the optional "frameworks" array inside each file's "fusion"
+// object: per-technique bindings to complementary models (Unified Kill Chain
+// phase/stage derived here; MISP cluster / Malpedia family left for an intel
+// feed to populate) so consumers can pick their scheme (additive: minor bump).
+const JSONSchemaVersion = "1.10.0"
 
 // Overall and per-file verdict strings carried by the JSON document. They are
 // lower-case on purpose: they are enum values for machines, not banners.
@@ -618,11 +624,26 @@ type Fusion struct {
 	Agreed     []string `json:"agreed,omitempty"`
 	Techniques []string `json:"techniques,omitempty"`
 	Novel      []string `json:"novel,omitempty"`
+	// Frameworks binds each technique to complementary models (Unified Kill
+	// Chain phase/stage; MISP/Malpedia left for an intel feed) so consumers are
+	// not tied to a single registry.
+	Frameworks []FrameworkBinding `json:"frameworks,omitempty"`
 	// Corroborated is true when the suspicious tier was reached only through
 	// corroboration of sub-threshold sources.
 	Corroborated bool           `json:"corroborated,omitempty"`
 	Explanation  string         `json:"explanation"`
 	Sources      []FusionSource `json:"sources"`
+}
+
+// FrameworkBinding is one technique's placement across frameworks. UKCPhase and
+// UKCStage are derived from the ATT&CK tactic; MISPCluster and MalpediaFamily
+// are populated only when an intelligence feed supplied them (never guessed).
+type FrameworkBinding struct {
+	Technique      string `json:"technique"`
+	UKCPhase       string `json:"ukc_phase,omitempty"`
+	UKCStage       string `json:"ukc_stage,omitempty"`
+	MISPCluster    string `json:"misp_cluster,omitempty"`
+	MalpediaFamily string `json:"malpedia_family,omitempty"`
 }
 
 // FusionSource is one detector's line in the fused verdict.
@@ -1302,6 +1323,10 @@ func (c config) buildFusion(v *fusion.Verdict) *Fusion {
 	}
 	for _, t := range v.Techniques {
 		out.Techniques = append(out.Techniques, c.boundedMessage(t))
+		b := frameworks.ForTechnique(t)
+		out.Frameworks = append(out.Frameworks, FrameworkBinding{
+			Technique: c.boundedMessage(t), UKCPhase: b.UKCPhase, UKCStage: b.UKCStage,
+		})
 	}
 	for _, n := range v.Novel {
 		out.Novel = append(out.Novel, c.boundedMessage(n))

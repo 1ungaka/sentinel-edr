@@ -425,8 +425,10 @@ score, which offset), `yara_test_rule` (against corpus, returns FP/FN), `generat
       Weaponization, Exploitation, Pivoting, Exfiltration or Objectives, and says so
       (11/18 phases covered). The `Binding` type also carries `MISPCluster` and
       `MalpediaFamily`, left for an intel feed to populate because they tag a sample, not a
-      technique. **Open:** wiring MISP/Malpedia tags through the intake feeds, the ENISA
-      strategic layer, and a `frameworks` object on per-sample scan findings.
+      technique. Scan report findings now carry a `frameworks` array on the `fusion` object
+      (ATT&CK id + UKC phase/stage per technique; JSON schema 1.10.0), so consumers pick
+      their scheme. **Open:** wiring MISP/Malpedia tags through the intake feeds and the
+      ENISA strategic layer.
 
 **LOTL intake (the lolol.farm meta-catalog)** — lolol.farm indexes ~30 community catalogs.
 Ingest the upstream machine-readable sources on GitHub, never hand-typed; lolol.farm is

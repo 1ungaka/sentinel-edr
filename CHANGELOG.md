@@ -71,7 +71,9 @@ cut a tagged release yet, so everything is under Unreleased.
   sequencing view grouped by stage, with empty phases named as honest gaps — so
   mapping does not hinge on a single registry. The binding type also carries
   MISP-cluster and Malpedia-family fields, left for an intel feed to populate
-  because they tag a sample, not a technique.
+  because they tag a sample, not a technique. Scan report findings also carry a
+  `frameworks` array on the `fusion` object (ATT&CK id + UKC phase/stage per
+  technique) — JSON report schema **1.10.0** — so a consumer can pick its scheme.
 - **Signed update channel** (`cau update`, `internal/updater`): installs a
   signature-database bundle fail-closed. The bundle is three files —
   `hashes.txt`, `manifest.json`, and a detached `manifest.json.sig` (one Ed25519

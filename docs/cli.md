@@ -427,6 +427,35 @@ the Ed25519 signature, so the check fails closed. Keep the signing key off the
 host; run `cau selftest --pubkey …` from a timer or before each scan. Exit
 codes: 0 intact, 1 drift or a bad/missing required signature, 3 failed, 4 usage.
 
+## cau verify-self
+
+```sh
+cau verify-self (--from <dir> | --url <base>) [--pubkey file] [--name name]
+```
+
+Verifies the running binary against a signed release manifest — the secure way
+to answer "is this the authoritative, unmodified build". It computes its own
+SHA-256, fetches the release's `SHA256SUMS` and `SHA256SUMS.sig` (`--url` over
+HTTPS, or `--from` a local/air-gapped copy), verifies the Ed25519 signature
+against the trusted key (`--pubkey`, else `$CAU_UPDATE_PUBKEY`, else the pinned
+key), and only then compares its own digest to the signed entry. A MITM of the
+download cannot forge the signature, so a tampered binary or manifest fails
+closed. `--name` overrides the filename looked up in `SHA256SUMS` (default: the
+running executable's own name). Exit 0 verified, 1 failed, 3 run error, 4 usage.
+
+## cau bundle
+
+```sh
+cau bundle update    --db hashes.txt --sign-key priv.hex --out dist [--db-version V] [--min-engine V]
+cau bundle checksums --sign-key priv.hex --out dist <file>...
+```
+
+Producer-side signing, run in CI with the signing key from a secret.
+`update` writes the signed signature-DB bundle (`hashes.txt` + `manifest.json` +
+`manifest.json.sig`) that `cau update` installs. `checksums` writes a signed
+`SHA256SUMS` (+ `.sig`) over the release files that `cau verify-self` and users
+check downloads against. Both use Ed25519; keep the key off developer machines.
+
 ## CI recipes
 
 GitHub Actions, uploading findings to code scanning:

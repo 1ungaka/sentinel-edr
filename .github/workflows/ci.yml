@@ -68,12 +68,20 @@ jobs:
             cau.ocsf.json
 
   release:
-    name: release binaries
+    name: build and sign release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      # Hex-encoded Ed25519 signing key (seed or full). Set this repository
+      # secret to produce signed releases; without it the release is published
+      # unsigned (and `cau verify-self` / `cau update` have nothing to trust).
+      CAU_RELEASE_SIGNING_KEY: ${{ secrets.CAU_RELEASE_SIGNING_KEY }}
+      # The matching Ed25519 public key (hex), a repository variable or secret.
+      # Published as a release asset and used to self-verify before publishing.
+      CAU_RELEASE_PUBLIC_KEY: ${{ vars.CAU_RELEASE_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -83,12 +91,56 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libyara-dev pkg-config
+
       - name: Build
         run: |
           make build VERSION=${GITHUB_REF_NAME}
           mkdir -p dist
+          cp cau dist/cau-${GITHUB_REF_NAME}-linux-amd64
           tar -czf dist/cau-${GITHUB_REF_NAME}-linux-amd64.tar.gz cau rules signatures LICENSE README.md
-          (cd dist && sha256sum *.tar.gz > SHA256SUMS)
+
+      - name: Sign the update bundle and release checksums
+        run: |
+          if [ -z "$CAU_RELEASE_SIGNING_KEY" ]; then
+            echo "::warning::CAU_RELEASE_SIGNING_KEY is not set; publishing an UNSIGNED release"
+            (cd dist && sha256sum * > SHA256SUMS)
+            exit 0
+          fi
+          # Write the key to a private temp file, sign, then shred it.
+          umask 077
+          KEYFILE="$(mktemp)"
+          printf '%s' "$CAU_RELEASE_SIGNING_KEY" > "$KEYFILE"
+          trap 'shred -u "$KEYFILE" 2>/dev/null || rm -f "$KEYFILE"' EXIT
+
+          # 1) Signed signature-DB bundle, for `cau update`.
+          ./cau bundle update --db signatures/hashes.txt --sign-key "$KEYFILE" \
+            --out dist --db-version "${GITHUB_REF_NAME}" --min-engine "${GITHUB_REF_NAME#v}"
+
+          # 2) Signed SHA256SUMS over every release artifact, for `cau verify-self`.
+          #    The binary thereby references itself: its own hash is in a file it
+          #    can fetch and verify against the pinned key.
+          ./cau bundle checksums --sign-key "$KEYFILE" --out dist $(find dist -maxdepth 1 -type f ! -name 'SHA256SUMS*')
+
+      - name: Record a signed detection-content integrity baseline
+        if: env.CAU_RELEASE_SIGNING_KEY != ''
+        run: |
+          umask 077
+          KEYFILE="$(mktemp)"
+          printf '%s' "$CAU_RELEASE_SIGNING_KEY" > "$KEYFILE"
+          trap 'shred -u "$KEYFILE" 2>/dev/null || rm -f "$KEYFILE"' EXIT
+          ./cau selftest --record --sign-key "$KEYFILE" --manifest dist/integrity.json
+
+      - name: Verify the signed artifacts before publishing
+        if: env.CAU_RELEASE_SIGNING_KEY != '' && env.CAU_RELEASE_PUBLIC_KEY != ''
+        run: |
+          # Publish the public key and self-verify the built binary against the
+          # SHA256SUMS we just signed — a release that cannot verify itself must
+          # not ship. (The binary references itself: its own hash is in a signed
+          # file it can fetch and check against this pinned key.)
+          printf '%s' "$CAU_RELEASE_PUBLIC_KEY" > dist/release-pubkey.hex
+          ./cau verify-self --from dist --pubkey dist/release-pubkey.hex \
+            --name "cau-${GITHUB_REF_NAME}-linux-amd64"
+
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*

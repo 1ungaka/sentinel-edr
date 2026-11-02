@@ -390,8 +390,19 @@ score, which offset), `yara_test_rule` (against corpus, returns FP/FN), `generat
   or an explicit `--url` fetch (identical payload for air-gap via a directory), `--dry-run`
   verifies only, and the trusted key comes from `--pubkey` / `$CAU_UPDATE_PUBKEY` / the
   source-pinned `pinnedUpdateKey`. Full unit + CLI tests (install, rollback, tamper, wrong
-  key, no-key). **Open (ops):** generating the release keypair, the CI release job that
-  signs and uploads the asset per tag, and the opt-in periodic config.
+  key, no-key). **CI signing shipped 2026-11-02:** the GitHub Actions release job
+  (on a `v*` tag, on GitHub's workers) signs each release with the
+  `CAU_RELEASE_SIGNING_KEY` secret — `cau bundle update` builds the signed update
+  bundle, `cau bundle checksums` a signed `SHA256SUMS`, `cau selftest --record
+  --sign-key` a signed content baseline — and `cau verify-self` self-verifies the
+  built binary before publishing (a release that cannot verify itself never ships).
+  The binary references itself at runtime via `cau verify-self` (computes its own
+  SHA-256, checks it against the signed `SHA256SUMS` over HTTPS or an air-gapped
+  copy, signature-before-hash). **Open (ops):** generating and storing the release
+  keypair, and the opt-in periodic `cau update`/`cau verify-self` config. An
+  out-of-band ICMP/QUIC echo-lane fetch of the manifest remains the plan's future
+  (proprietary, raw-socket/PQ-QUIC) transport; the signed-manifest-over-HTTPS path
+  is the secure way shipped now.
 - [x] YARA rule linter — catches the dead rules already shipped in `rule_list.yar`.
       Shipped 2026-10-29 as `cau rules lint` (`internal/rulelint`): compile
       diagnostics, required meta, technique-id shape, hex-as-text, short and
@@ -734,9 +745,15 @@ is part of the deliverable.
 - [ ] Container/OCI registry scanning at the scan node: registry-native pull scanning +
   a Kubernetes admission hook. A large share of the market's code ships inside images;
   the engine currently sees that content only after unpack, if ever.
-- [ ] Post-quantum signature chain (ML-DSA or hybrid) for air-gapped update bundles +
+- [~] Post-quantum signature chain (ML-DSA or hybrid) for air-gapped update bundles +
   reproducible builds and SBOMs for released artifacts. Extends Phase 7 items 1 and 10
   before cryptography forces the migration, not after.
+  **Classical signature chain shipped 2026-11-02:** Ed25519-signed update bundles and
+  release `SHA256SUMS` (`cau bundle`/`cau update`/`cau verify-self`), with the air-gapped
+  path (`--from` a signed directory delivered by media) already working. **Open:** the
+  **post-quantum** upgrade (ML-DSA or a hybrid), reproducible builds, and SBOMs — the
+  signing/verify seam is isolated behind the `release`/`updater` packages so swapping in
+  a hybrid scheme is a localized change.
 - [ ] Parser fuzzing gate: OSS-Fuzz/libFuzzer harnesses for every shipped parser (PE,
   ELF, UEFI, OLE, archives). A scanner that dies on a malformed sample is a
   time-of-scanning liability; fuzz failures block releases with the same honesty as the

@@ -56,6 +56,21 @@ cut a tagged release yet, so everything is under Unreleased.
   write and TLSH-parse errors.
 
 ### Added
+- **Signed releases + self-verification** (`internal/release`, `cau verify-self`,
+  `cau bundle`, and a signing GitHub Actions release job). Each tagged release is
+  signed on GitHub's workers with an Ed25519 CI secret: `cau bundle update`
+  produces the signed signature-DB bundle, `cau bundle checksums` a signed
+  `SHA256SUMS`, and the job **self-verifies the built binary before publishing**
+  — a release that cannot verify itself never ships. `cau verify-self` lets the
+  running binary reference itself: it computes its own SHA-256 and checks it
+  against the signed `SHA256SUMS` fetched over HTTPS (`--url`) or read offline
+  (`--from`), verifying the signature before the hash so a MITM cannot substitute
+  a matching digest. (An out-of-band ICMP/QUIC "echo-lane" fetch stays a future
+  proprietary transport; the signed-manifest-over-HTTPS path is the secure
+  in-engine way today.)
+- **GitHub wiki** (`wiki/` + `.github/workflows/wiki.yml`): task-oriented pages
+  (install, scanning+prevention, running as a service, updates+self-verification,
+  anti-tamper, CLI reference) synced to the project wiki on change.
 - **Detection-content self-check / anti-tamper** (`cau selftest`,
   `internal/selftest`): digests the signature database, YARA rules and fuzzy
   database and compares them against a recorded baseline, so an attacker gutting

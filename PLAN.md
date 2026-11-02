@@ -68,6 +68,9 @@ detail and the open items. Everything here is measured and gated in CI
 - YARA rule linter (`cau rules lint`), `cau rules list`.
 - Output: text, versioned JSON (schema 1.4.0), SARIF 2.1.0, OCSF 1.3.0.
 - Evaluation harness with a committed smoke corpus and regression gates.
+- Threat-intel intake (`cau intake`, `internal/intake`): STIX 2.1 / MISP /
+  MalwareBazaar / LOLDrivers parsers that feed the hash signature database from
+  machine-readable feeds, deduped against the live DB.
 - Response primitives: an integrity-sealed quarantine vault
   (`cau quarantine`, XOR-neutralized at rest, fail-closed restore) and
   decoy/canary files with a baseline tamper check (`cau canary`).
@@ -99,8 +102,10 @@ sensor row). Limitations are still published — as `partial` states and the
 follow-up worth taking: widen the expectation to track genuinely-uncovered
 techniques as new published gaps, so the counterfactual stays visible.
 
-**Not yet shipped (see phases):** intelligence feeds
-and the EU-framework bindings (Phase 4), the ML ladder (Phase 5), the
+**Not yet shipped (see phases):** the live intelligence-feed *sync* (the intake
+parsers — STIX / MISP / MalwareBazaar / LOLDrivers — and `cau intake` shipped
+2026-11-02; the TAXII client and scheduled pull remain) and the EU-framework
+bindings (Phase 4), the ML ladder (Phase 5), the
 layer-peeler's follow-ons (the entropy/structural estimator and emulation
 fallback — the bounded tree core and its scan-path wiring shipped 2026-11-02)
 and the other NOVEL-012 items (Phase 10 / Phase 12), firmware and
@@ -349,8 +354,18 @@ score, which offset), `yara_test_rule` (against corpus, returns FP/FN), `generat
 
 ## Phase 4 — Intelligence & detection content
 
-- [ ] STIX/TAXII + MalwareBazaar sync; replaces the hand-typed `hashes.txt` — MISP is the
+- [~] STIX/TAXII + MalwareBazaar sync; replaces the hand-typed `hashes.txt` — MISP is the
   canonical EU sync protocol (see intake table)
+  **Parsers shipped 2026-11-02** as `internal/intake` + `cau intake`: STIX 2.1 bundles
+  (indicator `file:hashes` patterns), MISP event JSON (md5/sha1/sha256 attributes,
+  incl. `filename|hash` composites), MalwareBazaar query/dump JSON (and the abuse.ch
+  CSV), and LOLDrivers catalog JSON — "the first real corpus to replace synthetic
+  `hashes.txt` filler." Each normalizes to validated hash signatures, dedupes against
+  the live DB (never re-labels an existing entry), and appends in the DB's own
+  `TYPE|hash|name` format; `--input`/stdin or an explicit `--url` fetch (bounded, never
+  automatic), with `--dry-run`/`--output`. Fixture tests per format. **Open:** a TAXII
+  *client* (polling a collection) and the scheduled/weekly sync, which are ops/network
+  wiring on top of these parsers.
 - [ ] Release-channel hash updates: `cau update` fetches the latest signed
   `signatures/hashes.txt` asset from GitHub Releases on a pinned repo
   (`s-b-repo/cau`), and the CI release job publishes that asset per tag.

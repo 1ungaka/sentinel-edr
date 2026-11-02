@@ -342,6 +342,26 @@ renders a stable chain signature such as `base64>gzip>base64`. Exit codes: 0
 clean, 1 a chain revealed a payload or the peel was exhausted, 3 failed, 4
 usage.
 
+## cau intake
+
+```sh
+cau intake --format stix|misp|malwarebazaar|loldrivers
+           (--input <file> | --url <url>) [--db <path>] [--dry-run] [--output <file>]
+```
+
+Parses a threat-intelligence feed into hash signatures and appends the new ones
+to the signature database, so the database is fed from machine-readable sources
+instead of being hand-typed. Supported feeds: STIX 2.1 bundles (indicator SDOs
+with a `file:hashes` pattern), MISP event JSON (md5/sha1/sha256 attributes,
+including `filename|hash` composites), MalwareBazaar query/dump JSON, and the
+LOLDrivers catalog (known-malicious driver hashes). Each hash is validated and
+normalized; a hash already in the database is skipped (intake never re-labels an
+existing entry). Read the feed from `--input` (`-` for stdin) or fetch it with an
+explicit `--url` (bounded, never automatic — the engine does not phone home on
+its own). `--dry-run` prints the new signatures, `--output` writes them to a file
+instead of appending to the database. Exit codes: 0 ok (even when nothing is
+new), 3 failed, 4 usage.
+
 ## CI recipes
 
 GitHub Actions, uploading findings to code scanning:

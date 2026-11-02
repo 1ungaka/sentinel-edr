@@ -56,6 +56,17 @@ cut a tagged release yet, so everything is under Unreleased.
   write and TLSH-parse errors.
 
 ### Added
+- **Threat-intel intake** (`cau intake`, `internal/intake`): parsers that feed
+  the hash signature database from machine-readable feeds instead of hand-typed
+  entries — STIX 2.1 bundles (indicator `file:hashes` patterns), MISP event JSON
+  (md5/sha1/sha256 attributes, including `filename|hash` composites),
+  MalwareBazaar query/dump JSON and the abuse.ch CSV, and the LOLDrivers catalog
+  (known-malicious driver hashes). Each normalizes to validated signatures,
+  dedupes against the live database (an existing hash is never re-labelled), and
+  appends in the database's own `TYPE|hash|name` format. Input from a file or
+  stdin, or an explicit `--url` fetch (bounded, never automatic); `--dry-run` and
+  `--output` for review. Fixture tests per format. The TAXII polling client and
+  scheduled sync remain follow-ons in PLAN.md.
 - **Obfuscation-chain peeler** (`cau peel`, `internal/peeler`): the first
   increment of NOVEL-012 — a bounded, concurrent tree walk that removes
   reversible layers (base64/base32/hex, gzip/zlib/flate/bzip2; decode only,

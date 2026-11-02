@@ -55,6 +55,7 @@ Usage:
   cau quarantine <subcommand>          vault flagged files (add/list/restore/verify/delete)
   cau canary    plant|check [flags]    plant decoy files and detect tampering
   cau peel      [flags] <file>         walk an obfuscation chain, depth as signal
+  cau intake    --format <fmt> [flags] ingest a threat-intel feed into the signature DB
   cau version                          print the version
 
 Scan examples:
@@ -110,6 +111,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdCanary(args[1:], stdout, stderr)
 	case "peel":
 		return cmdPeel(args[1:], stdout, stderr)
+	case "intake":
+		return cmdIntake(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "%s %s\n", toolName, version)
 		return report.ExitOK

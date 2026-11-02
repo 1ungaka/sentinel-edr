@@ -158,6 +158,7 @@ type scanFlags struct {
 	noPeel            bool
 	quarantine        bool
 	quarantineStore   string
+	quarantineLevel   string
 	interval          time.Duration
 	fuzzyDB           string
 	signers           string
@@ -213,6 +214,7 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&f.peelThreshold, "peel-threshold", peeler.Threshold, "score at which an obfuscation chain is reported suspicious")
 	fs.BoolVar(&f.quarantine, "quarantine", false, "after scanning, move files with a MALICIOUS verdict into the quarantine vault (free prevention; default off)")
 	fs.StringVar(&f.quarantineStore, "quarantine-store", "", "vault directory for --quarantine (default: the cau quarantine default)")
+	fs.StringVar(&f.quarantineLevel, "quarantine-level", "malicious", "what --quarantine blocks: 'malicious' (hash/YARA only) or 'suspicious' (also the fused multi-indicator score)")
 	fs.DurationVar(&f.interval, "interval", 0, "daemon mode: re-scan every interval (e.g. 15m, 1h) until a termination signal; 0 scans once and exits")
 	fs.BoolVar(&f.noFusion, "no-fusion", false, "disable the fusion lattice (corroboration of sub-threshold detectors)")
 	fs.StringVar(&f.format, "format", "text", "output format: "+strings.Join(report.Formats, ", "))
@@ -282,6 +284,10 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	}
 	if f.peelThreshold < 1 {
 		fmt.Fprintln(stderr, "[ERROR] --peel-threshold must be at least 1")
+		return report.ExitUsage
+	}
+	if f.quarantineLevel != "malicious" && f.quarantineLevel != "suspicious" {
+		fmt.Fprintln(stderr, "[ERROR] --quarantine-level must be 'malicious' or 'suspicious'")
 		return report.ExitUsage
 	}
 
@@ -539,15 +545,16 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		}
 		in.Elapsed = time.Since(start)
 
-		// Prevention (free): move confirmed-malicious files into the vault.
-		// Explicit --quarantine only; destructive, so MALICIOUS tier (hash/YARA)
-		// only, never sub-threshold suspicions.
+		// Prevention (free): move flagged files into the vault. Explicit
+		// --quarantine only; destructive. --quarantine-level chooses the bar:
+		// 'malicious' (hash/YARA) or 'suspicious' (the fused multi-indicator
+		// score). Auto-detect → score → block, in one pass.
 		if f.quarantine {
-			moved, qerr := autoQuarantine(f.quarantineStore, in.Results, status)
+			moved, qerr := autoQuarantine(f.quarantineStore, f.quarantineLevel, in.Results, status)
 			if qerr != nil {
 				fmt.Fprintf(stderr, "[ERROR] quarantine: %v\n", qerr)
 			}
-			status("[*] Quarantined %d malicious file(s)", moved)
+			status("[*] Quarantined %d file(s) at the %s level", moved, f.quarantineLevel)
 		}
 		return in
 	}

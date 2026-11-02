@@ -14,6 +14,7 @@ import (
 	"github.com/cau-edr/cau/internal/quarantine"
 	"github.com/cau-edr/cau/internal/report"
 	"github.com/cau-edr/cau/scanner"
+	"github.com/cau-edr/cau/scanner/fusion"
 )
 
 // envQuarantine overrides the default vault location.
@@ -275,14 +276,21 @@ func plural(n int) string {
 // sub-threshold suspicions, because the move is destructive. A per-file failure
 // is reported and skipped, not fatal — one unwritable file never aborts the
 // rest.
-func autoQuarantine(store string, results []scanner.ScanResult, status func(string, ...interface{})) (int, error) {
+// level selects what auto-quarantine acts on:
+//   - "malicious": only the hard MALICIOUS tier (a hash or YARA hit).
+//   - "suspicious": also files the fusion lattice places at the SUSPICIOUS tier
+//     — i.e. the fused, multi-indicator score (each indicator at its own
+//     weighted level) crossed the fusion threshold, with or without a single
+//     detector crossing on its own. This is score-based blocking.
+func autoQuarantine(store, level string, results []scanner.ScanResult, status func(string, ...interface{})) (int, error) {
 	if store == "" {
 		store = defaultQuarantineDir()
 	}
 	var s *quarantine.Store
 	moved := 0
 	for _, r := range results {
-		if r.Verdict != scanner.VerdictMalicious {
+		reason, hit := quarantineReason(r, level)
+		if !hit {
 			continue
 		}
 		if s == nil {
@@ -291,15 +299,35 @@ func autoQuarantine(store string, results []scanner.ScanResult, status func(stri
 				return moved, err
 			}
 		}
-		name := maliciousName(r)
-		if _, err := s.Quarantine(r.FilePath, name, false); err != nil {
+		if _, err := s.Quarantine(r.FilePath, reason, false); err != nil {
 			status("[WARN] could not quarantine %s: %v", r.FilePath, err)
 			continue
 		}
 		moved++
-		status("[*] quarantined %s (%s)", r.FilePath, name)
+		status("[*] quarantined %s (%s)", r.FilePath, reason)
 	}
 	return moved, nil
+}
+
+// quarantineReason decides whether a result should be blocked at the given
+// level and returns the threat label to record. The label names the indicators
+// that drove the decision, so the vault entry carries the evidence.
+func quarantineReason(r scanner.ScanResult, level string) (string, bool) {
+	if r.Verdict == scanner.VerdictMalicious {
+		return maliciousName(r), true
+	}
+	if level == "suspicious" && r.Fusion != nil &&
+		(r.Fusion.Tier == fusion.TierSuspicious || r.Fusion.Tier == fusion.TierMalicious) {
+		label := fmt.Sprintf("suspicious score %.2f/%.2f", r.Fusion.Score, r.Fusion.Threshold)
+		if len(r.Fusion.Agreed) > 0 {
+			label += " [" + strings.Join(r.Fusion.Agreed, "+") + "]"
+		}
+		if len(r.Fusion.Techniques) > 0 {
+			label += " (" + strings.Join(r.Fusion.Techniques, ",") + ")"
+		}
+		return label, true
+	}
+	return "", false
 }
 
 // maliciousName derives a threat label for a quarantined file: the hash

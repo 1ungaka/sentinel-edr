@@ -99,13 +99,18 @@ cut a tagged release yet, so everything is under Unreleased.
   one-shot (`cau-scan.service` + `cau-scan.timer`), a container entrypoint, or a
   Windows/`launchd` service. This is a *scheduled* scanner; real-time
   kernel-level file monitoring remains the resident sensor's job.
-- **Scan-time prevention** (`cau scan --quarantine`): detect *and* prevent in one
-  pass — after scanning, files with a MALICIOUS verdict (hash/YARA) are moved
-  into the integrity-sealed vault, with the threat name recorded. Explicit and
-  off by default (the move is destructive); it acts only on the high-confidence
-  tier, never on sub-threshold suspicions. `--quarantine-store` sets the vault.
-  On-host prevention is free, in line with the licensing model (only multi-agent
-  management is paid).
+- **Scan-time prevention** (`cau scan --quarantine`): auto-detect *and* block in
+  one pass — after scanning, flagged files are moved into the integrity-sealed
+  vault, with the driving evidence recorded as the threat label. Explicit and
+  off by default (the move is destructive). `--quarantine-level` chooses the bar:
+  `malicious` (the default) blocks only a hard hash/YARA hit, while `suspicious`
+  **also** blocks files the fusion lattice places at the SUSPICIOUS tier — the
+  fused, multi-indicator score where each indicator contributes at its own
+  weighted level and the sum crosses the threshold, with or without any single
+  detector crossing on its own (this is the score-based auto-block, and the
+  recorded label names the score and the agreeing indicators). `--quarantine-store`
+  sets the vault. On-host prevention is free, in line with the licensing model
+  (only multi-agent management is paid).
 - **Known-abused code-signing certificate blocklist** (`cau scan --signers`,
   `static.SignerBlocklist`): the static pass now extracts each Authenticode
   certificate's SHA-1 and SHA-256 thumbprint and matches it — or its

@@ -4,9 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cau-edr/cau/internal/report"
+	"github.com/cau-edr/cau/scanner"
+	"github.com/cau-edr/cau/scanner/fusion"
 )
 
 // TestCLIScanAutoQuarantine confirms the free-prevention path: a scan with
@@ -50,6 +53,66 @@ func TestCLIScanAutoQuarantine(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].OriginalPath != mal {
 		t.Fatalf("unexpected vault contents: %+v", entries)
+	}
+}
+
+// TestQuarantineReasonScoreBased pins the auto-block decision: the hard
+// MALICIOUS verdict always blocks, but a file that only reached the fused
+// SUSPICIOUS tier (multi-indicator score, no single definitive hit) blocks
+// solely under --quarantine-level suspicious, and the recorded label carries
+// the score and the indicators that drove it.
+func TestQuarantineReasonScoreBased(t *testing.T) {
+	// A fused-suspicious result: no hash/YARA hit, verdict stays CLEAN, but the
+	// lattice crossed its threshold on corroborating indicators.
+	suspicious := scanner.ScanResult{
+		FilePath: "sample.bin",
+		Verdict:  scanner.VerdictClean,
+		Fusion: &fusion.Verdict{
+			Tier:       fusion.TierSuspicious,
+			Score:      1.20,
+			Threshold:  1.00,
+			Agreed:     []string{"static", "encchain"},
+			Techniques: []string{"T1027"},
+		},
+	}
+	// A hard hit: hash signature fired, verdict MALICIOUS.
+	malicious := scanner.ScanResult{
+		FilePath:   "evil.bin",
+		Verdict:    scanner.VerdictMalicious,
+		ThreatName: "Win.Trojan.Agent",
+	}
+	// Evidence below the bar: observed, never blocked.
+	observed := scanner.ScanResult{
+		FilePath: "noisy.bin",
+		Verdict:  scanner.VerdictClean,
+		Fusion:   &fusion.Verdict{Tier: fusion.TierObserved, Score: 0.4, Threshold: 1.0},
+	}
+
+	// MALICIOUS blocks at either level.
+	for _, level := range []string{"malicious", "suspicious"} {
+		if label, hit := quarantineReason(malicious, level); !hit || label != "Win.Trojan.Agent" {
+			t.Errorf("malicious at level %q: hit=%v label=%q, want true/Win.Trojan.Agent", level, hit, label)
+		}
+	}
+
+	// A fused-suspicious file is left alone at the default (malicious) level...
+	if label, hit := quarantineReason(suspicious, "malicious"); hit {
+		t.Errorf("suspicious at level malicious: blocked (label=%q), want skipped", label)
+	}
+	// ...and blocked at the suspicious level, with an evidence-bearing label.
+	label, hit := quarantineReason(suspicious, "suspicious")
+	if !hit {
+		t.Fatalf("suspicious at level suspicious: not blocked, want blocked")
+	}
+	for _, want := range []string{"1.20", "1.00", "static+encchain", "T1027"} {
+		if !strings.Contains(label, want) {
+			t.Errorf("label %q missing %q", label, want)
+		}
+	}
+
+	// Observed never blocks, even at the suspicious level.
+	if label, hit := quarantineReason(observed, "suspicious"); hit {
+		t.Errorf("observed at level suspicious: blocked (label=%q), want skipped", label)
 	}
 }
 

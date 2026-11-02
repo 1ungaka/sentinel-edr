@@ -74,7 +74,8 @@ directories never.
 | `--max-in-memory MiB` | 64 | larger files are streamed: hashing streams, YARA memory-maps, the heuristic, static and stego passes are skipped with the reason recorded |
 | `--jobs N` | CPUs | files scanned concurrently |
 | `--follow-symlinks` | off | scan the targets of symbolic links to files |
-| `--quarantine` | off | **prevention**: after scanning, move files with a MALICIOUS verdict into the vault (hash/YARA tier only; never sub-threshold suspicions) |
+| `--quarantine` | off | **prevention**: after scanning, auto-block flagged files by moving them into the vault |
+| `--quarantine-level <bar>` | `malicious` | what `--quarantine` blocks: `malicious` (a hard hash/YARA hit only) or `suspicious` (**also** files the fusion lattice places at the SUSPICIOUS tier — the fused multi-indicator score, each indicator at its own weighted level, crossed the threshold with or without any single detector crossing alone). The recorded label names the score and the indicators that drove it. |
 | `--quarantine-store <dir>` | default vault | vault directory for `--quarantine` |
 | `--interval <dur>` | 0 (one-shot) | **daemon mode**: re-scan every interval (e.g. `15m`, `1h`) until SIGINT/SIGTERM, writing the report each cycle; a finding never stops the daemon. Scheduled, not real-time. See `packaging/systemd/` for service units. |
 

@@ -141,7 +141,7 @@ func (f *Feed) Add(line string) bool {
 	case KindIP:
 		f.ips[value] = label
 	case KindDomain:
-		f.domains[strings.ToLower(strings.TrimPrefix(value, "*.")) ] = label
+		f.domains[strings.ToLower(strings.TrimPrefix(value, "*."))] = label
 	default:
 		return false
 	}

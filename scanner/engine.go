@@ -10,6 +10,10 @@ import (
 	"time"
 
 	"github.com/cau-edr/cau/scanner/encchain"
+	"github.com/cau-edr/cau/scanner/iso"
+	"github.com/cau-edr/cau/scanner/lnk"
+	"github.com/cau-edr/cau/scanner/ole"
+	"github.com/cau-edr/cau/scanner/pdf"
 	"github.com/cau-edr/cau/scanner/static"
 	"github.com/cau-edr/cau/scanner/stego"
 )
@@ -70,6 +74,30 @@ type Engine struct {
 	// EncChainThreshold overrides encchain.Threshold (0 = package default).
 	EncChainThreshold int
 
+	// LNK enables the Windows Shell Link (.lnk) detector. Its result rides on
+	// ScanResult.LNK.
+	LNK bool
+	// LNKThreshold overrides lnk.Threshold (0 = package default).
+	LNKThreshold int
+
+	// OLE enables the OLE compound-file (VBA macro) detector. Its result rides
+	// on ScanResult.OLE.
+	OLE bool
+	// OLEThreshold overrides ole.Threshold (0 = package default).
+	OLEThreshold int
+
+	// PDF enables the PDF malicious-document detector. Its result rides on
+	// ScanResult.PDF.
+	PDF bool
+	// PDFThreshold overrides pdf.Threshold (0 = package default).
+	PDFThreshold int
+
+	// ISO enables the ISO 9660 malicious-container detector. Its result rides
+	// on ScanResult.ISO.
+	ISO bool
+	// ISOThreshold overrides iso.Threshold (0 = package default).
+	ISOThreshold int
+
 	// NoFusion leaves ScanResult.Fusion nil. Fusion is on by default because
 	// it costs nothing: it is a view over results already computed.
 	NoFusion bool
@@ -118,6 +146,34 @@ func (e *Engine) encChainThreshold() int {
 		return e.EncChainThreshold
 	}
 	return encchain.Threshold
+}
+
+func (e *Engine) lnkThreshold() int {
+	if e.LNKThreshold > 0 {
+		return e.LNKThreshold
+	}
+	return lnk.Threshold
+}
+
+func (e *Engine) oleThreshold() int {
+	if e.OLEThreshold > 0 {
+		return e.OLEThreshold
+	}
+	return ole.Threshold
+}
+
+func (e *Engine) pdfThreshold() int {
+	if e.PDFThreshold > 0 {
+		return e.PDFThreshold
+	}
+	return pdf.Threshold
+}
+
+func (e *Engine) isoThreshold() int {
+	if e.ISOThreshold > 0 {
+		return e.ISOThreshold
+	}
+	return iso.Threshold
 }
 
 // ScanFile runs every configured detector over one file. The heuristic result
@@ -277,6 +333,70 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 				FilePath:  path,
 				Size:      int(fi.Size()),
 				Threshold: e.encChainThreshold(),
+				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+					fi.Size(), e.maxInMemory()),
+			}
+		}
+	}
+
+	// ── Windows Shell Link (.lnk) ──────────────────────
+	if e.LNK {
+		if data != nil {
+			res.LNK = lnk.Analyze(data, lnk.Options{Threshold: e.lnkThreshold()})
+			res.LNK.FilePath = path
+		} else {
+			res.LNK = &lnk.Result{
+				FilePath:  path,
+				Size:      int(fi.Size()),
+				Threshold: e.lnkThreshold(),
+				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+					fi.Size(), e.maxInMemory()),
+			}
+		}
+	}
+
+	// ── OLE compound-file (VBA macros) ─────────────────
+	if e.OLE {
+		if data != nil {
+			res.OLE = ole.Analyze(data, ole.Options{Threshold: e.oleThreshold()})
+			res.OLE.FilePath = path
+		} else {
+			res.OLE = &ole.Result{
+				FilePath:  path,
+				Size:      int(fi.Size()),
+				Threshold: e.oleThreshold(),
+				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+					fi.Size(), e.maxInMemory()),
+			}
+		}
+	}
+
+	// ── PDF malicious-document ─────────────────────────
+	if e.PDF {
+		if data != nil {
+			res.PDF = pdf.Analyze(data, pdf.Options{Threshold: e.pdfThreshold()})
+			res.PDF.FilePath = path
+		} else {
+			res.PDF = &pdf.Result{
+				FilePath:  path,
+				Size:      int(fi.Size()),
+				Threshold: e.pdfThreshold(),
+				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+					fi.Size(), e.maxInMemory()),
+			}
+		}
+	}
+
+	// ── ISO 9660 malicious-container ───────────────────
+	if e.ISO {
+		if data != nil {
+			res.ISO = iso.Analyze(data, iso.Options{Threshold: e.isoThreshold()})
+			res.ISO.FilePath = path
+		} else {
+			res.ISO = &iso.Result{
+				FilePath:  path,
+				Size:      int(fi.Size()),
+				Threshold: e.isoThreshold(),
 				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
 					fi.Size(), e.maxInMemory()),
 			}

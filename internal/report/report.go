@@ -44,6 +44,10 @@ import (
 	"github.com/cau-edr/cau/scanner"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/fusion"
+	"github.com/cau-edr/cau/scanner/iso"
+	"github.com/cau-edr/cau/scanner/lnk"
+	"github.com/cau-edr/cau/scanner/ole"
+	"github.com/cau-edr/cau/scanner/pdf"
 	"github.com/cau-edr/cau/scanner/static"
 	"github.com/cau-edr/cau/scanner/stego"
 )
@@ -85,6 +89,14 @@ const (
 	DefaultStegoThreshold = stego.DefaultThreshold
 	// DefaultEncChainThreshold mirrors encchain.DefaultThreshold.
 	DefaultEncChainThreshold = encchain.DefaultThreshold
+	// DefaultLNKThreshold mirrors lnk.DefaultThreshold.
+	DefaultLNKThreshold = lnk.DefaultThreshold
+	// DefaultOLEThreshold mirrors ole.DefaultThreshold.
+	DefaultOLEThreshold = ole.DefaultThreshold
+	// DefaultPDFThreshold mirrors pdf.DefaultThreshold.
+	DefaultPDFThreshold = pdf.DefaultThreshold
+	// DefaultISOThreshold mirrors iso.DefaultThreshold.
+	DefaultISOThreshold = iso.DefaultThreshold
 )
 
 // TruncationMarker is appended to any string that was cut short. Blob-shaped
@@ -389,6 +401,100 @@ func encChainBreached(e *encchain.Result, fallback int) bool {
 	return e != nil && e.Skipped == "" && e.Score >= encChainThresholdFor(e, fallback)
 }
 
+// LNKBreach returns the scan results whose Shell Link score reached the
+// threshold.
+func (in Input) LNKBreach(threshold int) []scanner.ScanResult {
+	var out []scanner.ScanResult
+	for _, r := range in.Results {
+		if lnkBreached(r.LNK, threshold) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func lnkThresholdFor(l *lnk.Result, fallback int) int {
+	if l != nil && l.Threshold > 0 {
+		return l.Threshold
+	}
+	return fallback
+}
+
+// lnkBreached is the single definition of "the Shell Link detector fired".
+func lnkBreached(l *lnk.Result, fallback int) bool {
+	return l != nil && l.Skipped == "" && l.Score >= lnkThresholdFor(l, fallback)
+}
+
+// OLEBreach returns the scan results whose OLE (VBA macro) score reached the
+// threshold.
+func (in Input) OLEBreach(threshold int) []scanner.ScanResult {
+	var out []scanner.ScanResult
+	for _, r := range in.Results {
+		if oleBreached(r.OLE, threshold) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func oleThresholdFor(o *ole.Result, fallback int) int {
+	if o != nil && o.Threshold > 0 {
+		return o.Threshold
+	}
+	return fallback
+}
+
+// oleBreached is the single definition of "the OLE macro detector fired".
+func oleBreached(o *ole.Result, fallback int) bool {
+	return o != nil && o.Skipped == "" && o.Score >= oleThresholdFor(o, fallback)
+}
+
+// PDFBreach returns the scan results whose PDF score reached the threshold.
+func (in Input) PDFBreach(threshold int) []scanner.ScanResult {
+	var out []scanner.ScanResult
+	for _, r := range in.Results {
+		if pdfBreached(r.PDF, threshold) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func pdfThresholdFor(p *pdf.Result, fallback int) int {
+	if p != nil && p.Threshold > 0 {
+		return p.Threshold
+	}
+	return fallback
+}
+
+// pdfBreached is the single definition of "the PDF detector fired".
+func pdfBreached(p *pdf.Result, fallback int) bool {
+	return p != nil && p.Skipped == "" && p.Score >= pdfThresholdFor(p, fallback)
+}
+
+// ISOBreach returns the scan results whose ISO score reached the threshold.
+func (in Input) ISOBreach(threshold int) []scanner.ScanResult {
+	var out []scanner.ScanResult
+	for _, r := range in.Results {
+		if isoBreached(r.ISO, threshold) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func isoThresholdFor(i *iso.Result, fallback int) int {
+	if i != nil && i.Threshold > 0 {
+		return i.Threshold
+	}
+	return fallback
+}
+
+// isoBreached is the single definition of "the ISO detector fired".
+func isoBreached(i *iso.Result, fallback int) bool {
+	return i != nil && i.Skipped == "" && i.Score >= isoThresholdFor(i, fallback)
+}
+
 func stegoThresholdFor(s *stego.Result, fallback int) int {
 	if s != nil && s.Threshold > 0 {
 		return s.Threshold
@@ -446,6 +552,10 @@ type config struct {
 	staticThreshold    int
 	stegoThreshold     int
 	encChainThreshold  int
+	lnkThreshold       int
+	oleThreshold       int
+	pdfThreshold       int
+	isoThreshold       int
 	stat               StatFunc
 	now                func() time.Time
 
@@ -528,6 +638,18 @@ func WithStegoThreshold(n int) Option { return func(c *config) { c.stegoThreshol
 // detector ran at.
 func WithEncChainThreshold(n int) Option { return func(c *config) { c.encChainThreshold = n } }
 
+// WithLNKThreshold records which threshold the Shell Link detector ran at.
+func WithLNKThreshold(n int) Option { return func(c *config) { c.lnkThreshold = n } }
+
+// WithOLEThreshold records which threshold the OLE macro detector ran at.
+func WithOLEThreshold(n int) Option { return func(c *config) { c.oleThreshold = n } }
+
+// WithPDFThreshold records which threshold the PDF detector ran at.
+func WithPDFThreshold(n int) Option { return func(c *config) { c.pdfThreshold = n } }
+
+// WithISOThreshold records which threshold the ISO detector ran at.
+func WithISOThreshold(n int) Option { return func(c *config) { c.isoThreshold = n } }
+
 // WithStatFunc overrides how file sizes are resolved (os.Stat by default).
 func WithStatFunc(f StatFunc) Option { return func(c *config) { c.stat = f } }
 
@@ -588,6 +710,10 @@ func defaultConfig() config {
 		staticThreshold:     DefaultStaticThreshold,
 		stegoThreshold:      DefaultStegoThreshold,
 		encChainThreshold:   DefaultEncChainThreshold,
+		lnkThreshold:        DefaultLNKThreshold,
+		oleThreshold:        DefaultOLEThreshold,
+		pdfThreshold:        DefaultPDFThreshold,
+		isoThreshold:        DefaultISOThreshold,
 		stat:                osFileSize,
 		now:                 time.Now,
 
@@ -638,6 +764,18 @@ func (c *config) normalize() {
 	}
 	if c.encChainThreshold <= 0 {
 		c.encChainThreshold = DefaultEncChainThreshold
+	}
+	if c.lnkThreshold <= 0 {
+		c.lnkThreshold = DefaultLNKThreshold
+	}
+	if c.oleThreshold <= 0 {
+		c.oleThreshold = DefaultOLEThreshold
+	}
+	if c.pdfThreshold <= 0 {
+		c.pdfThreshold = DefaultPDFThreshold
+	}
+	if c.isoThreshold <= 0 {
+		c.isoThreshold = DefaultISOThreshold
 	}
 	if c.stat == nil {
 		c.stat = osFileSize

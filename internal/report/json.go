@@ -10,6 +10,10 @@ import (
 	"github.com/cau-edr/cau/scanner"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/fusion"
+	"github.com/cau-edr/cau/scanner/iso"
+	"github.com/cau-edr/cau/scanner/lnk"
+	"github.com/cau-edr/cau/scanner/ole"
+	"github.com/cau-edr/cau/scanner/pdf"
 	"github.com/cau-edr/cau/scanner/static"
 	"github.com/cau-edr/cau/scanner/stego"
 )
@@ -32,7 +36,23 @@ import (
 // 1.4.0 added the optional per-file "encchain" object (encoded-executable
 // analysis) and the summary fields "encchain_detections" /
 // "encchain_threshold" (additive: minor bump).
-const JSONSchemaVersion = "1.4.0"
+//
+// 1.5.0 added the optional per-file "lnk" object (Windows Shell Link
+// analysis) and the summary fields "lnk_detections" / "lnk_threshold"
+// (additive: minor bump).
+//
+// 1.6.0 added the optional per-file "ole" object (OLE compound-file / VBA
+// macro analysis) and the summary fields "ole_detections" / "ole_threshold"
+// (additive: minor bump).
+//
+// 1.7.0 added the optional per-file "pdf" object (PDF malicious-document
+// analysis) and the summary fields "pdf_detections" / "pdf_threshold"
+// (additive: minor bump).
+//
+// 1.8.0 added the optional per-file "iso" object (ISO 9660 malicious-container
+// analysis) and the summary fields "iso_detections" / "iso_threshold"
+// (additive: minor bump).
+const JSONSchemaVersion = "1.8.0"
 
 // Overall and per-file verdict strings carried by the JSON document. They are
 // lower-case on purpose: they are enum values for machines, not banners.
@@ -70,6 +90,10 @@ type Summary struct {
 	StaticDetections    int `json:"static_detections"`
 	StegoDetections     int `json:"stego_detections"`
 	EncChainDetections  int `json:"encchain_detections"`
+	LNKDetections       int `json:"lnk_detections"`
+	OLEDetections       int `json:"ole_detections"`
+	PDFDetections       int `json:"pdf_detections"`
+	ISODetections       int `json:"iso_detections"`
 	// FusionDetections counts files the fusion lattice reports as suspicious
 	// although no single detector crossed its own threshold.
 	FusionDetections   int    `json:"fusion_detections"`
@@ -79,6 +103,10 @@ type Summary struct {
 	StaticThreshold    int    `json:"static_threshold"`
 	StegoThreshold     int    `json:"stego_threshold"`
 	EncChainThreshold  int    `json:"encchain_threshold"`
+	LNKThreshold       int    `json:"lnk_threshold"`
+	OLEThreshold       int    `json:"ole_threshold"`
+	PDFThreshold       int    `json:"pdf_threshold"`
+	ISOThreshold       int    `json:"iso_threshold"`
 	Verdict            string `json:"verdict"`
 	FailOn             string `json:"fail_on"`
 	ExitCode           int    `json:"exit_code"`
@@ -97,6 +125,10 @@ type File struct {
 	Static     *Static     `json:"static,omitempty"`
 	Stego      *Stego      `json:"stego,omitempty"`
 	EncChain   *EncChain   `json:"encchain,omitempty"`
+	LNK        *LNK        `json:"lnk,omitempty"`
+	OLE        *OLE        `json:"ole,omitempty"`
+	PDF        *PDF        `json:"pdf,omitempty"`
+	ISO        *ISO        `json:"iso,omitempty"`
 	Fusion     *Fusion     `json:"fusion,omitempty"`
 	Warnings   []string    `json:"warnings,omitempty"`
 	Error      string      `json:"error,omitempty"`
@@ -460,6 +492,90 @@ type EncChainFinding struct {
 	Detail    string `json:"detail"`
 }
 
+// LNK is the per-file Windows Shell Link analysis: malicious-shortcut
+// delivery signals read from the [MS-SHLLINK] structure.
+type LNK struct {
+	Score     int          `json:"score"`
+	Threshold int          `json:"threshold"`
+	Detected  bool         `json:"detected"`
+	Skipped   string       `json:"skipped,omitempty"`
+	TargetExt string       `json:"target_ext,omitempty"`
+	ArgsLen   int          `json:"args_len,omitempty"`
+	Findings  []LNKFinding `json:"findings,omitempty"`
+}
+
+// LNKFinding is one Shell Link detection signal.
+type LNKFinding struct {
+	Class     string `json:"class"`
+	Score     int    `json:"score"`
+	Technique string `json:"technique,omitempty"`
+	Detail    string `json:"detail"`
+	Evidence  string `json:"evidence,omitempty"`
+}
+
+// OLE is the per-file OLE compound-file / VBA macro analysis.
+type OLE struct {
+	Score     int          `json:"score"`
+	Threshold int          `json:"threshold"`
+	Detected  bool         `json:"detected"`
+	Skipped   string       `json:"skipped,omitempty"`
+	HasVBA    bool         `json:"has_vba,omitempty"`
+	Modules   int          `json:"modules,omitempty"`
+	Findings  []OLEFinding `json:"findings,omitempty"`
+}
+
+// OLEFinding is one OLE macro detection signal.
+type OLEFinding struct {
+	Class     string `json:"class"`
+	Score     int    `json:"score"`
+	Technique string `json:"technique,omitempty"`
+	Detail    string `json:"detail"`
+	Evidence  string `json:"evidence,omitempty"`
+}
+
+// PDF is the per-file PDF malicious-document analysis.
+type PDF struct {
+	Score         int          `json:"score"`
+	Threshold     int          `json:"threshold"`
+	Detected      bool         `json:"detected"`
+	Skipped       string       `json:"skipped,omitempty"`
+	Version       string       `json:"version,omitempty"`
+	HasJavaScript bool         `json:"has_javascript,omitempty"`
+	HasOpenAction bool         `json:"has_openaction,omitempty"`
+	Encrypted     bool         `json:"encrypted,omitempty"`
+	Findings      []PDFFinding `json:"findings,omitempty"`
+}
+
+// PDFFinding is one PDF detection signal.
+type PDFFinding struct {
+	Class     string `json:"class"`
+	Score     int    `json:"score"`
+	Technique string `json:"technique,omitempty"`
+	Detail    string `json:"detail"`
+	Evidence  string `json:"evidence,omitempty"`
+}
+
+// ISO is the per-file ISO 9660 malicious-container analysis.
+type ISO struct {
+	Score     int          `json:"score"`
+	Threshold int          `json:"threshold"`
+	Detected  bool         `json:"detected"`
+	Skipped   string       `json:"skipped,omitempty"`
+	VolumeID  string       `json:"volume_id,omitempty"`
+	Files     int          `json:"files,omitempty"`
+	HasJoliet bool         `json:"has_joliet,omitempty"`
+	Findings  []ISOFinding `json:"findings,omitempty"`
+}
+
+// ISOFinding is one ISO container detection signal.
+type ISOFinding struct {
+	Class     string `json:"class"`
+	Score     int    `json:"score"`
+	Technique string `json:"technique,omitempty"`
+	Detail    string `json:"detail"`
+	Evidence  string `json:"evidence,omitempty"`
+}
+
 // Fusion is the lattice's view over every detector that ran on the file.
 type Fusion struct {
 	Tier       string  `json:"tier"`
@@ -553,6 +669,10 @@ func (c config) buildDocument(in Input) Document {
 			StaticDetections:    len(in.StaticBreach(c.staticThreshold)),
 			StegoDetections:     len(in.StegoBreach(c.stegoThreshold)),
 			EncChainDetections:  len(in.EncChainBreach(c.encChainThreshold)),
+			LNKDetections:       len(in.LNKBreach(c.lnkThreshold)),
+			OLEDetections:       len(in.OLEBreach(c.oleThreshold)),
+			PDFDetections:       len(in.PDFBreach(c.pdfThreshold)),
+			ISODetections:       len(in.ISOBreach(c.isoThreshold)),
 			FusionDetections:    len(in.FusionCorroborated()),
 			Errors:              in.ErrorCount(),
 			ElapsedMS:           in.Elapsed.Milliseconds(),
@@ -560,6 +680,10 @@ func (c config) buildDocument(in Input) Document {
 			StaticThreshold:     c.staticThreshold,
 			StegoThreshold:      c.stegoThreshold,
 			EncChainThreshold:   c.encChainThreshold,
+			LNKThreshold:        c.lnkThreshold,
+			OLEThreshold:        c.oleThreshold,
+			PDFThreshold:        c.pdfThreshold,
+			ISOThreshold:        c.isoThreshold,
 			Verdict:             c.overallVerdict(in),
 			FailOn:              c.failOn.String(),
 			ExitCode:            code,
@@ -604,6 +728,8 @@ func (c config) overallVerdict(in Input) string {
 		return JSONVerdictMalicious
 	case len(in.HeuristicBreach(c.heuristicThreshold)) > 0, len(in.StaticBreach(c.staticThreshold)) > 0,
 		len(in.StegoBreach(c.stegoThreshold)) > 0, len(in.EncChainBreach(c.encChainThreshold)) > 0,
+		len(in.LNKBreach(c.lnkThreshold)) > 0, len(in.OLEBreach(c.oleThreshold)) > 0,
+		len(in.PDFBreach(c.pdfThreshold)) > 0, len(in.ISOBreach(c.isoThreshold)) > 0,
 		len(in.FusionCorroborated()) > 0:
 		return JSONVerdictSuspicious
 	default:
@@ -677,6 +803,30 @@ func (c config) buildFile(p string, res *scanner.ScanResult, h *scanner.Heuristi
 		if res.EncChain != nil {
 			f.EncChain = c.buildEncChain(res.EncChain)
 			if f.EncChain.Detected && f.Verdict == JSONVerdictClean {
+				f.Verdict = JSONVerdictSuspicious
+			}
+		}
+		if res.LNK != nil {
+			f.LNK = c.buildLNK(res.LNK)
+			if f.LNK.Detected && f.Verdict == JSONVerdictClean {
+				f.Verdict = JSONVerdictSuspicious
+			}
+		}
+		if res.OLE != nil {
+			f.OLE = c.buildOLE(res.OLE)
+			if f.OLE.Detected && f.Verdict == JSONVerdictClean {
+				f.Verdict = JSONVerdictSuspicious
+			}
+		}
+		if res.PDF != nil {
+			f.PDF = c.buildPDF(res.PDF)
+			if f.PDF.Detected && f.Verdict == JSONVerdictClean {
+				f.Verdict = JSONVerdictSuspicious
+			}
+		}
+		if res.ISO != nil {
+			f.ISO = c.buildISO(res.ISO)
+			if f.ISO.Detected && f.Verdict == JSONVerdictClean {
 				f.Verdict = JSONVerdictSuspicious
 			}
 		}
@@ -983,6 +1133,93 @@ func (c config) buildEncChain(e *encchain.Result) *EncChain {
 			Depth: f.Depth, Offset: f.Offset, RunBytes: f.RunBytes,
 			Technique: c.boundedMessage(f.Technique), Novel: c.boundedMessage(f.Novel),
 			Detail: c.boundedMessage(f.Detail),
+		})
+	}
+	return out
+}
+
+func (c config) buildLNK(l *lnk.Result) *LNK {
+	out := &LNK{
+		Score:     l.Score,
+		Threshold: lnkThresholdFor(l, c.lnkThreshold),
+		Detected:  lnkBreached(l, c.lnkThreshold),
+		Skipped:   c.boundedMessage(l.Skipped),
+	}
+	if l.Parsed != nil {
+		out.TargetExt = c.boundedMessage(l.Parsed.TargetExt)
+		out.ArgsLen = l.Parsed.ArgsLen
+	}
+	for _, f := range l.Findings {
+		out.Findings = append(out.Findings, LNKFinding{
+			Class: c.boundedMessage(f.Class), Score: f.Score,
+			Technique: c.boundedMessage(f.Technique),
+			Detail:    c.boundedMessage(f.Detail), Evidence: c.boundedMessage(f.Evidence),
+		})
+	}
+	return out
+}
+
+func (c config) buildOLE(o *ole.Result) *OLE {
+	out := &OLE{
+		Score:     o.Score,
+		Threshold: oleThresholdFor(o, c.oleThreshold),
+		Detected:  oleBreached(o, c.oleThreshold),
+		Skipped:   c.boundedMessage(o.Skipped),
+	}
+	if o.Parsed != nil {
+		out.HasVBA = o.Parsed.HasVBA
+		out.Modules = o.Parsed.Modules
+	}
+	for _, f := range o.Findings {
+		out.Findings = append(out.Findings, OLEFinding{
+			Class: c.boundedMessage(f.Class), Score: f.Score,
+			Technique: c.boundedMessage(f.Technique),
+			Detail:    c.boundedMessage(f.Detail), Evidence: c.boundedMessage(f.Evidence),
+		})
+	}
+	return out
+}
+
+func (c config) buildPDF(p *pdf.Result) *PDF {
+	out := &PDF{
+		Score:     p.Score,
+		Threshold: pdfThresholdFor(p, c.pdfThreshold),
+		Detected:  pdfBreached(p, c.pdfThreshold),
+		Skipped:   c.boundedMessage(p.Skipped),
+	}
+	if p.Parsed != nil {
+		out.Version = c.boundedMessage(p.Parsed.Version)
+		out.HasJavaScript = p.Parsed.HasJavaScript
+		out.HasOpenAction = p.Parsed.HasOpenAction
+		out.Encrypted = p.Parsed.Encrypted
+	}
+	for _, f := range p.Findings {
+		out.Findings = append(out.Findings, PDFFinding{
+			Class: c.boundedMessage(f.Class), Score: f.Score,
+			Technique: c.boundedMessage(f.Technique),
+			Detail:    c.boundedMessage(f.Detail), Evidence: c.boundedMessage(f.Evidence),
+		})
+	}
+	return out
+}
+
+func (c config) buildISO(i *iso.Result) *ISO {
+	out := &ISO{
+		Score:     i.Score,
+		Threshold: isoThresholdFor(i, c.isoThreshold),
+		Detected:  isoBreached(i, c.isoThreshold),
+		Skipped:   c.boundedMessage(i.Skipped),
+	}
+	if i.Parsed != nil {
+		out.VolumeID = c.boundedMessage(i.Parsed.VolumeID)
+		out.Files = i.Parsed.Files
+		out.HasJoliet = i.Parsed.HasJoliet
+	}
+	for _, f := range i.Findings {
+		out.Findings = append(out.Findings, ISOFinding{
+			Class: c.boundedMessage(f.Class), Score: f.Score,
+			Technique: c.boundedMessage(f.Technique),
+			Detail:    c.boundedMessage(f.Detail), Evidence: c.boundedMessage(f.Evidence),
 		})
 	}
 	return out

@@ -10,6 +10,10 @@ import (
 	"github.com/cau-edr/cau/scanner"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/fusion"
+	"github.com/cau-edr/cau/scanner/iso"
+	"github.com/cau-edr/cau/scanner/lnk"
+	"github.com/cau-edr/cau/scanner/ole"
+	"github.com/cau-edr/cau/scanner/pdf"
 	"github.com/cau-edr/cau/scanner/stego"
 )
 
@@ -30,6 +34,18 @@ const (
 	// ("stego/zero-width", "stego/bidi-control", ...).
 	SARIFRuleStegoPrefix    = "stego/"
 	SARIFRuleEncChainPrefix = "encchain/"
+	// SARIFRuleLNKPrefix prefixes one rule per Shell Link class
+	// ("lnk/command.powershell", "lnk/obfuscation.encoded", ...).
+	SARIFRuleLNKPrefix = "lnk/"
+	// SARIFRuleOLEPrefix prefixes one rule per OLE macro class
+	// ("ole/vba.autoexec", "ole/exec.powershell", ...).
+	SARIFRuleOLEPrefix = "ole/"
+	// SARIFRulePDFPrefix prefixes one rule per PDF class
+	// ("pdf/action.openaction", "pdf/javascript", ...).
+	SARIFRulePDFPrefix = "pdf/"
+	// SARIFRuleISOPrefix prefixes one rule per ISO class
+	// ("iso/lure.lnk-and-payload", "iso/autorun.inf", ...).
+	SARIFRuleISOPrefix = "iso/"
 )
 
 // ── SARIF object model (only the subset the reporter emits) ──────────────────
@@ -233,6 +249,38 @@ func (r *SARIFReporter) build(in Input) sarifLog {
 				table.add(c.encChainRule(f))
 			}
 		}
+		for _, res := range in.Results {
+			if !lnkBreached(res.LNK, c.lnkThreshold) {
+				continue
+			}
+			for _, f := range res.LNK.Findings {
+				table.add(c.lnkRule(f))
+			}
+		}
+		for _, res := range in.Results {
+			if !oleBreached(res.OLE, c.oleThreshold) {
+				continue
+			}
+			for _, f := range res.OLE.Findings {
+				table.add(c.oleRule(f))
+			}
+		}
+		for _, res := range in.Results {
+			if !pdfBreached(res.PDF, c.pdfThreshold) {
+				continue
+			}
+			for _, f := range res.PDF.Findings {
+				table.add(c.pdfRule(f))
+			}
+		}
+		for _, res := range in.Results {
+			if !isoBreached(res.ISO, c.isoThreshold) {
+				continue
+			}
+			for _, f := range res.ISO.Findings {
+				table.add(c.isoRule(f))
+			}
+		}
 		if len(in.FusionCorroborated()) > 0 {
 			table.add(sarifRule{
 				ID:               SARIFRuleFusion,
@@ -343,6 +391,18 @@ func (r *SARIFReporter) build(in Input) sarifLog {
 		}
 		if res.EncChain != nil {
 			results = c.appendEncChain(results, &table, res)
+		}
+		if res.LNK != nil {
+			results = c.appendLNK(results, &table, res)
+		}
+		if res.OLE != nil {
+			results = c.appendOLE(results, &table, res)
+		}
+		if res.PDF != nil {
+			results = c.appendPDF(results, &table, res)
+		}
+		if res.ISO != nil {
+			results = c.appendISO(results, &table, res)
 		}
 		if res.Fusion != nil {
 			results = c.appendFusion(results, &table, res)
@@ -715,6 +775,178 @@ func (c config) appendEncChain(results []sarifResult, table *ruleTable, res scan
 			Level:               c.levelHeuristic,
 			Message:             sarifMessage{Text: c.boundedMessage(f.Detail)},
 			Locations:           []sarifLocation{l},
+			PartialFingerprints: c.fingerprints(res),
+			Properties:          props,
+		})
+	}
+	return results
+}
+
+func (c config) lnkRule(f lnk.Finding) sarifRule {
+	class := strings.TrimPrefix(f.Class, "lnk.")
+	return sarifRule{
+		ID:               SARIFRuleLNKPrefix + class,
+		Name:             "ShellLink_" + strings.ToUpper(strings.ReplaceAll(class, ".", "_")),
+		ShortDescription: &sarifMessage{Text: "Malicious Windows shortcut signal (" + class + ")"},
+		FullDescription:  &sarifMessage{Text: "A Windows Shell Link (.lnk) carries a signal of weaponised-shortcut delivery — an interpreter or LOLBin in its arguments, encoded or hidden-window flags, environment-variable path obfuscation, an executable target, a document-icon lure or appended data. Suspicious capability read from the structure, not a confirmed detection."},
+		DefaultConfig:    &sarifRuleConfig{Level: c.levelHeuristic},
+		Properties:       map[string]interface{}{"kind": "lnk"},
+	}
+}
+
+func (c config) appendLNK(results []sarifResult, table *ruleTable, res scanner.ScanResult) []sarifResult {
+	l := res.LNK
+	if !c.sarifIncludeHeuristics || !lnkBreached(l, c.lnkThreshold) {
+		return results
+	}
+	for _, f := range l.Findings {
+		rule := c.lnkRule(f)
+		props := map[string]interface{}{
+			"score":      l.Score,
+			"threshold":  lnkThresholdFor(l, c.lnkThreshold),
+			"classScore": f.Score,
+		}
+		if f.Technique != "" {
+			props["technique"] = f.Technique
+		}
+		if f.Evidence != "" {
+			props["evidence"] = c.boundedMessage(f.Evidence)
+		}
+		results = append(results, sarifResult{
+			RuleID:              rule.ID,
+			RuleIndex:           table.index[rule.ID],
+			Level:               c.levelHeuristic,
+			Message:             sarifMessage{Text: c.boundedMessage(f.Detail)},
+			Locations:           []sarifLocation{c.location(res.FilePath, nil)},
+			PartialFingerprints: c.fingerprints(res),
+			Properties:          props,
+		})
+	}
+	return results
+}
+
+func (c config) oleRule(f ole.Finding) sarifRule {
+	class := strings.TrimPrefix(f.Class, "ole.")
+	return sarifRule{
+		ID:               SARIFRuleOLEPrefix + class,
+		Name:             "OLEMacro_" + strings.ToUpper(strings.ReplaceAll(class, ".", "_")),
+		ShortDescription: &sarifMessage{Text: "Malicious OLE/VBA macro signal (" + class + ")"},
+		FullDescription:  &sarifMessage{Text: "An OLE compound-file document carries a VBA-macro signal of malicious intent — an auto-executing entry point, a shell/interpreter or download call in the decompressed macro source, heavy obfuscation, or an embedded-object/exploit lure. Suspicious capability read from the document, not a confirmed detection."},
+		DefaultConfig:    &sarifRuleConfig{Level: c.levelHeuristic},
+		Properties:       map[string]interface{}{"kind": "ole"},
+	}
+}
+
+func (c config) appendOLE(results []sarifResult, table *ruleTable, res scanner.ScanResult) []sarifResult {
+	o := res.OLE
+	if !c.sarifIncludeHeuristics || !oleBreached(o, c.oleThreshold) {
+		return results
+	}
+	for _, f := range o.Findings {
+		rule := c.oleRule(f)
+		props := map[string]interface{}{
+			"score":      o.Score,
+			"threshold":  oleThresholdFor(o, c.oleThreshold),
+			"classScore": f.Score,
+		}
+		if f.Technique != "" {
+			props["technique"] = f.Technique
+		}
+		if f.Evidence != "" {
+			props["evidence"] = c.boundedMessage(f.Evidence)
+		}
+		results = append(results, sarifResult{
+			RuleID:              rule.ID,
+			RuleIndex:           table.index[rule.ID],
+			Level:               c.levelHeuristic,
+			Message:             sarifMessage{Text: c.boundedMessage(f.Detail)},
+			Locations:           []sarifLocation{c.location(res.FilePath, nil)},
+			PartialFingerprints: c.fingerprints(res),
+			Properties:          props,
+		})
+	}
+	return results
+}
+
+func (c config) pdfRule(f pdf.Finding) sarifRule {
+	class := strings.TrimPrefix(f.Class, "pdf.")
+	return sarifRule{
+		ID:               SARIFRulePDFPrefix + class,
+		Name:             "PDFDocument_" + strings.ToUpper(strings.ReplaceAll(class, ".", "_")),
+		ShortDescription: &sarifMessage{Text: "Malicious PDF document signal (" + class + ")"},
+		FullDescription:  &sarifMessage{Text: "A PDF document carries a malicious-document signal — an auto-run action, embedded JavaScript, a Launch action, an embedded-file payload, or name obfuscation that hex-escapes a sensitive keyword. Suspicious capability read from the structure, not a confirmed detection."},
+		DefaultConfig:    &sarifRuleConfig{Level: c.levelHeuristic},
+		Properties:       map[string]interface{}{"kind": "pdf"},
+	}
+}
+
+func (c config) appendPDF(results []sarifResult, table *ruleTable, res scanner.ScanResult) []sarifResult {
+	p := res.PDF
+	if !c.sarifIncludeHeuristics || !pdfBreached(p, c.pdfThreshold) {
+		return results
+	}
+	for _, f := range p.Findings {
+		rule := c.pdfRule(f)
+		props := map[string]interface{}{
+			"score":      p.Score,
+			"threshold":  pdfThresholdFor(p, c.pdfThreshold),
+			"classScore": f.Score,
+		}
+		if f.Technique != "" {
+			props["technique"] = f.Technique
+		}
+		if f.Evidence != "" {
+			props["evidence"] = c.boundedMessage(f.Evidence)
+		}
+		results = append(results, sarifResult{
+			RuleID:              rule.ID,
+			RuleIndex:           table.index[rule.ID],
+			Level:               c.levelHeuristic,
+			Message:             sarifMessage{Text: c.boundedMessage(f.Detail)},
+			Locations:           []sarifLocation{c.location(res.FilePath, nil)},
+			PartialFingerprints: c.fingerprints(res),
+			Properties:          props,
+		})
+	}
+	return results
+}
+
+func (c config) isoRule(f iso.Finding) sarifRule {
+	class := strings.TrimPrefix(f.Class, "iso.")
+	return sarifRule{
+		ID:               SARIFRuleISOPrefix + class,
+		Name:             "ISOContainer_" + strings.ToUpper(strings.ReplaceAll(class, ".", "_")),
+		ShortDescription: &sarifMessage{Text: "Malicious ISO container signal (" + class + ")"},
+		FullDescription:  &sarifMessage{Text: "An ISO 9660 image shows the mark-of-the-web-bypass delivery shape — a shortcut paired with an executable payload, a hidden payload, or an autorun.inf. Suspicious container shape read from the directory tree, not a confirmed detection."},
+		DefaultConfig:    &sarifRuleConfig{Level: c.levelHeuristic},
+		Properties:       map[string]interface{}{"kind": "iso"},
+	}
+}
+
+func (c config) appendISO(results []sarifResult, table *ruleTable, res scanner.ScanResult) []sarifResult {
+	i := res.ISO
+	if !c.sarifIncludeHeuristics || !isoBreached(i, c.isoThreshold) {
+		return results
+	}
+	for _, f := range i.Findings {
+		rule := c.isoRule(f)
+		props := map[string]interface{}{
+			"score":      i.Score,
+			"threshold":  isoThresholdFor(i, c.isoThreshold),
+			"classScore": f.Score,
+		}
+		if f.Technique != "" {
+			props["technique"] = f.Technique
+		}
+		if f.Evidence != "" {
+			props["evidence"] = c.boundedMessage(f.Evidence)
+		}
+		results = append(results, sarifResult{
+			RuleID:              rule.ID,
+			RuleIndex:           table.index[rule.ID],
+			Level:               c.levelHeuristic,
+			Message:             sarifMessage{Text: c.boundedMessage(f.Detail)},
+			Locations:           []sarifLocation{c.location(res.FilePath, nil)},
 			PartialFingerprints: c.fingerprints(res),
 			Properties:          props,
 		})

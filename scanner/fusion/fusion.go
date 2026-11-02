@@ -416,4 +416,8 @@ const (
 	SourceSimilarity = "similarity"
 	SourceStego      = "stego"
 	SourceEncChain   = "encchain"
+	SourceLNK        = "lnk"
+	SourceOLE        = "ole"
+	SourcePDF        = "pdf"
+	SourceISO        = "iso"
 )

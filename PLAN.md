@@ -39,13 +39,25 @@ A roll-up of the OSS engine as it stands; the phase sections below hold the
 detail and the open items. Everything here is measured and gated in CI
 (`make ci`: vet, race tests, rule lint, coverage gate, eval gate).
 
-**Detectors (six, single-pass, plus a fusion lattice):**
+**Detectors (ten, single-pass, plus a fusion lattice):**
 - Hash signatures, YARA (in-process libyara), string/API heuristics.
 - Static structure — own bounds-checked PE and ELF parsers, entropy, packer,
   overlay, Authenticode, TLSH/ssdeep/imphash similarity.
 - Invisible-codepoint (stego) pass.
 - Encoded-executable pass (`scanner/encchain`) — base64/hex layers decoding to
   a PE/ELF header; measured 0.020% FP over 159,339 benign files.
+- Shell Link (.lnk) pass (`scanner/lnk`) — [MS-SHLLINK] parser reading
+  weaponised-shortcut signals (interpreter arguments, encoded/hidden-window
+  flags, env-var path obfuscation, executable target, icon lure, overlay).
+- OLE macro pass (`scanner/ole`) — [MS-CFB] parser + [MS-OVBA] decompression
+  reading VBA-macro tradecraft (auto-exec entry points, shell/interpreter and
+  download calls, obfuscation, embedded-object/Equation-Editor lures).
+- PDF document pass (`scanner/pdf`) — bounded lexical scan with `#xx` name
+  de-obfuscation reading malicious-PDF tradecraft (auto-run actions, embedded
+  JavaScript, Launch, embedded files, JS exploit primitives).
+- ISO container pass (`scanner/iso`) — bounded, cycle-safe ISO 9660 (+Joliet)
+  directory enumeration reading the mark-of-the-web-bypass smuggling shape
+  (a .lnk paired with an executable payload, hidden payloads, autorun.inf).
 - Fusion lattice — corroboration of sub-threshold detectors; never lowers a
   verdict.
 
@@ -56,6 +68,9 @@ detail and the open items. Everything here is measured and gated in CI
 - YARA rule linter (`cau rules lint`), `cau rules list`.
 - Output: text, versioned JSON (schema 1.4.0), SARIF 2.1.0, OCSF 1.3.0.
 - Evaluation harness with a committed smoke corpus and regression gates.
+- MCP server (`cau-mcp`): the engine over JSON-RPC on stdio — nine tools
+  (scan/explain/test-and-draft-rules/coverage), signature and coverage
+  resources, two triage/review prompts, all behind a path-confined sandbox.
 
 **Robustness (engine hardening):**
 - Coverage-guided fuzzers on every untrusted-input parser (`make fuzz`),
@@ -64,12 +79,18 @@ detail and the open items. Everything here is measured and gated in CI
 - Detection-robustness harnesses for all four content detectors; they found and
   closed two case-sensitivity gaps (wannacry, generic-ransomware extensions).
 
-**ATT&CK coverage of shipped content:** T1140 and T1027.013 covered by the
-encoded-executable detector; **T1564.001 is the sole remaining declared content
-gap** (sensor-owned — a file scanner could only anchor on an attacker-controlled
-name, which the analytic-design rule forbids).
+**ATT&CK coverage of shipped content:** the engine now covers 46 techniques
+with content, and the expectation (`baselines/attack-coverage.txt`) carries no
+hard `gap` rows left — the document/archive detectors closed the last ones. The
+honest incompleteness is now carried by **`partial`** rows: T1057 and T1082
+(discovery via string/import patterns only) and T1564.001 (the ISO-container
+hidden-payload facet ships; host-filesystem hidden executables remain a Phase 11
+sensor row). Limitations are still published — as `partial` states and the
+"content with no ATT&CK technique" list — rather than as `gap` rows. A
+follow-up worth taking: widen the expectation to track genuinely-uncovered
+techniques as new published gaps, so the counterfactual stays visible.
 
-**Not yet shipped (see phases):** the MCP server (Phase 3), intelligence feeds
+**Not yet shipped (see phases):** intelligence feeds
 and the EU-framework bindings (Phase 4), the ML ladder (Phase 5), the full
 layer-peeler and the NOVEL-012 follow-ups (Phase 10 / Phase 12), firmware and
 the broader format/plane sweeps (Phases 8-9), and the entire console/sensor
@@ -253,10 +274,36 @@ cluster` / `cau add-fuzzy`. Notes on what was actually measured:
 
 ---
 
-## Phase 3 — MCP server (OSS)
+## Phase 3 — MCP server (OSS) — DONE 2026-10-30
 
 Highest differentiation per line of code. No competitor ships an AV *engine* as MCP —
 `revula`, `Reversecore_MCP`, `NexusCore_MCP` are RE/debugging toolchains.
+
+Shipped 2026-10-30 as `cau-mcp` (`cmd/cau-mcp`, `internal/mcp`): JSON-RPC 2.0
+over the line-delimited stdio transport, stdlib-only (no SDK dependency), the
+transport abstracted behind `Serve(io.Reader, io.Writer)` so the optional
+streamable-HTTP transport can be added without touching the handlers. The
+sandbox (`internal/mcp/sandbox.go`) enforces path confinement against a
+`--root` allowlist with symlink-escape rejection, a per-file size cap, and
+bounded directory enumeration; every tool result is a bounded, summarized JSON
+payload (truncation is always reported, never silent). Resource discovery moved
+to `internal/resources` so the server and the CLI resolve databases/rules
+identically.
+
+Tools shipped: `scan_file`, `scan_dir`, `scan_hash`, `explain_verdict`,
+`yara_test_rule`, `generate_yara_rule`, `list_signatures`, `add_signature`,
+`mitre_coverage`. Resources: `cau://signatures`, `cau://coverage`,
+`cau://rules/{name}`. Prompts: `triage_sample`, `rule_review`.
+
+Scope-note deviations from the sketch below, stated plainly:
+- `evasion_report` (tool) and `evasion_assessment` (prompt) are **not** shipped:
+  they belong to the Phase 6 evasion suite, which the agent scope note keeps
+  out of the engine. They are omitted, not stubbed.
+- `cau://corpus/{sample}/report` waits on evaluation-corpus addressing;
+  `cau://model/{name}/card` waits on the Phase 5 ML ladder. Neither is
+  advertised until it exists.
+- `rule_review` ships (false-positive-risk assessment is detection quality, not
+  evasion); the streamable-HTTP transport is the remaining open item.
 
 ```
 cmd/cau-mcp/          # stdio primary, streamable-HTTP optional
@@ -300,8 +347,15 @@ score, which offset), `yara_test_rule` (against corpus, returns FP/FN), `generat
       diagnostics, required meta, technique-id shape, hex-as-text, short and
       narrow strings, trivial conditions; `cau` and `generic` profiles; `make
       lint-rules` in CI. Found on the bundled set: no rule declared a technique.
-- [ ] Content test-before-promote: every rule change runs against Phase 1 corpus with
-      measured regression, blocks merge on FP regression
+- [x] Content test-before-promote: every rule change runs against Phase 1 corpus with
+      measured regression, blocks merge on FP regression. Satisfied by the
+      Phase 1 regression gate wired into CI: `make eval-gate` runs `cau eval
+      run` over the corpus and `cau eval gate` against `baselines/smoke.json`
+      under `baselines/policy.json`, whose `max_new_false_positives: 0` /
+      `max_recall_drop: 0` fail the build on any FP or recall regression. The CI
+      workflow runs it on every push and pull_request, so a rule change cannot
+      merge without passing. (The corpus is the committed smoke set until the
+      Phase 4 intake feeds replace the synthetic filler.)
 - [x] ATT&CK mapping on rules + a coverage matrix that reports techniques with **no**
       rule. This is the honest counterfactual to what CrowdStrike sells. Shipped
       2026-10-29 as `cau coverage` (`internal/coverage`): derived from
@@ -568,9 +622,28 @@ is part of the deliverable.
   binary content — without this, the eBPF sensor (#Phase 7-7) is telemetry with no local
   verifier.
 - [ ] Document & archive vectors: OLE (VBA, macro stomping, remote templates), PDF, LNK,
-  CHM, ISO; nested-decompression budget with bomb caps. These are the top delivery paths
-  and none are parsed today. OLE semantics go through the Phase 5 sidecar runtime if Go
-  ports lag — the corpus harness decides, not convenience.
+  CHM, ISO; nested-decompression budget with bomb caps. These are the top delivery paths.
+  **LNK shipped 2026-10-30** as `scanner/lnk` ([MS-SHLLINK] parser + detection, wired
+  through the engine, fusion, ATT&CK coverage and all four reporters; `--no-lnk` /
+  `--lnk-threshold`; adds coverage of T1204.002 and the T1059 family / T1027 from
+  shortcuts). **OLE shipped 2026-10-30** as `scanner/ole` ([MS-CFB] parser + [MS-OVBA]
+  decompression + VBA-macro detection, wired the same way; `--no-ole` / `--ole-threshold`;
+  adds coverage of T1137 and T1203 and joins T1105 / T1027 / the T1059 family /
+  T1204.002). Go-native, no sidecar needed. Macro-stomping is deferred (needs the
+  MODULEOFFSET dir-record parse; the v1 signature-scan locates CompressedContainers
+  without it — measure-or-don't-ship). **PDF shipped 2026-10-30** as `scanner/pdf`
+  (bounded lexical scan with `#xx` name de-obfuscation + malicious-document detection,
+  wired the same way; `--no-pdf` / `--pdf-threshold`; adds coverage of T1059.007 and
+  T1204.001 and joins T1027 / T1059 / T1105 / T1204.002). **ISO shipped 2026-10-30** as
+  `scanner/iso` (bounded, cycle-safe ISO 9660 + Joliet directory enumeration reading the
+  mark-of-the-web-bypass smuggling shape; `--no-iso` / `--iso-threshold`; adds coverage of
+  T1091, takes T1564.001 to *partial* — the ISO-container hidden-payload facet; the
+  host-filesystem facet is still the Phase 11 sensor row — and joins T1204.002). **CHM
+  deferred**: meaningful CHM detection needs LZX decompression (the malicious `<OBJECT>`
+  ShortCut command lives in the LZX-compressed HTML topics); a structural-only CHM pass
+  would sit below the FP bar, so per measure-or-don't-ship it waits for the LZX work
+  rather than shipping weak. Each shipped parser lands with its own fuzz harness (see the
+  parser-fuzzing gate).
 - [ ] Quarantine + canary primitives in the OSS engine: quarantine DB with
   integrity-checked restore, decoy/canary files as cheap ground truth for the behavior
   engine. The console ships full response by design; OSS analysts still need an honest
@@ -585,6 +658,14 @@ is part of the deliverable.
   ELF, UEFI, OLE, archives). A scanner that dies on a malformed sample is a
   time-of-scanning liability; fuzz failures block releases with the same honesty as the
   Phase 1 gates.
+  Progress: **every parser shipped so far is fuzzed** — `FuzzParsePE`,
+  `FuzzParseELF`, `FuzzAnalyze` (static), `FuzzScan` (stego),
+  `FuzzScanHeuristicsData`, `FuzzAnalyze` (encchain), `FuzzAnalyze` (lnk),
+  `FuzzAnalyze` (ole, the [MS-CFB] + [MS-OVBA] parsers), `FuzzAnalyze` (pdf) and
+  `FuzzAnalyze` (iso, the ISO 9660 enumerator), all in `make fuzz` with seed
+  corpora that also run as fast unit tests under `make test`. The item stays
+  open for the parsers not yet written (UEFI → Phase 8, CHM → Phase 9, pending
+  its LZX decompressor); each lands with its fuzz harness in the same change.
 - [ ] macOS decision, explicitly: Mach-O scanner plus the LOOBins content already
   ingested. Scope is set at the end of Phase 2 — OSS engine only, or console sensor
   surface. The one thing not accepted is drifting half-committed for two releases.

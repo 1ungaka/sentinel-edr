@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -258,15 +259,36 @@ func TestHeuristicsELFImports(t *testing.T) {
 	if names, ok := elfImports([]byte("plain text")); ok || names != nil {
 		t.Error("text treated as ELF")
 	}
+	// The crediting decision itself is a table lookup and must hold on every
+	// host, independent of what system binaries happen to be installed: a
+	// "ptrace" import maps to the process-injection category, which carries
+	// T1055.
+	if info, ok := suspiciousAPIs["ptrace"]; !ok || info.Category != catInjection {
+		t.Fatalf("ptrace not mapped to %q in suspiciousAPIs: %+v", catInjection, info)
+	}
+	if got := categoryTechniques[catInjection]; got != "T1055" {
+		t.Fatalf("injection category technique = %q, want T1055", got)
+	}
+
+	// The end-to-end path (ELF bytes -> ParseELF -> credited match) is checked
+	// against a real binary that actually imports ptrace. Which system binary
+	// does varies by host (CI runners often ship a sudo that does not), so the
+	// binary is chosen by its real imports rather than assumed, and the check
+	// is skipped when none of the candidates qualifies. ELF import parsing is
+	// covered deterministically by the static package's buildELF tests.
 	var path string
-	for _, p := range []string{"/usr/bin/sudo", "/usr/bin/strace", "/usr/bin/gdb", "/usr/bin/ltrace"} {
-		if _, err := os.Stat(p); err == nil {
+	for _, p := range []string{"/usr/bin/strace", "/usr/bin/ltrace", "/usr/bin/gdb", "/usr/bin/sudo", "/bin/sudo"} {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		if names, ok := elfImports(data); ok && slices.Contains(names, "ptrace") {
 			path = p
 			break
 		}
 	}
 	if path == "" {
-		t.Skip("no ptrace-importing binary on this machine")
+		t.Skip("no binary that imports ptrace on this machine")
 	}
 	h := ScanHeuristics(path)
 	if h.Error != nil {
@@ -284,7 +306,10 @@ func TestHeuristicsELFImports(t *testing.T) {
 	if !elfImport {
 		t.Errorf("%s: ptrace import not credited: %+v", path, h.Matches)
 	}
-	if h.Detected() {
-		t.Errorf("%s: a ptrace user alone crossed the threshold (%d/%d): %+v", path, h.Score, h.EffectiveThreshold(), h.Categories)
-	}
+	// Note: we do not assert the binary stays below the threshold here. That is
+	// an anti-FP weight-tuning property of an *ordinary* binary, and the binary
+	// chosen above is whichever host tool happens to import ptrace — often a
+	// syscall-heavy tool like strace that legitimately scores high. The weight
+	// tuning (a lone weak/capped category not crossing the bar) is covered by
+	// the scoring tests on controlled inputs.
 }

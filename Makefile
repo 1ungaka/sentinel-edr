@@ -4,6 +4,7 @@
 # pkg-config. For a user-local toolchain, `source scripts/dev-env.sh` first.
 
 BINARY   ?= cau
+MCPBINARY ?= cau-mcp
 PKG      := ./...
 GOFLAGS  ?=
 VERSION  ?= $(shell command git describe --tags --always --dirty 2>/dev/null || git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -21,12 +22,17 @@ export CGO_ENABLED=1
 
 .PHONY: all build test test-race vet fmt fmt-check lint bench clean install \
         eval eval-validate eval-run eval-gate baseline lint-rules coverage \
-        coverage-gate coverage-record fuzz ci
+        coverage-gate coverage-record fuzz ci build-mcp
 
-all: build
+all: build build-mcp
 
 build:
 	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BINARY) .
+
+# cau-mcp: the Model Context Protocol server (Phase 3). Same engine, driven by
+# an LLM agent or IDE over JSON-RPC on stdio.
+build-mcp:
+	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(MCPBINARY) ./cmd/cau-mcp
 
 # TESTFLAGS carries a generous timeout: the static package's real-binary
 # measurement tests (TestMeasureRealELF walks ~5k system files) are slow under
@@ -65,6 +71,11 @@ fuzz: build
 	go test ./scanner/static/ -run '^$$' -fuzz '^FuzzParsePE$$'  -fuzztime $(FUZZTIME)
 	go test ./scanner/static/ -run '^$$' -fuzz '^FuzzAnalyze$$'  -fuzztime $(FUZZTIME)
 	go test ./scanner/stego/  -run '^$$' -fuzz '^FuzzScan$$'     -fuzztime $(FUZZTIME)
+	go test ./scanner/encchain/ -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
+	go test ./scanner/lnk/    -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
+	go test ./scanner/ole/    -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
+	go test ./scanner/pdf/    -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
+	go test ./scanner/iso/    -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
 	go test ./scanner/        -run '^$$' -fuzz '^FuzzScanHeuristicsData$$' -fuzztime $(FUZZTIME)
 
 # ── Evaluation harness ──────────────────────────────────────────────────────
@@ -109,15 +120,16 @@ coverage: build
 coverage-record: build
 	./$(BINARY) coverage --rules $(RULES) --expect $(COVERAGE) --record --quiet --format text >/dev/null
 
-ci: lint build test-race lint-rules coverage-gate eval
+ci: lint build build-mcp test-race lint-rules coverage-gate eval
 
 # ── Install ─────────────────────────────────────────────────────────────────
 # Installs the binary plus its content to PREFIX. The binary finds
 # $(PREFIX)/share/cau automatically (see resources.go).
 PREFIX ?= /usr/local
-install: build
+install: build build-mcp
 	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/share/cau/rules $(DESTDIR)$(PREFIX)/share/cau/signatures
 	install -m 0755 $(BINARY) $(DESTDIR)$(PREFIX)/bin/$(BINARY)
+	install -m 0755 $(MCPBINARY) $(DESTDIR)$(PREFIX)/bin/$(MCPBINARY)
 	install -m 0644 rules/*.yar $(DESTDIR)$(PREFIX)/share/cau/rules/
 	install -m 0644 signatures/hashes.txt signatures/fuzzy.txt $(DESTDIR)$(PREFIX)/share/cau/signatures/
 

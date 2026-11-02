@@ -12,6 +12,10 @@ joins their outcomes. Each detector answers a different question:
 | [Static structure](#static-structure) | is it *built* like something that hides? | SUSPICIOUS |
 | [Invisible codepoints](#invisible-codepoints-stego) | does this text or code carry hidden codepoints? | SUSPICIOUS |
 | [Encoded executable](#encoded-executable) | is an executable hidden behind text encoding? | SUSPICIOUS |
+| [Shell Link (.lnk)](#shell-link-lnk) | is this Windows shortcut a weaponised launcher? | SUSPICIOUS |
+| [OLE macro](#ole-macro) | does this Office document carry a malicious VBA macro? | SUSPICIOUS |
+| [PDF document](#pdf-document) | does this PDF auto-run code or carry a payload? | SUSPICIOUS |
+| [ISO container](#iso-container) | is this disk image a mark-of-the-web-bypass lure? | SUSPICIOUS |
 | [Fusion](#fusion) | do several of the above agree, even below their own thresholds? | never lowers; raises CLEAN to SUSPICIOUS |
 
 SUSPICIOUS is evidence with a score and an explanation, never a confirmed
@@ -308,6 +312,115 @@ Measured over 159,339 benign files from a Kali install, it fired on 32
 (0.020 %), every one a genuine embedded encoded executable in offensive
 tooling or exploit documentation. `--no-encchain` disables it and
 `--encchain-threshold` tunes the score.
+
+## Shell Link (.lnk)
+
+`scanner/lnk` reads the Windows Shell Link ([MS-SHLLINK]) binary format and
+asks whether a shortcut is a weaponised launcher — the classic ISO/ZIP lure
+that drops a `.lnk` whose arguments relaunch an interpreter. It parses the
+ShellLinkHeader, the optional LinkTargetIDList and LinkInfo, the StringData
+sections (name, relative path, working directory, **command-line arguments**,
+icon location) and the ExtraData blocks, through a bounds-checked cursor that
+caps every declared size and never recurses, so a truncated or adversarial
+shortcut yields a partial result with a warning rather than a panic.
+
+The findings are small additive signals, each mapped to ATT&CK: an interpreter
+or LOLBin in the arguments (`powershell`→T1059.001, `cmd`→T1059.003,
+`wscript`/`cscript`→T1059.005, `mshta`/`rundll32`/`regsvr32`/… →T1059), encoded
+or obfuscated command flags (`-enc`, `FromBase64String`, `IEX`, …→T1027), a
+hidden-window flag (T1027), environment-variable path obfuscation (T1027), an
+executable or script target (T1204.002), a document-icon lure fronting an
+interpreter (T1204.002), unusually long arguments, and data appended past the
+shortcut structures (T1027). The default threshold (8) is chosen so no single
+benign tell crosses it while a real combination does — an interpreter plus an
+encoded flag, or an interpreter plus a hidden window.
+
+It is SUSPICIOUS-tier, never MALICIOUS: the structure is strong evidence of a
+launcher, not proof of malice (legitimate installers ship shortcuts too).
+`--no-lnk` disables it and `--lnk-threshold` tunes the score.
+
+## OLE macro
+
+`scanner/ole` reads the OLE Compound File Binary ([MS-CFB]) container behind
+legacy-Office documents (`.doc`/`.xls`/`.ppt`) and asks whether it carries a
+malicious VBA macro — the phishing-lure dropper that auto-runs on open and
+shells out to an interpreter or pulls a stage-two payload. It parses the CFB
+(header, DIFAT, FAT, directory, MiniFAT/mini-stream) through bounds-checked
+accessors that cap every declared size, detect FAT/MiniFAT chain cycles with a
+visited-set, and bound the total bytes resolved, so a malformed or adversarial
+document yields a partial result with a warning rather than a panic, a hang or
+unbounded memory. It then locates the VBA module streams, decompresses their
+[MS-OVBA] `CompressedContainer` source (a bounded, cycle-free implementation of
+the container/chunk/token algorithm), and reads the macro source.
+
+The findings are ATT&CK-mapped signals: a VBA project at all (T1059.005, low
+weight — legit docs have macros), an **auto-executing entry point**
+(`AutoOpen`, `Document_Open`, `Workbook_Open`, … → T1137), a shell or
+interpreter call (`Shell`, `powershell`, `cmd` → T1059.001/.003/.005), a
+downloader (`URLDownloadToFile`, `MSXML2.XMLHTTP` → T1105), late-binding
+(`CreateObject`/`GetObject`), heavy character-code obfuscation (T1027), and
+embedded-object / Equation-Editor lures (`\x01Ole10Native`, `Equation Native` →
+T1204.002 / T1203). The default threshold (8) is chosen so a plain
+macro-bearing document stays below it while an auto-exec entry point plus a
+suspicious call crosses it.
+
+It is SUSPICIOUS-tier, never MALICIOUS: a macro is strong evidence, not proof
+(business documents legitimately automate). `--no-ole` disables it and
+`--ole-threshold` tunes the score.
+
+## PDF document
+
+`scanner/pdf` detects malicious PDFs — the phishing lure whose document
+auto-runs JavaScript, launches an external program, or carries an embedded
+payload. A full PDF parse is unnecessary and, on adversarial files, dangerous,
+so the detector is a **bounded lexical + shallow-structural scan** (the tool
+most PDF-malware detectors actually use): it never recurses, caps the bytes it
+reads and the number of name tokens it processes, and returns a partial result
+with a warning rather than hanging. It first resolves PDF name obfuscation —
+names may hex-escape characters as `#xx` (`/J#61vaScript` is `/JavaScript`), so
+matching is done against the decoded canonical name.
+
+The ATT&CK-mapped signals: an auto-run action (`/OpenAction`, `/AA` → T1204.002),
+embedded JavaScript (`/JavaScript`, `/JS` → T1059.007), a `/Launch` action
+(T1059), an embedded-file payload (`/EmbeddedFile` → T1204.002), a remote fetch
+(`/SubmitForm`, `/GoToR` → T1105), a `/URI` link (T1204.001, low weight),
+JavaScript exploitation primitives (`unescape`, `eval`, `%u` heap-spray,
+`getAnnots` → T1027), and — the strongest intent signal — a sensitive name
+spelled with `#xx` hex escapes (T1027), which benign PDFs essentially never do.
+Encryption is noted but never scored alone (many benign PDFs are encrypted); it
+adds a tiny amplifier only when combined with an auto-run action and JavaScript.
+The default threshold (8) is chosen so a plain PDF with a benign link stays well
+below while the canonical `OpenAction`→`JavaScript` dropper crosses.
+
+It is SUSPICIOUS-tier, never MALICIOUS. `--no-pdf` disables it and
+`--pdf-threshold` tunes the score.
+
+## ISO container
+
+`scanner/iso` recognises the ISO/IMG email-smuggling delivery shape: attackers
+mail a small `.iso` that, when mounted, shows a `.lnk` relaunching an
+interpreter against a hidden payload — a route that became popular because
+mounted-image contents historically did not inherit Mark-of-the-Web. The
+detector reads the ISO 9660 directory tree (with Joliet UCS-2 names when
+present) through a parser that is enumeration-only — it never reads file
+contents — and bounded by construction: an explicit queue instead of recursion,
+caps on records/sectors/entries/depth, a visited-set of extent LBAs that breaks
+self-referential extents, and a range check on every sector and record, so a
+malformed image yields a partial enumeration with a warning rather than a hang.
+
+The ATT&CK-mapped signals: `autorun.inf` in the root (T1091), a `.lnk` shortcut
+(T1204.002), an executable or script file (T1204.002), a hidden-flagged
+executable or a payload inside a hidden directory (T1564.001), and — the
+canonical lure — a `.lnk` present together with an executable payload
+(`iso.lure.lnk-and-payload`, T1204.002), with a tiny extra weight when the image
+is also small (the attachment shape). The default threshold (8) is tuned so a
+legitimate software ISO full of executables does not cross on executables alone,
+while the lnk-plus-payload smuggling shape does. The detector enumerates the
+container shape; the files it names are scanned on their own by the other
+detectors.
+
+It is SUSPICIOUS-tier, never MALICIOUS. `--no-iso` disables it and
+`--iso-threshold` tunes the score.
 
 ## Fusion
 

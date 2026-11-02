@@ -27,15 +27,17 @@ type Technique struct {
 
 // Tactic names used in the catalog.
 const (
-	Execution      = "Execution"
-	Persistence    = "Persistence"
-	PrivEsc        = "Privilege Escalation"
-	DefenseEvasion = "Defense Evasion"
-	CredAccess     = "Credential Access"
-	Discovery      = "Discovery"
-	Collection     = "Collection"
-	C2             = "Command and Control"
-	Impact         = "Impact"
+	InitialAccess   = "Initial Access"
+	Execution       = "Execution"
+	Persistence     = "Persistence"
+	PrivEsc         = "Privilege Escalation"
+	DefenseEvasion  = "Defense Evasion"
+	CredAccess      = "Credential Access"
+	Discovery       = "Discovery"
+	LateralMovement = "Lateral Movement"
+	Collection      = "Collection"
+	C2              = "Command and Control"
+	Impact          = "Impact"
 )
 
 var catalog = map[string]Technique{
@@ -60,12 +62,19 @@ var catalog = map[string]Technique{
 	"T1059.003": {"T1059.003", "Command and Scripting Interpreter: Windows Command Shell", []string{Execution}},
 	"T1059.004": {"T1059.004", "Command and Scripting Interpreter: Unix Shell", []string{Execution}},
 	"T1059.005": {"T1059.005", "Command and Scripting Interpreter: Visual Basic", []string{Execution}},
+	"T1059.007": {"T1059.007", "Command and Scripting Interpreter: JavaScript", []string{Execution}},
 	"T1070.004": {"T1070.004", "Indicator Removal: File Deletion", []string{DefenseEvasion}},
 	"T1070.006": {"T1070.006", "Indicator Removal: Timestomp", []string{DefenseEvasion}},
 	"T1071":     {"T1071", "Application Layer Protocol", []string{C2}},
 	"T1082":     {"T1082", "System Information Discovery", []string{Discovery}},
 	"T1087":     {"T1087", "Account Discovery", []string{Discovery}},
+	"T1091":     {"T1091", "Replication Through Removable Media", []string{InitialAccess, LateralMovement}},
 	"T1105":     {"T1105", "Ingress Tool Transfer", []string{C2}},
+	"T1137":     {"T1137", "Office Application Startup", []string{Persistence}},
+	"T1203":     {"T1203", "Exploitation for Client Execution", []string{Execution}},
+	"T1204":     {"T1204", "User Execution", []string{Execution}},
+	"T1204.001": {"T1204.001", "User Execution: Malicious Link", []string{Execution}},
+	"T1204.002": {"T1204.002", "User Execution: Malicious File", []string{Execution}},
 	"T1106":     {"T1106", "Native API", []string{Execution}},
 	"T1134":     {"T1134", "Access Token Manipulation", []string{DefenseEvasion, PrivEsc}},
 	"T1140":     {"T1140", "Deobfuscate/Decode Files or Information", []string{DefenseEvasion}},

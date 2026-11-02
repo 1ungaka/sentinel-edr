@@ -17,6 +17,10 @@ import (
 	"github.com/cau-edr/cau/internal/report"
 	"github.com/cau-edr/cau/scanner"
 	"github.com/cau-edr/cau/scanner/encchain"
+	"github.com/cau-edr/cau/scanner/iso"
+	"github.com/cau-edr/cau/scanner/lnk"
+	"github.com/cau-edr/cau/scanner/ole"
+	"github.com/cau-edr/cau/scanner/pdf"
 	"github.com/cau-edr/cau/scanner/static"
 	"github.com/cau-edr/cau/scanner/stego"
 )
@@ -118,11 +122,19 @@ type scanFlags struct {
 	noStatic, noFuzzy bool
 	noStego, noFusion bool
 	noEncChain        bool
+	noLNK             bool
+	noOLE             bool
+	noPDF             bool
+	noISO             bool
 	fuzzyDB           string
 	heurThreshold     int
 	staticThreshold   int
 	stegoThreshold    int
 	encChainThreshold int
+	lnkThreshold      int
+	oleThreshold      int
+	pdfThreshold      int
+	isoThreshold      int
 	format, output    string
 	pretty            bool
 	failOn            string
@@ -153,6 +165,14 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&f.stegoThreshold, "stego-threshold", stego.Threshold, "stego score at which a text artifact is reported suspicious (default is presence-based)")
 	fs.BoolVar(&f.noEncChain, "no-encchain", false, "disable the encoded-executable (base64/hex layers decoding to a PE/ELF) pass")
 	fs.IntVar(&f.encChainThreshold, "encchain-threshold", encchain.Threshold, "score at which an encoded-executable match is reported suspicious")
+	fs.BoolVar(&f.noLNK, "no-lnk", false, "disable the Windows Shell Link (.lnk) pass")
+	fs.IntVar(&f.lnkThreshold, "lnk-threshold", lnk.Threshold, "score at which a Shell Link (.lnk) match is reported suspicious")
+	fs.BoolVar(&f.noOLE, "no-ole", false, "disable the OLE compound-file (VBA macro) pass")
+	fs.IntVar(&f.oleThreshold, "ole-threshold", ole.Threshold, "score at which an OLE macro match is reported suspicious")
+	fs.BoolVar(&f.noPDF, "no-pdf", false, "disable the PDF malicious-document pass")
+	fs.IntVar(&f.pdfThreshold, "pdf-threshold", pdf.Threshold, "score at which a PDF document match is reported suspicious")
+	fs.BoolVar(&f.noISO, "no-iso", false, "disable the ISO 9660 malicious-container pass")
+	fs.IntVar(&f.isoThreshold, "iso-threshold", iso.Threshold, "score at which an ISO container match is reported suspicious")
 	fs.BoolVar(&f.noFusion, "no-fusion", false, "disable the fusion lattice (corroboration of sub-threshold detectors)")
 	fs.StringVar(&f.format, "format", "text", "output format: "+strings.Join(report.Formats, ", "))
 	fs.StringVar(&f.output, "output", "", "write the report to this file instead of stdout")
@@ -203,6 +223,22 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "[ERROR] --encchain-threshold must be at least 1")
 		return report.ExitUsage
 	}
+	if f.lnkThreshold < 1 {
+		fmt.Fprintln(stderr, "[ERROR] --lnk-threshold must be at least 1")
+		return report.ExitUsage
+	}
+	if f.oleThreshold < 1 {
+		fmt.Fprintln(stderr, "[ERROR] --ole-threshold must be at least 1")
+		return report.ExitUsage
+	}
+	if f.pdfThreshold < 1 {
+		fmt.Fprintln(stderr, "[ERROR] --pdf-threshold must be at least 1")
+		return report.ExitUsage
+	}
+	if f.isoThreshold < 1 {
+		fmt.Fprintln(stderr, "[ERROR] --iso-threshold must be at least 1")
+		return report.ExitUsage
+	}
 
 	opts := []report.Option{
 		report.WithToolName(toolName),
@@ -213,6 +249,10 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		report.WithStaticThreshold(f.staticThreshold),
 		report.WithStegoThreshold(f.stegoThreshold),
 		report.WithEncChainThreshold(f.encChainThreshold),
+		report.WithLNKThreshold(f.lnkThreshold),
+		report.WithOLEThreshold(f.oleThreshold),
+		report.WithPDFThreshold(f.pdfThreshold),
+		report.WithISOThreshold(f.isoThreshold),
 		report.WithIndent(f.pretty),
 	}
 	if f.dir != "" && len(targets) == 1 {
@@ -355,6 +395,26 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	} else {
 		status("[*] Encoded-executable pass enabled (threshold %d)", f.encChainThreshold)
 	}
+	if f.noLNK {
+		status("[*] Shell Link (.lnk) pass disabled")
+	} else {
+		status("[*] Shell Link (.lnk) pass enabled (threshold %d)", f.lnkThreshold)
+	}
+	if f.noOLE {
+		status("[*] OLE macro pass disabled")
+	} else {
+		status("[*] OLE macro pass enabled (threshold %d)", f.oleThreshold)
+	}
+	if f.noPDF {
+		status("[*] PDF document pass disabled")
+	} else {
+		status("[*] PDF document pass enabled (threshold %d)", f.pdfThreshold)
+	}
+	if f.noISO {
+		status("[*] ISO container pass disabled")
+	} else {
+		status("[*] ISO container pass enabled (threshold %d)", f.isoThreshold)
+	}
 	if f.noFusion {
 		status("[*] Fusion disabled")
 	}
@@ -372,6 +432,14 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		StegoThreshold:     f.stegoThreshold,
 		EncChain:           !f.noEncChain,
 		EncChainThreshold:  f.encChainThreshold,
+		LNK:                !f.noLNK,
+		LNKThreshold:       f.lnkThreshold,
+		OLE:                !f.noOLE,
+		OLEThreshold:       f.oleThreshold,
+		PDF:                !f.noPDF,
+		PDFThreshold:       f.pdfThreshold,
+		ISO:                !f.noISO,
+		ISOThreshold:       f.isoThreshold,
 		NoFusion:           f.noFusion,
 		MaxInMemory:        f.maxInMemoryMiB << 20,
 		Jobs:               f.jobs,

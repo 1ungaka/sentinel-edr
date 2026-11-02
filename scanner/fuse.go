@@ -129,6 +129,38 @@ func (e *Engine) fuse(res *ScanResult, h *HeuristicResult) *fusion.Verdict {
 		sources = append(sources, src)
 	}
 
+	if lk := res.LNK; lk != nil {
+		src := fusion.Source{Name: fusion.SourceLNK, Score: lk.Score, Threshold: lk.EffectiveThreshold(), Skipped: lk.Skipped}
+		for _, f := range lk.Findings {
+			src.Evidence = append(src.Evidence, fusion.Evidence{Label: f.Class, Detail: f.Detail, Technique: f.Technique, Weight: f.Score})
+		}
+		sources = append(sources, src)
+	}
+
+	if ol := res.OLE; ol != nil {
+		src := fusion.Source{Name: fusion.SourceOLE, Score: ol.Score, Threshold: ol.EffectiveThreshold(), Skipped: ol.Skipped}
+		for _, f := range ol.Findings {
+			src.Evidence = append(src.Evidence, fusion.Evidence{Label: f.Class, Detail: f.Detail, Technique: f.Technique, Weight: f.Score})
+		}
+		sources = append(sources, src)
+	}
+
+	if pd := res.PDF; pd != nil {
+		src := fusion.Source{Name: fusion.SourcePDF, Score: pd.Score, Threshold: pd.EffectiveThreshold(), Skipped: pd.Skipped}
+		for _, f := range pd.Findings {
+			src.Evidence = append(src.Evidence, fusion.Evidence{Label: f.Class, Detail: f.Detail, Technique: f.Technique, Weight: f.Score})
+		}
+		sources = append(sources, src)
+	}
+
+	if is := res.ISO; is != nil {
+		src := fusion.Source{Name: fusion.SourceISO, Score: is.Score, Threshold: is.EffectiveThreshold(), Skipped: is.Skipped}
+		for _, f := range is.Findings {
+			src.Evidence = append(src.Evidence, fusion.Evidence{Label: f.Class, Detail: f.Detail, Technique: f.Technique, Weight: f.Score})
+		}
+		sources = append(sources, src)
+	}
+
 	if len(sources) == 0 {
 		return nil
 	}

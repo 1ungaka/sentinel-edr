@@ -1,5 +1,6 @@
 # Build output
 /cau
+/cau-mcp
 /cau.exe
 /dist/
 /bin/
@@ -8,7 +9,7 @@
 *.test
 *.out
 *.prof
-coverage.*
+/coverage.*
 
 # Editors / OS
 .idea/

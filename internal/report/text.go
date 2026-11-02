@@ -9,6 +9,10 @@ import (
 	"github.com/cau-edr/cau/scanner"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/fusion"
+	"github.com/cau-edr/cau/scanner/iso"
+	"github.com/cau-edr/cau/scanner/lnk"
+	"github.com/cau-edr/cau/scanner/ole"
+	"github.com/cau-edr/cau/scanner/pdf"
 	"github.com/cau-edr/cau/scanner/static"
 	"github.com/cau-edr/cau/scanner/stego"
 )
@@ -81,6 +85,18 @@ func (r *TextReporter) Write(w io.Writer, in Input) error {
 		}
 		if hasResult && res.EncChain != nil {
 			c.writeEncChain(bw, res.EncChain)
+		}
+		if hasResult && res.LNK != nil {
+			c.writeLNK(bw, res.LNK)
+		}
+		if hasResult && res.OLE != nil {
+			c.writeOLE(bw, res.OLE)
+		}
+		if hasResult && res.PDF != nil {
+			c.writePDF(bw, res.PDF)
+		}
+		if hasResult && res.ISO != nil {
+			c.writeISO(bw, res.ISO)
 		}
 		if hasResult && res.Fusion != nil {
 			c.writeFusion(bw, res.FilePath, res.Fusion)
@@ -365,6 +381,111 @@ func (c config) writeEncChain(w io.Writer, e *encchain.Result) {
 	fmt.Fprintln(w)
 }
 
+// writeLNK renders the Shell Link analysis when it fired: each detection
+// signal with its class and ATT&CK technique.
+func (c config) writeLNK(w io.Writer, l *lnk.Result) {
+	if l.Skipped != "" || !lnkBreached(l, c.lnkThreshold) {
+		return
+	}
+	path := c.boundedMessage(l.FilePath)
+	threshold := lnkThresholdFor(l, c.lnkThreshold)
+	fmt.Fprintf(w, " [!] DETECTED (Shell Link) — %s\n", path)
+	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
+	fmt.Fprintf(w, "     %-10s: %d / %d threshold\n", "Score", l.Score, threshold)
+	fmt.Fprintln(w)
+	for _, f := range l.Findings {
+		tags := ""
+		if f.Technique != "" {
+			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+		}
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
+		detail := c.boundedMessage(f.Detail)
+		if f.Evidence != "" {
+			detail += ": " + c.boundedMessage(f.Evidence)
+		}
+		fmt.Fprintf(w, "       %s\n", detail)
+	}
+	fmt.Fprintln(w)
+}
+
+// writeOLE renders the OLE compound-file (VBA macro) analysis when it fired.
+func (c config) writeOLE(w io.Writer, o *ole.Result) {
+	if o.Skipped != "" || !oleBreached(o, c.oleThreshold) {
+		return
+	}
+	path := c.boundedMessage(o.FilePath)
+	threshold := oleThresholdFor(o, c.oleThreshold)
+	fmt.Fprintf(w, " [!] DETECTED (OLE macro) — %s\n", path)
+	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
+	fmt.Fprintf(w, "     %-10s: %d / %d threshold\n", "Score", o.Score, threshold)
+	fmt.Fprintln(w)
+	for _, f := range o.Findings {
+		tags := ""
+		if f.Technique != "" {
+			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+		}
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
+		detail := c.boundedMessage(f.Detail)
+		if f.Evidence != "" {
+			detail += ": " + c.boundedMessage(f.Evidence)
+		}
+		fmt.Fprintf(w, "       %s\n", detail)
+	}
+	fmt.Fprintln(w)
+}
+
+// writePDF renders the PDF malicious-document analysis when it fired.
+func (c config) writePDF(w io.Writer, p *pdf.Result) {
+	if p.Skipped != "" || !pdfBreached(p, c.pdfThreshold) {
+		return
+	}
+	path := c.boundedMessage(p.FilePath)
+	threshold := pdfThresholdFor(p, c.pdfThreshold)
+	fmt.Fprintf(w, " [!] DETECTED (PDF document) — %s\n", path)
+	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
+	fmt.Fprintf(w, "     %-10s: %d / %d threshold\n", "Score", p.Score, threshold)
+	fmt.Fprintln(w)
+	for _, f := range p.Findings {
+		tags := ""
+		if f.Technique != "" {
+			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+		}
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
+		detail := c.boundedMessage(f.Detail)
+		if f.Evidence != "" {
+			detail += ": " + c.boundedMessage(f.Evidence)
+		}
+		fmt.Fprintf(w, "       %s\n", detail)
+	}
+	fmt.Fprintln(w)
+}
+
+// writeISO renders the ISO 9660 malicious-container analysis when it fired.
+func (c config) writeISO(w io.Writer, i *iso.Result) {
+	if i.Skipped != "" || !isoBreached(i, c.isoThreshold) {
+		return
+	}
+	path := c.boundedMessage(i.FilePath)
+	threshold := isoThresholdFor(i, c.isoThreshold)
+	fmt.Fprintf(w, " [!] DETECTED (ISO container) — %s\n", path)
+	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
+	fmt.Fprintf(w, "     %-10s: %d / %d threshold\n", "Score", i.Score, threshold)
+	fmt.Fprintln(w)
+	for _, f := range i.Findings {
+		tags := ""
+		if f.Technique != "" {
+			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+		}
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
+		detail := c.boundedMessage(f.Detail)
+		if f.Evidence != "" {
+			detail += ": " + c.boundedMessage(f.Evidence)
+		}
+		fmt.Fprintf(w, "       %s\n", detail)
+	}
+	fmt.Fprintln(w)
+}
+
 // writeFusion renders the lattice's verdict when it adds something to what
 // the detectors already printed: a detection reached only by corroboration,
 // or a verdict several sources agreed on. A fused verdict that restates one
@@ -419,6 +540,10 @@ func (c config) writeSummary(w io.Writer, in Input) {
 	stat := len(in.StaticBreach(c.staticThreshold))
 	steg := len(in.StegoBreach(c.stegoThreshold))
 	enc := len(in.EncChainBreach(c.encChainThreshold))
+	lnkHits := len(in.LNKBreach(c.lnkThreshold))
+	oleHits := len(in.OLEBreach(c.oleThreshold))
+	pdfHits := len(in.PDFBreach(c.pdfThreshold))
+	isoHits := len(in.ISOBreach(c.isoThreshold))
 	fused := len(in.FusionCorroborated())
 
 	fmt.Fprintln(w)
@@ -431,6 +556,10 @@ func (c config) writeSummary(w io.Writer, in Input) {
 	fmt.Fprintf(w, " Static detections     : %d\n", stat)
 	fmt.Fprintf(w, " Stego detections      : %d\n", steg)
 	fmt.Fprintf(w, " Encoded-exe detections: %d\n", enc)
+	fmt.Fprintf(w, " Shell-link detections : %d\n", lnkHits)
+	fmt.Fprintf(w, " OLE-macro detections  : %d\n", oleHits)
+	fmt.Fprintf(w, " PDF detections        : %d\n", pdfHits)
+	fmt.Fprintf(w, " ISO detections        : %d\n", isoHits)
 	fmt.Fprintf(w, " Fused-only detections : %d\n", fused)
 	fmt.Fprintf(w, " Errors                : %d\n", in.ErrorCount())
 	fmt.Fprintf(w, " Exit code             : %d (%s)\n", code, reason)

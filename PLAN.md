@@ -1068,6 +1068,30 @@ that story — plus the honest assumption underneath all of it: a compromised ke
 be inspected from inside itself, so every anti-tamper design leans on anchors *outside*
 it (TPM, provenance, a second process, the VM layer, or the crash itself).
 
+**First increment shipped 2026-11-02 in a separate repo, `cau-kernel`** (kept out of the
+stdlib engine because it is kernel-adjacent): a userspace Go **detection** sensor plus an
+eBPF **enforcement** program.
+- Detection (`cau-kernel inventory|posture|baseline|drift`): reads kernel state from
+  `/proc` and `/sys` — loaded modules with a `/sys/module` cross-view
+  (**hidden-module reconciliation**), decoded taint (unsigned/out-of-tree/force-load/
+  livepatch/OOPS bits), the eBPF surface (bpffs mounts, pinned objects, JIT-harden /
+  `unprivileged_bpf_disabled`), kernel-memory channels (`/dev/mem,kmem,port`,
+  `/proc/kcore`, lockdown), and hardening posture (the sysctl set, lockdown, LSM list,
+  IMA). It reports **drift against an Ed25519-signed baseline** (fail-closed on a bad
+  signature), degrading unreadable nodes to warnings. This delivers the "kernel hook/
+  state inventory", "state-drift", "hardening posture report class", "kernel-memory
+  access channels", "BPF surface inventory" and "cross-view/hidden-module" rows below, in
+  userspace.
+- Enforcement (`bpf/lsm_guard.bpf.c`): a real **BPF-LSM** program on
+  `lsm/bprm_check_security` — an execution-freeze latch for tamper response, compiling to
+  a verified eBPF object. Loading needs root + `CONFIG_BPF_LSM` + `bpf` in
+  `/sys/kernel/security/lsm`.
+- **Still open there** (the genuinely kernel-resident, hardware-anchored items): BPF-LSM
+  *live mediation* with rich policy and a Go loader (cilium/ebpf), the DKMS fallback
+  module, vkernel guest introspection, TPM/IMA boot-measured attestation, kdump capture,
+  and continuous real-time hooks. The rows below track them; `cau-kernel` is where they
+  land.
+
 **Sensor kernel components (Linux):**
 - [ ] BPF-LSM first: the sensor registers as an LSM (signed, package-managed) for real
   blocking decisions — exec, mount, socket connect, ptrace, module load — beyond passive

@@ -56,6 +56,15 @@ cut a tagged release yet, so everything is under Unreleased.
   write and TLSH-parse errors.
 
 ### Added
+- **Known-abused code-signing certificate blocklist** (`cau scan --signers`,
+  `static.SignerBlocklist`): the static pass now extracts each Authenticode
+  certificate's SHA-1 and SHA-256 thumbprint and matches it — or its
+  serial+issuer — against an operator-supplied blocklist (lolcerts), emitting the
+  `authenticode.known-abused-signer` anomaly (weight 9, T1553.002). A valid
+  signature from a stolen or abused key is the ground truth behind the "Certs
+  Are Useless" thesis, and this flags it. The blocklist is a JSON array or a
+  `thumbprint|issuer|reason` line file (stdlib only; `$CAU_SIGNERS` also sets
+  it); converting the lolcerts YAML feed into that file is an ops step.
 - **Unified Kill Chain binding** (`cau coverage --frameworks`,
   `internal/frameworks`): maps each covered ATT&CK technique through its tactic
   onto the 18-phase Unified Kill Chain (Paul Pols / Fox-IT) and prints the

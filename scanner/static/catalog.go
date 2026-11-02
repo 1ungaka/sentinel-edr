@@ -98,6 +98,7 @@ var classCatalog = []Class{
 	{"authenticode.no-codesign-eku", CatSignature, 2, techCodeSigning, fmtPE, "signer certificate lacks the code-signing extended key usage"},
 	{"authenticode.long-validity", CatSignature, 1, techCodeSigning, fmtPE, "signer certificate with an implausibly long validity"},
 	{"authenticode.compiled-outside-validity", CatSignature, 2, techTimestomp, fmtPE, "link time outside the signer's validity with no countersignature"},
+	{"authenticode.known-abused-signer", CatSignature, 9, techCodeSigning, fmtPE, "signed by a certificate on the known-abused-signer blocklist (lolcerts); a valid signature from a stolen/abused key"},
 
 	// Dynamic linking (ELF).
 	{"dynamic.interp-unusual", CatDynamic, 2, techHijackFlow, fmtELF, "program interpreter is not a system loader path"},

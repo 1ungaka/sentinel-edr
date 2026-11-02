@@ -63,6 +63,9 @@ type Engine struct {
 	// StaticNoFuzzy skips TLSH/ssdeep computation, the most expensive part of
 	// the static pass on large inputs.
 	StaticNoFuzzy bool
+	// SignerBlocklist flags PE files signed by a known-abused code-signing
+	// certificate during the static pass. nil disables the check.
+	SignerBlocklist *static.SignerBlocklist
 
 	// Stego enables the invisible-codepoint detector for text and code
 	// artifacts. Its result rides on ScanResult.Stego.
@@ -306,9 +309,10 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 	if e.Static {
 		if data != nil {
 			res.Static = static.Analyze(data, static.Options{
-				Threshold: e.staticThreshold(),
-				FuzzyDB:   e.FuzzyDB,
-				NoFuzzy:   e.StaticNoFuzzy,
+				Threshold:       e.staticThreshold(),
+				FuzzyDB:         e.FuzzyDB,
+				NoFuzzy:         e.StaticNoFuzzy,
+				SignerBlocklist: e.SignerBlocklist,
 			})
 			res.Static.FilePath = path
 		} else {

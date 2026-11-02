@@ -52,6 +52,7 @@ directories never.
 | `--no-heuristics` | off | disable the string and API heuristics |
 | `--no-static` | off | disable the static structural pass |
 | `--no-fuzzy` | off | keep the static pass but skip TLSH / ssdeep (faster on large files; disables similarity lookups) |
+| `--signers <file>` | off | known-abused code-signing certificate blocklist (lolcerts); flags PE files signed by a listed cert |
 | `--no-stego` | off | disable the invisible-codepoint pass |
 | `--no-encchain` | off | disable the encoded-executable pass |
 | `--no-lnk` | off | disable the Windows Shell Link (.lnk) pass |
@@ -75,6 +76,14 @@ directories never.
 | `--follow-symlinks` | off | scan the targets of symbolic links to files |
 
 Hash signatures cannot be turned off: a signature database is required.
+
+The `--signers` blocklist is a JSON array of `{thumbprint, thumbprint_sha256,
+serial, issuer, reason}` entries, or a line file of `<thumbprint-or-serial>|<issuer>|<reason>`
+(a 40-hex id is read as a SHA-1 thumbprint, 64-hex as SHA-256, anything else as a
+serial needing an issuer). `$CAU_SIGNERS` sets it too. It is the lolcerts feed's
+consumer; a binary signed by a listed certificate is flagged
+`authenticode.known-abused-signer` regardless of whether the signature itself is
+otherwise valid.
 
 ### Output and exit code
 

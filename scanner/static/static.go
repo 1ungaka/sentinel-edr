@@ -15,6 +15,9 @@ type Options struct {
 	Threshold int
 	// FuzzyDB enables similarity lookups. nil disables them.
 	FuzzyDB *FuzzyDB
+	// SignerBlocklist flags binaries signed by a known-abused code-signing
+	// certificate. nil disables the check.
+	SignerBlocklist *SignerBlocklist
 	// Now is the reference time for "future timestamp" checks (zero = time.Now).
 	Now time.Time
 	// NoFuzzy skips TLSH/ssdeep computation. Fuzzy hashing is the most
@@ -175,6 +178,11 @@ func Analyze(data []byte, opts Options) *Result {
 	if opts.FuzzyDB != nil {
 		r.FuzzyMatches = opts.FuzzyDB.Lookup(r.Fuzzy, r.Imphash())
 		anoms = append(anoms, fuzzyAnomalies(r.FuzzyMatches)...)
+	}
+	if opts.SignerBlocklist != nil && r.PE != nil && r.PE.Authenticode != nil {
+		if a, ok := signerBlockAnomaly(opts.SignerBlocklist, r.PE.Authenticode.Certificates); ok {
+			anoms = append(anoms, a)
+		}
 	}
 	r.Anomalies = anoms
 	r.Categories, r.Score = score(anoms)

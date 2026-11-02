@@ -1,6 +1,8 @@
 package static
 
 import (
+	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -31,6 +33,12 @@ type CertInfo struct {
 	Signer bool `json:"signer,omitempty"`
 	// SignatureAlgorithm is the certificate's own signature algorithm.
 	SignatureAlgorithm string `json:"signature_algorithm"`
+	// Thumbprint is the SHA-1 hex digest of the certificate's DER encoding —
+	// the canonical fingerprint abused-certificate catalogs (lolcerts) key on.
+	Thumbprint string `json:"thumbprint,omitempty"`
+	// ThumbprintSHA256 is the SHA-256 hex digest of the DER, for sources that
+	// publish the stronger fingerprint.
+	ThumbprintSHA256 string `json:"thumbprint_sha256,omitempty"`
 }
 
 // Authenticode is what the parser could learn from the security directory.
@@ -224,6 +232,10 @@ func parseAuthenticode(data []byte, dir DataDir) *Authenticode {
 			IsCA:               c.IsCA,
 			SignatureAlgorithm: c.SignatureAlgorithm.String(),
 		}
+		sha1sum := sha1.Sum(c.Raw)
+		sha256sum := sha256.Sum256(c.Raw)
+		info.Thumbprint = hex.EncodeToString(sha1sum[:])
+		info.ThumbprintSHA256 = hex.EncodeToString(sha256sum[:])
 		info.SelfSigned = signedBy(c, c)
 		for _, eku := range c.ExtKeyUsage {
 			if eku == x509.ExtKeyUsageCodeSigning {

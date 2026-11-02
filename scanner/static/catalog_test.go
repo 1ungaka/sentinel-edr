@@ -60,7 +60,7 @@ func TestClassCatalogMatchesSource(t *testing.T) {
 			t.Errorf("%s: %q scores %d, catalog weight is %d", file, class, n, c.Weight)
 		}
 	}
-	for _, file := range []string{"anomaly.go", "elf_anomaly.go", "static.go"} {
+	for _, file := range []string{"anomaly.go", "elf_anomaly.go", "static.go", "signerblock.go"} {
 		src, err := os.ReadFile(filepath.Join(".", file))
 		if err != nil {
 			t.Fatal(err)

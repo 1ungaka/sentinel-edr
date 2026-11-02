@@ -144,6 +144,7 @@ type scanFlags struct {
 	noISO             bool
 	noPeel            bool
 	fuzzyDB           string
+	signers           string
 	heurThreshold     int
 	staticThreshold   int
 	stegoThreshold    int
@@ -178,6 +179,7 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&f.noStatic, "no-static", false, "disable the static structural analysis (entropy, packer, PE anomalies, similarity)")
 	fs.IntVar(&f.staticThreshold, "static-threshold", static.Threshold, "static anomaly score at which a file is reported suspicious")
 	fs.StringVar(&f.fuzzyDB, "fuzzy-db", "", "fuzzy signature database (TLSH/ssdeep/imphash; default: auto-discovered, optional)")
+	fs.StringVar(&f.signers, "signers", "", "known-abused code-signing certificate blocklist (lolcerts; optional)")
 	fs.BoolVar(&f.noFuzzy, "no-fuzzy", false, "skip TLSH/ssdeep computation (faster on large files; disables similarity lookups)")
 	fs.BoolVar(&f.noStego, "no-stego", false, "disable the invisible-codepoint (stego) pass over text and code artifacts")
 	fs.IntVar(&f.stegoThreshold, "stego-threshold", stego.Threshold, "stego score at which a text artifact is reported suspicious (default is presence-based)")
@@ -410,6 +412,18 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	var signerBL *static.SignerBlocklist
+	if path := f.signers; path != "" || os.Getenv(envSigners) != "" {
+		if path == "" {
+			path = os.Getenv(envSigners)
+		}
+		signerBL, err = static.LoadSignerBlocklist(path)
+		if err != nil {
+			return finish(report.Input{RunError: err})
+		}
+		status("[*] Signer blocklist enabled: %d known-abused certificate(s) from %s", signerBL.Count(), path)
+	}
+
 	if f.noStego {
 		status("[*] Stego pass disabled")
 	} else {
@@ -458,6 +472,7 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		StaticThreshold:    f.staticThreshold,
 		FuzzyDB:            fuzzy,
 		StaticNoFuzzy:      f.noFuzzy,
+		SignerBlocklist:    signerBL,
 		Stego:              !f.noStego,
 		StegoThreshold:     f.stegoThreshold,
 		EncChain:           !f.noEncChain,

@@ -15,6 +15,9 @@ const (
 	relFuzzy      = resources.RelFuzzy
 )
 
+// envSigners overrides the known-abused-signer blocklist path for `cau scan`.
+const envSigners = "CAU_SIGNERS"
+
 // findResource resolves a resource. explicit is the flag value ("" when the
 // flag was not given). It returns the chosen path and, when nothing was found,
 // the list of locations that were tried.

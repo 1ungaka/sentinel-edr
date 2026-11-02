@@ -7,6 +7,16 @@ cut a tagged release yet, so everything is under Unreleased.
 ## Unreleased
 
 ### Fixed
+- **Unbounded input read in `cau peel` and `cau intake`** (memory-exhaustion
+  DoS). Both read the input file with `os.ReadFile`, so a multi-gigabyte file,
+  `/dev/zero`, or a FIFO could exhaust memory (reproduced: a 3 GiB file OOM-killed
+  the process). Reads are now capped at 256 MiB via a bounded reader
+  (`readFileCapped` / `readStdinCapped`) and refused with a clear error above
+  that — found in an adversarial audit. New coverage-guided fuzzers
+  (`FuzzParse` for the intake and SHA256SUMS parsers, `FuzzVerify` /
+  `FuzzVerifySignature` for the fail-closed Ed25519 verifiers) ran millions of
+  mutations with no panic and no accepted forgery, and are wired into
+  `make fuzz`.
 - **Two YARA rules were case-sensitive** where the rest carry `nocase`, so a
   case-folded sample evaded them: the wannacry rule's indicator strings and
   the generic-ransomware rule's extension strings (`.locked`, `.encrypted`,

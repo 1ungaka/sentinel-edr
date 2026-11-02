@@ -78,6 +78,10 @@ fuzz: build
 	go test ./scanner/iso/    -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
 	go test ./scanner/        -run '^$$' -fuzz '^FuzzScanHeuristicsData$$' -fuzztime $(FUZZTIME)
 	go test ./internal/peeler/ -run '^$$' -fuzz '^FuzzPeel$$' -fuzztime $(FUZZTIME)
+	go test ./internal/intake/ -run '^$$' -fuzz '^FuzzParse$$' -fuzztime $(FUZZTIME)
+	go test ./internal/release/ -run '^$$' -fuzz '^FuzzParse$$' -fuzztime $(FUZZTIME)
+	go test ./internal/release/ -run '^$$' -fuzz '^FuzzVerifySignature$$' -fuzztime $(FUZZTIME)
+	go test ./internal/updater/ -run '^$$' -fuzz '^FuzzVerify$$' -fuzztime $(FUZZTIME)
 
 # ── Evaluation harness ──────────────────────────────────────────────────────
 

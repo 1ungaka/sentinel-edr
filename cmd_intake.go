@@ -73,9 +73,9 @@ func cmdIntake(args []string, stdout, stderr io.Writer) int {
 		defer cancel()
 		data, err = intake.Fetch(ctx, *url)
 	case *input == "-":
-		data, err = io.ReadAll(os.Stdin)
+		data, err = readStdinCapped(maxInputBytes)
 	default:
-		data, err = os.ReadFile(*input)
+		data, err = readFileCapped(*input, maxInputBytes)
 	}
 	if err != nil {
 		return fail(stderr, report.ExitRunFailed, "%v", err)

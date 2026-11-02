@@ -12,6 +12,45 @@ import (
 	"github.com/cau-edr/cau/internal/report"
 )
 
+// maxInputBytes caps how much a command reads from an arbitrary input file or
+// stdin, so a huge or endless input (a multi-gigabyte file, /dev/zero, a FIFO)
+// cannot exhaust memory. 256 MiB is far larger than any real obfuscation-chain
+// sample or intel feed; anything bigger is refused with a clear error.
+const maxInputBytes = 256 << 20
+
+// readFileCapped reads at most cap bytes from path and errors if the file is
+// larger, instead of letting os.ReadFile allocate an unbounded amount.
+func readFileCapped(path string, cap int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if fi, serr := f.Stat(); serr == nil && fi.Mode().IsRegular() && fi.Size() > cap {
+		return nil, fmt.Errorf("%s is %d bytes, over the %d-byte input cap", path, fi.Size(), cap)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, cap+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > cap {
+		return nil, fmt.Errorf("%s exceeds the %d-byte input cap", path, cap)
+	}
+	return data, nil
+}
+
+// readStdinCapped reads at most cap bytes from stdin.
+func readStdinCapped(cap int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(os.Stdin, cap+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > cap {
+		return nil, fmt.Errorf("stdin exceeds the %d-byte input cap", cap)
+	}
+	return data, nil
+}
+
 func peelUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage: cau peel [flags] <file>
 
@@ -53,7 +92,7 @@ func cmdPeel(args []string, stdout, stderr io.Writer) int {
 	if fs.NArg() != 1 {
 		return fail(stderr, report.ExitUsage, "peel takes exactly one file")
 	}
-	data, err := os.ReadFile(fs.Arg(0))
+	data, err := readFileCapped(fs.Arg(0), maxInputBytes)
 	if err != nil {
 		return fail(stderr, report.ExitRunFailed, "%v", err)
 	}

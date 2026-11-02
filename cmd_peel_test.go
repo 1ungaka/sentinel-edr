@@ -63,6 +63,22 @@ func TestCLIPeelCleanFile(t *testing.T) {
 	}
 }
 
+func TestReadFileCappedRefusesOversize(t *testing.T) {
+	work := t.TempDir()
+	// A file one byte over a tiny cap must be refused, not read.
+	p := filepath.Join(work, "big.bin")
+	if err := os.WriteFile(p, make([]byte, 100), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readFileCapped(p, 50); err == nil {
+		t.Error("readFileCapped accepted a file over the cap")
+	}
+	// At/under the cap is fine.
+	if data, err := readFileCapped(p, 100); err != nil || len(data) != 100 {
+		t.Errorf("readFileCapped rejected an in-cap file: %v len=%d", err, len(data))
+	}
+}
+
 func TestCLIPeelUsage(t *testing.T) {
 	if code, _, _ := runCLI(t, "peel"); code != report.ExitUsage {
 		t.Errorf("no file: code=%d", code)

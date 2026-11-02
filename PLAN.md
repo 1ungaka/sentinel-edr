@@ -68,7 +68,8 @@ detail and the open items. Everything here is measured and gated in CI
 - YARA rule linter (`cau rules lint`), `cau rules list`.
 - Output: text, versioned JSON (schema 1.4.0), SARIF 2.1.0, OCSF 1.3.0.
 - Evaluation harness with a committed smoke corpus and regression gates.
-- MCP server (`cau-mcp`): the engine over JSON-RPC on stdio — nine tools
+- MCP server (`cau-mcp`): the engine over JSON-RPC on stdio (with an optional
+  streamable-HTTP transport, `--http <addr>`) — nine tools
   (scan/explain/test-and-draft-rules/coverage), signature and coverage
   resources, two triage/review prompts, all behind a path-confined sandbox.
 
@@ -628,8 +629,11 @@ is part of the deliverable.
   The pass is no longer "a PE-only engine behind a Linux CLI". GTFOBins/GTFOArgs intake is behavior content, not
   binary content — without this, the eBPF sensor (#Phase 7-7) is telemetry with no local
   verifier.
-- [ ] Document & archive vectors: OLE (VBA, macro stomping, remote templates), PDF, LNK,
+- [~] Document & archive vectors: OLE (VBA, macro stomping, remote templates), PDF, LNK,
   CHM, ISO; nested-decompression budget with bomb caps. These are the top delivery paths.
+  **Four of the five formats shipped 2026-10-30** (LNK, OLE, PDF, ISO — detail below);
+  CHM is deferred by measure-or-don't-ship (needs LZX decompression), and the shared
+  nested-decompression bomb-cap budget is still open.
   **LNK shipped 2026-10-30** as `scanner/lnk` ([MS-SHLLINK] parser + detection, wired
   through the engine, fusion, ATT&CK coverage and all four reporters; `--no-lnk` /
   `--lnk-threshold`; adds coverage of T1204.002 and the T1059 family / T1027 from

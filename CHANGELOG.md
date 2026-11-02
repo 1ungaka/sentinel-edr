@@ -56,6 +56,18 @@ cut a tagged release yet, so everything is under Unreleased.
   write and TLSH-parse errors.
 
 ### Added
+- **Signed update channel** (`cau update`, `internal/updater`): installs a
+  signature-database bundle fail-closed. The bundle is three files —
+  `hashes.txt`, `manifest.json`, and a detached `manifest.json.sig` (one Ed25519
+  signature over the manifest, which carries the payload's SHA-256). Nothing on
+  disk changes unless the signature verifies against the trusted key, the payload
+  digest matches the signed manifest, and the bundle's `min_engine_version` is
+  satisfied; a success replaces the database atomically and keeps `<db>.bak` for
+  rollback. Read from `--from <dir>` or an explicit `--url` fetch (never
+  automatic); `--dry-run` verifies only. The trusted key comes from `--pubkey`,
+  `$CAU_UPDATE_PUBKEY`, or the source-pinned key — with none configured, update
+  refuses to install anything. Release-side keypair/signing and the CI publish
+  step are tracked as ops follow-ons in PLAN.md.
 - **Threat-intel intake** (`cau intake`, `internal/intake`): parsers that feed
   the hash signature database from machine-readable feeds instead of hand-typed
   entries — STIX 2.1 bundles (indicator `file:hashes` patterns), MISP event JSON

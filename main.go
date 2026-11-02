@@ -56,6 +56,7 @@ Usage:
   cau canary    plant|check [flags]    plant decoy files and detect tampering
   cau peel      [flags] <file>         walk an obfuscation chain, depth as signal
   cau intake    --format <fmt> [flags] ingest a threat-intel feed into the signature DB
+  cau update    (--from|--url) [flags] install a signed signature-DB bundle (fail-closed)
   cau version                          print the version
 
 Scan examples:
@@ -113,6 +114,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdPeel(args[1:], stdout, stderr)
 	case "intake":
 		return cmdIntake(args[1:], stdout, stderr)
+	case "update":
+		return cmdUpdate(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "%s %s\n", toolName, version)
 		return report.ExitOK

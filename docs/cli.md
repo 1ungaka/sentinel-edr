@@ -362,6 +362,30 @@ its own). `--dry-run` prints the new signatures, `--output` writes them to a fil
 instead of appending to the database. Exit codes: 0 ok (even when nothing is
 new), 3 failed, 4 usage.
 
+## cau update
+
+```sh
+cau update (--from <dir> | --url <base>) [--pubkey <file>] [--db <path>] [--dry-run]
+```
+
+Installs a signed signature-database bundle, fail-closed. The engine never
+fetches on its own — this is always an explicit command. A bundle is three
+files: `hashes.txt` (the payload), `manifest.json` (`{schema, db_version,
+min_engine_version, sha256, created}`), and `manifest.json.sig` (a detached
+Ed25519 signature over the manifest). One signature covers everything because
+the manifest carries the payload's SHA-256.
+
+Nothing on disk changes unless the signature verifies against the trusted key,
+the payload digest matches the signed manifest, and the bundle's
+`min_engine_version` is satisfied. On success the live database is replaced
+atomically and the previous one is kept as `<db>.bak`. `--from` reads a local
+directory (also the air-gap path — the identical payload delivered by media);
+`--url` fetches `<base>/hashes.txt`, `<base>/manifest.json` and
+`<base>/manifest.json.sig`. `--dry-run` verifies only. The trusted Ed25519
+public key (hex) comes from `--pubkey`, else `$CAU_UPDATE_PUBKEY`, else the
+key pinned in the build; with none configured, update refuses to install
+anything. Exit codes: 0 ok, 1 verification failed, 3 failed, 4 usage.
+
 ## CI recipes
 
 GitHub Actions, uploading findings to code scanning:

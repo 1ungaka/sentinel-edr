@@ -366,7 +366,7 @@ score, which offset), `yara_test_rule` (against corpus, returns FP/FN), `generat
   automatic), with `--dry-run`/`--output`. Fixture tests per format. **Open:** a TAXII
   *client* (polling a collection) and the scheduled/weekly sync, which are ops/network
   wiring on top of these parsers.
-- [ ] Release-channel hash updates: `cau update` fetches the latest signed
+- [~] Release-channel hash updates: `cau update` fetches the latest signed
   `signatures/hashes.txt` asset from GitHub Releases on a pinned repo
   (`s-b-repo/cau`), and the CI release job publishes that asset per tag.
   Verification is fail-closed: detached signature checked against the package-pinned key
@@ -375,6 +375,17 @@ score, which offset), `yara_test_rule` (against corpus, returns FP/FN), `generat
   explicit command, or opt-in periodic in config. No network available keeps the current
   DB with a loud warning. Offline/air-gap deployments receive the identical payload
   through the Phase 7 #10 signed bundle instead of a fetch.
+  **Verify-and-apply core shipped 2026-11-02** as `internal/updater` + `cau update`:
+  an Ed25519-signed three-file bundle (`hashes.txt` + `manifest.json` +
+  `manifest.json.sig`, one signature over the manifest which carries the payload's
+  SHA-256). Fail-closed by construction — a bad signature, a payload-digest mismatch, an
+  unmet `min_engine_version`, or no configured key all leave the live DB untouched; a
+  success swaps it atomically and keeps `<db>.bak`. The bundle is read from `--from <dir>`
+  or an explicit `--url` fetch (identical payload for air-gap via a directory), `--dry-run`
+  verifies only, and the trusted key comes from `--pubkey` / `$CAU_UPDATE_PUBKEY` / the
+  source-pinned `pinnedUpdateKey`. Full unit + CLI tests (install, rollback, tamper, wrong
+  key, no-key). **Open (ops):** generating the release keypair, the CI release job that
+  signs and uploads the asset per tag, and the opt-in periodic config.
 - [x] YARA rule linter — catches the dead rules already shipped in `rule_list.yar`.
       Shipped 2026-10-29 as `cau rules lint` (`internal/rulelint`): compile
       diagnostics, required meta, technique-id shape, hex-as-text, short and

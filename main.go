@@ -64,6 +64,7 @@ Scan examples:
   cau scan --dir ./samples --format sarif --output cau.sarif
   cau scan ./build --format json --fail-on heuristic
   cau scan ./dist --format ocsf --output findings.json   # OCSF Detection Findings
+  cau scan --dir /mnt/usb --quarantine                    # detect AND prevent in one pass
   cau scan --dir / --jobs 16 --no-heuristics --no-static --quiet
 
 Detectors: hash signatures, YARA, string/API heuristics, the static
@@ -143,6 +144,8 @@ type scanFlags struct {
 	noPDF             bool
 	noISO             bool
 	noPeel            bool
+	quarantine        bool
+	quarantineStore   string
 	fuzzyDB           string
 	signers           string
 	heurThreshold     int
@@ -195,6 +198,8 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&f.isoThreshold, "iso-threshold", iso.Threshold, "score at which an ISO container match is reported suspicious")
 	fs.BoolVar(&f.noPeel, "no-peel", false, "disable the obfuscation-chain peeler (NOVEL-012)")
 	fs.IntVar(&f.peelThreshold, "peel-threshold", peeler.Threshold, "score at which an obfuscation chain is reported suspicious")
+	fs.BoolVar(&f.quarantine, "quarantine", false, "after scanning, move files with a MALICIOUS verdict into the quarantine vault (free prevention; default off)")
+	fs.StringVar(&f.quarantineStore, "quarantine-store", "", "vault directory for --quarantine (default: the cau quarantine default)")
 	fs.BoolVar(&f.noFusion, "no-fusion", false, "disable the fusion lattice (corroboration of sub-threshold detectors)")
 	fs.StringVar(&f.format, "format", "text", "output format: "+strings.Join(report.Formats, ", "))
 	fs.StringVar(&f.output, "output", "", "write the report to this file instead of stdout")
@@ -517,6 +522,18 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	in.Elapsed = time.Since(start)
+
+	// Prevention (free): move confirmed-malicious files into the vault. Explicit
+	// --quarantine only; it is destructive, so it acts solely on the MALICIOUS
+	// tier (hash/YARA), never on sub-threshold suspicions.
+	if f.quarantine {
+		moved, qerr := autoQuarantine(f.quarantineStore, in.Results, status)
+		if qerr != nil {
+			fmt.Fprintf(stderr, "[ERROR] quarantine: %v\n", qerr)
+		}
+		status("[*] Quarantined %d malicious file(s)", moved)
+	}
+
 	return finish(in)
 }
 

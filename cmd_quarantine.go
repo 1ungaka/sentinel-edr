@@ -7,11 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/cau-edr/cau/internal/quarantine"
 	"github.com/cau-edr/cau/internal/report"
+	"github.com/cau-edr/cau/scanner"
 )
 
 // envQuarantine overrides the default vault location.
@@ -265,4 +267,53 @@ func plural(n int) string {
 		return "y"
 	}
 	return "ies"
+}
+
+// autoQuarantine moves every MALICIOUS-verdict result into the vault, returning
+// the number moved. It is the free-prevention path for `cau scan --quarantine`:
+// it acts only on the high-confidence tier (hash/YARA hits), never on
+// sub-threshold suspicions, because the move is destructive. A per-file failure
+// is reported and skipped, not fatal — one unwritable file never aborts the
+// rest.
+func autoQuarantine(store string, results []scanner.ScanResult, status func(string, ...interface{})) (int, error) {
+	if store == "" {
+		store = defaultQuarantineDir()
+	}
+	var s *quarantine.Store
+	moved := 0
+	for _, r := range results {
+		if r.Verdict != scanner.VerdictMalicious {
+			continue
+		}
+		if s == nil {
+			var err error
+			if s, err = quarantine.Open(store); err != nil {
+				return moved, err
+			}
+		}
+		name := maliciousName(r)
+		if _, err := s.Quarantine(r.FilePath, name, false); err != nil {
+			status("[WARN] could not quarantine %s: %v", r.FilePath, err)
+			continue
+		}
+		moved++
+		status("[*] quarantined %s (%s)", r.FilePath, name)
+	}
+	return moved, nil
+}
+
+// maliciousName derives a threat label for a quarantined file: the hash
+// signature's name, else the matched YARA rule names, else a generic fallback.
+func maliciousName(r scanner.ScanResult) string {
+	if n := strings.TrimSpace(r.ThreatName); n != "" {
+		return n
+	}
+	if len(r.YaraMatches) > 0 {
+		names := make([]string, 0, len(r.YaraMatches))
+		for _, m := range r.YaraMatches {
+			names = append(names, m.RuleName)
+		}
+		return "YARA:" + strings.Join(names, ",")
+	}
+	return "malicious"
 }

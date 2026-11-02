@@ -727,6 +727,10 @@ is part of the deliverable.
   ransomware signal) is never conflated with a mere permission change. The engine stays
   honest that `check` is a point-in-time comparison a cron job or task hook runs, not a
   live watch (that is the sensor's job). Both ship with full unit + end-to-end CLI tests.
+  **Scan-time prevention wired 2026-11-02:** `cau scan --quarantine` moves every
+  MALICIOUS-verdict file into the vault in the same pass that found it — detect *and*
+  prevent, free, in the OSS engine. Explicit and off by default (destructive); the
+  high-confidence tier only (hash/YARA), never sub-threshold suspicions.
 - [ ] Container/OCI registry scanning at the scan node: registry-native pull scanning +
   a Kubernetes admission hook. A large share of the market's code ships inside images;
   the engine currently sees that content only after unpack, if ever.

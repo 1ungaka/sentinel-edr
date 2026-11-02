@@ -56,6 +56,13 @@ cut a tagged release yet, so everything is under Unreleased.
   write and TLSH-parse errors.
 
 ### Added
+- **Scan-time prevention** (`cau scan --quarantine`): detect *and* prevent in one
+  pass — after scanning, files with a MALICIOUS verdict (hash/YARA) are moved
+  into the integrity-sealed vault, with the threat name recorded. Explicit and
+  off by default (the move is destructive); it acts only on the high-confidence
+  tier, never on sub-threshold suspicions. `--quarantine-store` sets the vault.
+  On-host prevention is free, in line with the licensing model (only multi-agent
+  management is paid).
 - **Known-abused code-signing certificate blocklist** (`cau scan --signers`,
   `static.SignerBlocklist`): the static pass now extracts each Authenticode
   certificate's SHA-1 and SHA-256 thumbprint and matches it — or its

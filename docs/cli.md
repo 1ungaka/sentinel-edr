@@ -74,6 +74,8 @@ directories never.
 | `--max-in-memory MiB` | 64 | larger files are streamed: hashing streams, YARA memory-maps, the heuristic, static and stego passes are skipped with the reason recorded |
 | `--jobs N` | CPUs | files scanned concurrently |
 | `--follow-symlinks` | off | scan the targets of symbolic links to files |
+| `--quarantine` | off | **prevention**: after scanning, move files with a MALICIOUS verdict into the vault (hash/YARA tier only; never sub-threshold suspicions) |
+| `--quarantine-store <dir>` | default vault | vault directory for `--quarantine` |
 
 Hash signatures cannot be turned off: a signature database is required.
 

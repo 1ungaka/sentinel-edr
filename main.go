@@ -51,6 +51,8 @@ Usage:
   cau rules     lint|list [flags]      lint the YARA rules, or list them with their meta
   cau coverage  [flags]                ATT&CK coverage matrix of the shipped content
                                        (text, JSON or ATT&CK Navigator layer; gate with --expect)
+  cau quarantine <subcommand>          vault flagged files (add/list/restore/verify/delete)
+  cau canary    plant|check [flags]    plant decoy files and detect tampering
   cau version                          print the version
 
 Scan examples:
@@ -100,6 +102,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdRules(args[1:], stdout, stderr)
 	case "coverage":
 		return cmdCoverage(args[1:], stdout, stderr)
+	case "quarantine":
+		return cmdQuarantine(args[1:], stdout, stderr)
+	case "canary":
+		return cmdCanary(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "%s %s\n", toolName, version)
 		return report.ExitOK

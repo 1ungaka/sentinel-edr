@@ -16,6 +16,8 @@ cau scan ./build --format json --fail-on heuristic                   # fail CI o
 cau scan ./dist --format ocsf --output findings.json                 # OCSF for a security lake
 cau coverage --format navigator --output layer.json                  # ATT&CK Navigator heat map
 cau rules lint --rules ./signature-base --profile generic            # lint a third-party rule set
+cau quarantine add ./suspicious.exe --threat Win.Trojan.Agent        # integrity-sealed vault
+cau canary plant --dir /srv/share/.decoys --manifest canary.json     # decoys as cheap ground truth
 ```
 
 ## What it does

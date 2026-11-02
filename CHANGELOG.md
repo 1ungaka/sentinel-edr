@@ -56,6 +56,25 @@ cut a tagged release yet, so everything is under Unreleased.
   write and TLSH-parse errors.
 
 ### Added
+- **Quarantine vault** (`cau quarantine`, `internal/quarantine`): a local,
+  directory-backed store for files a scan flagged, giving the OSS engine
+  somewhere to put found files short of deletion. Every entry is XOR-masked at
+  rest — the vault never holds a runnable PE/ELF on disk and a scanner pointed
+  at it (including `cau` itself) does not re-flag it — and sealed with the
+  SHA-256 of both the original and the masked bytes, so a corrupted or tampered
+  vault fails *closed* (`ErrIntegrity`, exit 1) rather than writing wrong bytes
+  back to the live path. Subcommands: `add` (move, or `--keep` to copy), `list`
+  (text/JSON), `restore` (to the recorded original or `--to`), `verify` (one
+  entry or the whole vault), `delete`. Index writes are atomic. Masking is
+  reversible obfuscation for safety, never encryption for secrecy — the key is
+  stored alongside the entry and the docs say so.
+- **Canary / decoy files** (`cau canary`, `internal/canary`): `plant` writes
+  plausible decoy files (credential, finance, key names) and records a baseline
+  manifest; `check` diffs them and classifies each as intact, modified,
+  deleted, or meta-changed, so a rewrite (the ransomware signal) is never
+  conflated with a permission change. Cheap ground truth with near-zero false
+  positives; `check` is honest about being a point-in-time comparison a cron
+  job or task hook runs, not a live watch.
 - **ATT&CK coverage matrix** (`cau coverage`, `internal/coverage`): derived
   from the shipped content (heuristic categories, the new static and stego
   class catalogs, compiled YARA rule meta), never typed in; text, JSON and

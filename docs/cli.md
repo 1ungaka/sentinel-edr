@@ -274,6 +274,49 @@ acknowledged incomplete), planned (an expectation `gap`) and none (owned by
 the sensor or console). Exit codes: 0 ok, 1 expectation differs, 3 failed, 4
 usage.
 
+## cau quarantine
+
+```sh
+cau quarantine add     <path> [--store dir] [--threat name] [--keep]
+cau quarantine list    [--store dir] [--format text|json]
+cau quarantine restore <id>   [--store dir] [--to path] [--force]
+cau quarantine verify  [id]   [--store dir]
+cau quarantine delete  <id>   [--store dir]
+```
+
+A local, directory-backed vault for files a scan flagged, so the OSS engine
+has somewhere to put found files short of deleting them. Every entry is
+XOR-masked at rest: the vault never holds a runnable PE/ELF on disk, and a
+scanner pointed at the vault (including `cau` itself) does not re-flag it. Each
+entry is sealed with the SHA-256 of both the original and the masked bytes, so
+`restore` and `verify` fail *closed* (`exit 1`) if the vault was corrupted or
+tampered with, rather than writing wrong bytes back onto the live path. `add`
+moves the file by default (`--keep` copies it); `restore` writes to the
+recorded original path, or to `--to`, refusing to clobber an existing file
+unless `--force`. The store defaults to `$CAU_QUARANTINE_DIR`, else
+`$XDG_DATA_HOME/cau/quarantine`, else `~/.local/share/cau/quarantine`.
+
+The mask is reversible obfuscation for safety, not encryption for secrecy —
+the key is stored with the entry. Exit codes: 0 ok, 1 integrity failure, 3
+failed, 4 usage.
+
+## cau canary
+
+```sh
+cau canary plant --dir dir --manifest path [--count n]
+cau canary check --manifest path [--format text|json]
+```
+
+Plants decoy files with plausible lure names (credentials, finance, keys) and
+records a baseline manifest; `check` diffs the files against the baseline and
+classifies each as intact, modified, deleted, or meta-changed. A decoy nobody
+advertised has no legitimate reason to be opened, so a tripped canary is
+high-signal, near-zero-false-positive ground truth — a rewrite (the ransomware
+signal) is reported distinctly from a mere permission change. `check` is a
+point-in-time comparison a cron job or task hook runs, not a live watch (that
+is the sensor's job). Exit codes: 0 all intact, 1 at least one tripped, 3
+failed, 4 usage.
+
 ## CI recipes
 
 GitHub Actions, uploading findings to code scanning:

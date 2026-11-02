@@ -68,6 +68,9 @@ detail and the open items. Everything here is measured and gated in CI
 - YARA rule linter (`cau rules lint`), `cau rules list`.
 - Output: text, versioned JSON (schema 1.4.0), SARIF 2.1.0, OCSF 1.3.0.
 - Evaluation harness with a committed smoke corpus and regression gates.
+- Response primitives: an integrity-sealed quarantine vault
+  (`cau quarantine`, XOR-neutralized at rest, fail-closed restore) and
+  decoy/canary files with a baseline tamper check (`cau canary`).
 - MCP server (`cau-mcp`): the engine over JSON-RPC on stdio (with an optional
   streamable-HTTP transport, `--http <addr>`) — nine tools
   (scan/explain/test-and-draft-rules/coverage), signature and coverage
@@ -655,10 +658,22 @@ is part of the deliverable.
   would sit below the FP bar, so per measure-or-don't-ship it waits for the LZX work
   rather than shipping weak. Each shipped parser lands with its own fuzz harness (see the
   parser-fuzzing gate).
-- [ ] Quarantine + canary primitives in the OSS engine: quarantine DB with
+- [x] Quarantine + canary primitives in the OSS engine: quarantine DB with
   integrity-checked restore, decoy/canary files as cheap ground truth for the behavior
   engine. The console ships full response by design; OSS analysts still need an honest
   quarantine, and today the engine has nowhere to put found files.
+  **Shipped 2026-11-02.** `internal/quarantine` is a directory-backed vault
+  (`cau quarantine add|list|restore|verify|delete`): every entry is XOR-masked at
+  rest — never a runnable PE/ELF on disk, never re-flagged by a scanner pointed at the
+  vault — and sealed with the SHA-256 of both the original and the masked bytes, so a
+  corrupted or tampered vault fails *closed* (`ErrIntegrity`, exit 1) instead of writing
+  wrong bytes back onto the live path; index writes are atomic (temp + rename). Add
+  moves by default, `--keep` copies. `internal/canary` plants decoy files
+  (`cau canary plant`) with a recorded baseline and diffs them (`cau canary check`),
+  classifying each as intact / modified / deleted / meta-changed — a rewrite (the
+  ransomware signal) is never conflated with a mere permission change. The engine stays
+  honest that `check` is a point-in-time comparison a cron job or task hook runs, not a
+  live watch (that is the sensor's job). Both ship with full unit + end-to-end CLI tests.
 - [ ] Container/OCI registry scanning at the scan node: registry-native pull scanning +
   a Kubernetes admission hook. A large share of the market's code ships inside images;
   the engine currently sees that content only after unpack, if ever.

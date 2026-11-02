@@ -51,6 +51,11 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 	noStatic := fs.Bool("no-static", false, "disable the static structural pass")
 	noStego := fs.Bool("no-stego", false, "disable the invisible-codepoint pass")
 	noEncChain := fs.Bool("no-encchain", false, "disable the encoded-executable pass")
+	noLNK := fs.Bool("no-lnk", false, "disable the Windows Shell Link (.lnk) pass")
+	noOLE := fs.Bool("no-ole", false, "disable the OLE compound-file (VBA macro) pass")
+	noPDF := fs.Bool("no-pdf", false, "disable the PDF malicious-document pass")
+	noISO := fs.Bool("no-iso", false, "disable the ISO 9660 malicious-container pass")
+	noPeel := fs.Bool("no-peel", false, "disable the obfuscation-chain peeler")
 	noHeur := fs.Bool("no-heuristics", false, "disable the string/API heuristics")
 	noFusion := fs.Bool("no-fusion", false, "disable the fusion lattice")
 	yaraTimeout := fs.Duration("yara-timeout", 10*time.Second, "per-file YARA scan budget")
@@ -128,6 +133,11 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 		FuzzyDB:    fuzzy,
 		Stego:      !*noStego,
 		EncChain:   !*noEncChain,
+		LNK:        !*noLNK,
+		OLE:        !*noOLE,
+		PDF:        !*noPDF,
+		ISO:        !*noISO,
+		Peel:       !*noPeel,
 		NoFusion:   *noFusion,
 	}
 

@@ -210,6 +210,12 @@ cut a tagged release yet, so everything is under Unreleased.
   `--jobs` concurrency, resource discovery relative to the install prefix.
 
 ### Changed
+- The `cau-mcp` server now runs the full CLI detector set: the Shell Link
+  (`lnk`), OLE macro (`ole`), PDF (`pdf`), ISO container (`iso`) and
+  obfuscation-chain (`peel`) passes are enabled by default (each with a
+  `--no-*` flag) and surfaced in the tools' per-detector scores and
+  suspicious-tier verdict, so the agent-facing scan matches `cau scan` as the
+  docs state.
 - Remaining "Astra" naming in the plan, layout and ignore rules renamed to
   CAU, and the GitHub repository is renamed to `s-b-repo/cau` (the old name
   redirects); only the historical origin keeps the Astra name.

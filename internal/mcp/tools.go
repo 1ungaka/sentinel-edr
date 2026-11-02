@@ -219,6 +219,21 @@ func (s *Server) summarize(r scanner.ScanResult, h *scanner.HeuristicResult) fil
 	if r.EncChain != nil {
 		fs.Scores["encchain"] = scoreView{r.EncChain.Score, r.EncChain.Threshold, r.EncChain.Score >= r.EncChain.Threshold}
 	}
+	if r.LNK != nil {
+		fs.Scores["lnk"] = scoreView{r.LNK.Score, r.LNK.EffectiveThreshold(), r.LNK.Detected()}
+	}
+	if r.OLE != nil {
+		fs.Scores["ole"] = scoreView{r.OLE.Score, r.OLE.EffectiveThreshold(), r.OLE.Detected()}
+	}
+	if r.PDF != nil {
+		fs.Scores["pdf"] = scoreView{r.PDF.Score, r.PDF.EffectiveThreshold(), r.PDF.Detected()}
+	}
+	if r.ISO != nil {
+		fs.Scores["iso"] = scoreView{r.ISO.Score, r.ISO.EffectiveThreshold(), r.ISO.Detected()}
+	}
+	if r.Peel != nil {
+		fs.Scores["peel"] = scoreView{r.Peel.Score, r.Peel.EffectiveThreshold(), r.Peel.Detected()}
+	}
 	if len(fs.Scores) == 0 {
 		fs.Scores = nil
 	}
@@ -323,6 +338,21 @@ func isSuspicious(r scanner.ScanResult) bool {
 		return true
 	}
 	if r.EncChain != nil && r.EncChain.Score >= r.EncChain.Threshold && r.EncChain.Threshold > 0 {
+		return true
+	}
+	if r.LNK != nil && r.LNK.Detected() {
+		return true
+	}
+	if r.OLE != nil && r.OLE.Detected() {
+		return true
+	}
+	if r.PDF != nil && r.PDF.Detected() {
+		return true
+	}
+	if r.ISO != nil && r.ISO.Detected() {
+		return true
+	}
+	if r.Peel != nil && r.Peel.Detected() {
 		return true
 	}
 	return false

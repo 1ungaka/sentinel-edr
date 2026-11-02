@@ -276,6 +276,12 @@ acknowledged incomplete), planned (an expectation `gap`) and none (owned by
 the sensor or console). Exit codes: 0 ok, 1 expectation differs, 3 failed, 4
 usage.
 
+`--frameworks` (text format only) appends the **Unified Kill Chain** sequencing
+view: each covered technique is mapped through its ATT&CK tactic onto the
+18-phase UKC (Paul Pols / Fox-IT), grouped by stage, with the empty phases named
+as honest gaps — the counterfactual to ATT&CK's technique grid, showing which
+parts of an intrusion's progression a file scanner can observe.
+
 ## cau quarantine
 
 ```sh

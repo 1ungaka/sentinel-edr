@@ -56,6 +56,13 @@ cut a tagged release yet, so everything is under Unreleased.
   write and TLSH-parse errors.
 
 ### Added
+- **Unified Kill Chain binding** (`cau coverage --frameworks`,
+  `internal/frameworks`): maps each covered ATT&CK technique through its tactic
+  onto the 18-phase Unified Kill Chain (Paul Pols / Fox-IT) and prints the
+  sequencing view grouped by stage, with empty phases named as honest gaps — so
+  mapping does not hinge on a single registry. The binding type also carries
+  MISP-cluster and Malpedia-family fields, left for an intel feed to populate
+  because they tag a sample, not a technique.
 - **Signed update channel** (`cau update`, `internal/updater`): installs a
   signature-database bundle fail-closed. The bundle is three files —
   `hashes.txt`, `manifest.json`, and a detached `manifest.json.sig` (one Ed25519

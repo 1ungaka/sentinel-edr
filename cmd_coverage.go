@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cau-edr/cau/internal/coverage"
+	"github.com/cau-edr/cau/internal/frameworks"
 	"github.com/cau-edr/cau/internal/report"
 	"github.com/cau-edr/cau/scanner"
 	"github.com/cau-edr/cau/scanner/static"
@@ -28,6 +29,7 @@ func cmdCoverage(args []string, stdout, stderr io.Writer) int {
 	expect := fs.String("expect", "", "expectation file to compare the matrix against (exit 1 on any difference)")
 	record := fs.Bool("record", false, "rewrite --expect from the current content, keeping its declared gaps")
 	includeInfo := fs.Bool("include-info", false, "list weight-0 informational static classes under unmapped content")
+	frameworksView := fs.Bool("frameworks", false, "append the Unified Kill Chain sequencing view (text format)")
 	quiet := fs.Bool("quiet", false, "suppress progress lines on stderr")
 	if err := fs.Parse(args); err != nil {
 		return report.ExitUsage
@@ -148,5 +150,39 @@ func cmdCoverage(args []string, stdout, stderr io.Writer) int {
 	if err := write(stdout, m); err != nil {
 		return fail(stderr, report.ExitRunFailed, "%v", err)
 	}
+	if *frameworksView {
+		if strings.ToLower(*format) != "text" {
+			return fail(stderr, report.ExitUsage, "--frameworks is only available with --format text")
+		}
+		writeFrameworks(stdout, m.TechniqueIDs())
+	}
 	return code
+}
+
+// writeFrameworks renders the Unified Kill Chain sequencing view of the covered
+// techniques: which phases of an intrusion's progression the shipped content
+// can observe, grouped by stage, with the empty phases named as honest gaps.
+func writeFrameworks(w io.Writer, ids []string) {
+	seq := frameworks.Sequence(ids)
+	covered := make(map[string]frameworks.PhaseCoverage, len(seq))
+	for _, pc := range seq {
+		covered[pc.Phase] = pc
+	}
+	fmt.Fprintln(w, "\nUnified Kill Chain — sequencing view of the shipped content")
+	fmt.Fprintln(w, "(ATT&CK mapped phase-wise alongside the matrix; empty phases are honest gaps)")
+	fmt.Fprintln(w)
+	lastStage := ""
+	for _, phase := range frameworks.Phases() {
+		stage := frameworks.StageForPhase(phase)
+		if stage != lastStage {
+			fmt.Fprintf(w, "  %s\n", strings.ToUpper(stage))
+			lastStage = stage
+		}
+		if pc, ok := covered[phase]; ok {
+			fmt.Fprintf(w, "    [x] %-20s %d technique(s): %s\n", phase, len(pc.Techniques), strings.Join(pc.Techniques, ", "))
+		} else {
+			fmt.Fprintf(w, "    [ ] %-20s —\n", phase)
+		}
+	}
+	fmt.Fprintf(w, "\n%d of %d UKC phases have detection content.\n", len(seq), len(frameworks.Phases()))
 }

@@ -23,6 +23,8 @@ func TestCLICoverageAndRules(t *testing.T) {
 		{"coverage sarif", []string{"coverage", "--quiet", "--rules", "rules", "--format", "sarif"}, report.ExitOK, `sarif-2.1.0`},
 		{"coverage no yara", []string{"coverage", "--quiet", "--no-yara", "--db", smokeDB}, report.ExitOK, "no ruleset loaded"},
 		{"coverage gate ok", []string{"coverage", "--quiet", "--rules", "rules", "--expect", "baselines/attack-coverage.txt"}, report.ExitOK, "technique(s) with detection content"},
+		{"coverage frameworks", []string{"coverage", "--quiet", "--rules", "rules", "--frameworks"}, report.ExitOK, "Unified Kill Chain"},
+		{"coverage frameworks json rejected", []string{"coverage", "--quiet", "--rules", "rules", "--format", "json", "--frameworks"}, report.ExitUsage, ""},
 		{"coverage bad format", []string{"coverage", "--quiet", "--format", "xml"}, report.ExitUsage, ""},
 		{"coverage positional", []string{"coverage", "--quiet", "extra"}, report.ExitUsage, ""},
 		{"coverage record needs expect", []string{"coverage", "--quiet", "--record"}, report.ExitUsage, ""},

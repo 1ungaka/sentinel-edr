@@ -410,13 +410,23 @@ score, which offset), `yara_test_rule` (against corpus, returns FP/FN), `generat
       (37 covered, 3 declared gaps: T1027.013, T1140, T1564.001) and
       `make coverage-gate` fails on any difference. The Phase 11 `--format sarif`
       rendering of per-technique states stays open.
-- [ ] Bind EU alternatives to the matrix so mapping never hinges on a single US registry:
+- [~] Bind EU alternatives to the matrix so mapping never hinges on a single US registry:
       Unified Kill Chain (Fox-IT / P. Pols, NL) mapped phase-wise alongside ATT&CK as the
       sequencing view, MISP galaxy-cluster IDs (CIRCL, Luxembourg) for actor/family
       tagging, Malpedia IDs (Fraunhofer FKIE, Germany) as the family-naming record, ENISA
       Threat Landscape taxonomy (EU) for the strategic dashboard layer, CERT-EU's ATT&CK
       community mappings as external review. Report findings carry a `frameworks` object
       (ATT&CK id, UKC phase, MISP cluster, Malpedia family) so consumers pick their scheme.
+      **UKC binding shipped 2026-11-02** as `internal/frameworks` + `cau coverage
+      --frameworks`: each covered ATT&CK technique is mapped through its tactic onto the
+      18-phase Unified Kill Chain, and the sequencing view groups the shipped content by
+      stage (Initial Foothold / Network Propagation / Action on Objectives) with the empty
+      phases named as honest gaps — the file scanner cannot see Reconnaissance,
+      Weaponization, Exploitation, Pivoting, Exfiltration or Objectives, and says so
+      (11/18 phases covered). The `Binding` type also carries `MISPCluster` and
+      `MalpediaFamily`, left for an intel feed to populate because they tag a sample, not a
+      technique. **Open:** wiring MISP/Malpedia tags through the intake feeds, the ENISA
+      strategic layer, and a `frameworks` object on per-sample scan findings.
 
 **LOTL intake (the lolol.farm meta-catalog)** — lolol.farm indexes ~30 community catalogs.
 Ingest the upstream machine-readable sources on GitHub, never hand-typed; lolol.farm is

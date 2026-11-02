@@ -1,11 +1,11 @@
 {
   "schema_version": "1",
   "run": {
-    "tool": "CAU EDR 5ced43e-dirty",
-    "generated_at": "2026-10-29T23:40:31.418955138Z",
+    "tool": "CAU EDR 0.4.0-dev",
+    "generated_at": "2026-11-02T16:12:43.111921642Z",
     "corpus": "corpus/smoke/manifest.json",
     "corpus_name": "smoke",
-    "corpus_root": "/home/kali/Documents/astrav2/corpus/smoke",
+    "corpus_root": "/home/kali/cau/corpus/smoke",
     "detectors": [
       "encchain",
       "fusion",
@@ -22,126 +22,336 @@
     {
       "id": "benign-README.txt",
       "path": "benign/README.txt",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/benign/README.txt",
+      "full_path": "/home/kali/cau/corpus/smoke/benign/README.txt",
       "expected": "clean",
       "family": "clean",
       "size": 213,
       "detected": false,
       "verdict": "CLEAN",
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 0,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 357202
+      "duration_ns": 367831
     },
     {
       "id": "benign-bom_script",
       "path": "benign/bom_script.ps1",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/benign/bom_script.ps1",
+      "full_path": "/home/kali/cau/corpus/smoke/benign/bom_script.ps1",
       "expected": "clean",
       "family": "clean",
       "size": 22,
       "detected": false,
       "verdict": "CLEAN",
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 0,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 143865
+      "duration_ns": 75305
     },
     {
       "id": "benign-config.ini",
       "path": "benign/config.ini",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/benign/config.ini",
+      "full_path": "/home/kali/cau/corpus/smoke/benign/config.ini",
       "expected": "clean",
       "family": "clean",
       "size": 68,
       "detected": false,
       "verdict": "CLEAN",
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 0,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 749405
+      "duration_ns": 86452
     },
     {
       "id": "benign-emoji_notes",
       "path": "benign/emoji_notes.md",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/benign/emoji_notes.md",
+      "full_path": "/home/kali/cau/corpus/smoke/benign/emoji_notes.md",
       "expected": "clean",
       "family": "clean",
       "size": 77,
       "detected": false,
       "verdict": "CLEAN",
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 0,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 1846731
+      "duration_ns": 616180
     },
     {
       "id": "benign-empty.bin",
       "path": "benign/empty.bin",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/benign/empty.bin",
+      "full_path": "/home/kali/cau/corpus/smoke/benign/empty.bin",
       "expected": "clean",
       "family": "clean",
       "detected": false,
       "verdict": "CLEAN",
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 1503892
+      "duration_ns": 147037
     },
     {
       "id": "benign-fetch.sh",
       "path": "benign/fetch.sh",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/benign/fetch.sh",
+      "full_path": "/home/kali/cau/corpus/smoke/benign/fetch.sh",
       "expected": "clean",
       "family": "clean",
       "size": 152,
       "detected": false,
       "verdict": "CLEAN",
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 2,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 0,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 2795303
+      "duration_ns": 136448
     },
     {
       "id": "benign-hello_elf",
       "path": "benign/hello_elf.bin",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/benign/hello_elf.bin",
+      "full_path": "/home/kali/cau/corpus/smoke/benign/hello_elf.bin",
       "expected": "clean",
       "family": "clean",
       "size": 7600,
       "detected": false,
       "verdict": "CLEAN",
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 6939770
+      "duration_ns": 1540160
     },
     {
       "id": "benign-hindi_notes",
       "path": "benign/hindi_notes.txt",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/benign/hindi_notes.txt",
+      "full_path": "/home/kali/cau/corpus/smoke/benign/hindi_notes.txt",
       "expected": "clean",
       "family": "clean",
       "size": 72,
       "detected": false,
       "verdict": "CLEAN",
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 0,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 297356
+      "duration_ns": 86431
     },
     {
       "id": "benign-persian_readme",
       "path": "benign/persian_readme.md",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/benign/persian_readme.md",
+      "full_path": "/home/kali/cau/corpus/smoke/benign/persian_readme.md",
       "expected": "clean",
       "family": "clean",
       "size": 74,
       "detected": false,
       "verdict": "CLEAN",
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 0,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 2109271
+      "duration_ns": 311444
     },
     {
       "id": "benign-utf16_notes",
       "path": "benign/utf16_notes.txt",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/benign/utf16_notes.txt",
+      "full_path": "/home/kali/cau/corpus/smoke/benign/utf16_notes.txt",
       "expected": "clean",
       "family": "clean",
       "size": 48,
       "detected": false,
       "verdict": "CLEAN",
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 0,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 667164
+      "duration_ns": 129501
     },
     {
       "id": "mal-elf_dropper_profile",
       "path": "malicious/elf_dropper_profile.bin",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/malicious/elf_dropper_profile.bin",
+      "full_path": "/home/kali/cau/corpus/smoke/malicious/elf_dropper_profile.bin",
       "expected": "elf_dropper_profile",
       "family": "elf_dropper_profile",
       "size": 7312,
@@ -177,13 +387,30 @@
       "detectors": [
         "static"
       ],
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 9,
+          "threshold": 8
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 5503843
+      "duration_ns": 1404743
     },
     {
       "id": "mal-encoded_elf",
       "path": "malicious/encoded_elf.txt",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/malicious/encoded_elf.txt",
+      "full_path": "/home/kali/cau/corpus/smoke/malicious/encoded_elf.txt",
       "expected": "encoded_exe",
       "family": "encoded_exe",
       "size": 729,
@@ -204,13 +431,35 @@
       "detectors": [
         "encchain"
       ],
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 0,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 8,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 1031970
+      "duration_ns": 223324
     },
     {
       "id": "mal-hash_only",
       "path": "malicious/hash_only.bin",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/malicious/hash_only.bin",
+      "full_path": "/home/kali/cau/corpus/smoke/malicious/hash_only.bin",
       "expected": "smoke_hash",
       "family": "smoke_hash",
       "size": 98,
@@ -227,13 +476,35 @@
       "detectors": [
         "hash"
       ],
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 0,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 1274083
+      "duration_ns": 203553
     },
     {
       "id": "mal-lokibot_strings",
       "path": "malicious/lokibot_strings.bin",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/malicious/lokibot_strings.bin",
+      "full_path": "/home/kali/cau/corpus/smoke/malicious/lokibot_strings.bin",
       "expected": "lokibot",
       "family": "lokibot",
       "size": 85,
@@ -250,13 +521,35 @@
       "detectors": [
         "yara"
       ],
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 0,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 3449637
+      "duration_ns": 348466
     },
     {
       "id": "mal-mimikatz_strings",
       "path": "malicious/mimikatz_strings.bin",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/malicious/mimikatz_strings.bin",
+      "full_path": "/home/kali/cau/corpus/smoke/malicious/mimikatz_strings.bin",
       "expected": "mimikatz",
       "family": "mimikatz",
       "size": 110,
@@ -284,13 +577,35 @@
         "heuristic",
         "yara"
       ],
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 8,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 0,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 1630529
+      "duration_ns": 241106
     },
     {
       "id": "mal-ransom_extensions",
       "path": "malicious/ransom_extensions.bin",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/malicious/ransom_extensions.bin",
+      "full_path": "/home/kali/cau/corpus/smoke/malicious/ransom_extensions.bin",
       "expected": "generic_ransomware",
       "family": "generic_ransomware",
       "size": 135,
@@ -307,13 +622,35 @@
       "detectors": [
         "yara"
       ],
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 2,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 0,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 1053525
+      "duration_ns": 414107
     },
     {
       "id": "mal-wannacry_strings",
       "path": "malicious/wannacry_strings.bin",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/malicious/wannacry_strings.bin",
+      "full_path": "/home/kali/cau/corpus/smoke/malicious/wannacry_strings.bin",
       "expected": "wannacry",
       "family": "wannacry",
       "size": 74,
@@ -330,13 +667,30 @@
       "detectors": [
         "yara"
       ],
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 3414728
+      "duration_ns": 296068
     },
     {
       "id": "mal-zero_width_prose",
       "path": "malicious/zero_width_prose.md",
-      "full_path": "/home/kali/Documents/astrav2/corpus/smoke/malicious/zero_width_prose.md",
+      "full_path": "/home/kali/cau/corpus/smoke/malicious/zero_width_prose.md",
       "expected": "zero_width_stego",
       "family": "zero_width_stego",
       "size": 137,
@@ -362,8 +716,30 @@
       "detectors": [
         "stego"
       ],
+      "scores": [
+        {
+          "detector": "heuristic",
+          "score": 0,
+          "threshold": 7
+        },
+        {
+          "detector": "static",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "stego",
+          "score": 8,
+          "threshold": 4
+        },
+        {
+          "detector": "encchain",
+          "score": 0,
+          "threshold": 8
+        }
+      ],
       "scored": true,
-      "duration_ns": 1824738
+      "duration_ns": 437705
     }
   ],
   "totals": {
@@ -751,44 +1127,84 @@
       "false_positives": 0
     }
   ],
+  "near_miss": [
+    {
+      "detector": "encchain",
+      "threshold": 8,
+      "benign_scored": 0,
+      "band": 2,
+      "near_threshold": 0,
+      "min_margin": -1
+    },
+    {
+      "detector": "heuristic",
+      "threshold": 7,
+      "benign_scored": 1,
+      "band": 1,
+      "near_threshold": 0,
+      "min_margin": 5,
+      "histogram": [
+        {
+          "margin": 5,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "detector": "static",
+      "threshold": 8,
+      "benign_scored": 0,
+      "band": 2,
+      "near_threshold": 0,
+      "min_margin": -1
+    },
+    {
+      "detector": "stego",
+      "threshold": 4,
+      "benign_scored": 0,
+      "band": 1,
+      "near_threshold": 0,
+      "min_margin": -1
+    }
+  ],
   "false_positives": [],
   "false_negatives": [],
   "errors": [],
   "skipped": [],
   "perf": {
     "samples": 18,
-    "total_duration_ns": 36593012,
-    "mean_duration_ns": 2032945,
-    "p50_ns": 1503892,
-    "p95_ns": 6939770,
-    "max_duration_ns": 6939770,
+    "total_duration_ns": 7065861,
+    "mean_duration_ns": 392547,
+    "p50_ns": 241106,
+    "p95_ns": 1540160,
+    "max_duration_ns": 1540160,
     "bytes_scanned": 17006,
-    "throughput_bytes_per_s": 464733.5398354199,
+    "throughput_bytes_per_s": 2406783.8300243947,
     "slowest": [
       {
         "key": "benign-hello_elf",
         "path": "benign/hello_elf.bin",
-        "duration_ns": 6939770
+        "duration_ns": 1540160
       },
       {
         "key": "mal-elf_dropper_profile",
         "path": "malicious/elf_dropper_profile.bin",
-        "duration_ns": 5503843
+        "duration_ns": 1404743
       },
       {
-        "key": "mal-lokibot_strings",
-        "path": "malicious/lokibot_strings.bin",
-        "duration_ns": 3449637
+        "key": "benign-emoji_notes",
+        "path": "benign/emoji_notes.md",
+        "duration_ns": 616180
       },
       {
-        "key": "mal-wannacry_strings",
-        "path": "malicious/wannacry_strings.bin",
-        "duration_ns": 3414728
+        "key": "mal-zero_width_prose",
+        "path": "malicious/zero_width_prose.md",
+        "duration_ns": 437705
       },
       {
-        "key": "benign-fetch.sh",
-        "path": "benign/fetch.sh",
-        "duration_ns": 2795303
+        "key": "mal-ransom_extensions",
+        "path": "malicious/ransom_extensions.bin",
+        "duration_ns": 414107
       }
     ]
   }

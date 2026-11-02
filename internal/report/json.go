@@ -10,9 +10,12 @@ import (
 	"github.com/cau-edr/cau/internal/frameworks"
 	"github.com/cau-edr/cau/internal/peeler"
 	"github.com/cau-edr/cau/scanner"
+	"github.com/cau-edr/cau/scanner/archive"
+	"github.com/cau-edr/cau/scanner/chm"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/fusion"
 	"github.com/cau-edr/cau/scanner/iso"
+	"github.com/cau-edr/cau/scanner/linuxpkg"
 	"github.com/cau-edr/cau/scanner/lnk"
 	"github.com/cau-edr/cau/scanner/ole"
 	"github.com/cau-edr/cau/scanner/pdf"
@@ -105,7 +108,10 @@ type Summary struct {
 	OLEDetections       int `json:"ole_detections"`
 	PDFDetections       int `json:"pdf_detections"`
 	ISODetections       int `json:"iso_detections"`
+	LinuxPkgDetections  int `json:"linuxpkg_detections"`
 	PeelDetections      int `json:"peel_detections"`
+	ArchiveDetections   int `json:"archive_detections"`
+	CHMDetections       int `json:"chm_detections"`
 	// FusionDetections counts files the fusion lattice reports as suspicious
 	// although no single detector crossed its own threshold.
 	FusionDetections   int    `json:"fusion_detections"`
@@ -119,7 +125,10 @@ type Summary struct {
 	OLEThreshold       int    `json:"ole_threshold"`
 	PDFThreshold       int    `json:"pdf_threshold"`
 	ISOThreshold       int    `json:"iso_threshold"`
+	LinuxPkgThreshold  int    `json:"linuxpkg_threshold"`
 	PeelThreshold      int    `json:"peel_threshold"`
+	ArchiveThreshold   int    `json:"archive_threshold"`
+	CHMThreshold       int    `json:"chm_threshold"`
 	Verdict            string `json:"verdict"`
 	FailOn             string `json:"fail_on"`
 	ExitCode           int    `json:"exit_code"`
@@ -142,7 +151,10 @@ type File struct {
 	OLE        *OLE        `json:"ole,omitempty"`
 	PDF        *PDF        `json:"pdf,omitempty"`
 	ISO        *ISO        `json:"iso,omitempty"`
+	LinuxPkg   *LinuxPkg   `json:"linuxpkg,omitempty"`
 	Peel       *Peel       `json:"peel,omitempty"`
+	Archive    *Archive    `json:"archive,omitempty"`
+	CHM        *CHM        `json:"chm,omitempty"`
 	Fusion     *Fusion     `json:"fusion,omitempty"`
 	Warnings   []string    `json:"warnings,omitempty"`
 	Error      string      `json:"error,omitempty"`
@@ -251,8 +263,10 @@ type Static struct {
 	// the pefile-compatible imphash instead.
 	ImportHash string `json:"import_hash,omitempty"`
 
+	IsMachO      bool               `json:"is_macho"`
 	PE           *StaticPE          `json:"pe,omitempty"`
 	ELF          *StaticELF         `json:"elf,omitempty"`
+	MachO        *StaticMachO       `json:"macho,omitempty"`
 	Anomalies    []StaticAnomaly    `json:"anomalies,omitempty"`
 	Categories   []StaticCategory   `json:"categories,omitempty"`
 	FuzzyMatches []StaticFuzzyMatch `json:"fuzzy_matches,omitempty"`
@@ -282,29 +296,57 @@ type StaticPE struct {
 
 // StaticELF is the ELF anatomy summary. Module.Signed reports the presence
 // of the appended signature only; nothing is verified against a keyring.
+// StaticMachO is the Mach-O anatomy summary (thin or universal).
+type StaticMachO struct {
+	Magic     string            `json:"magic"`
+	ByteOrder string            `json:"byte_order"`
+	Fat       bool              `json:"fat"`
+	Arches    []StaticMachOArch `json:"arches"`
+}
+
+// StaticMachOArch is one architecture slice of a Mach-O.
+type StaticMachOArch struct {
+	CPU          string   `json:"cpu"`
+	FileType     string   `json:"filetype"`
+	Flags        []string `json:"flags,omitempty"`
+	Signed       bool     `json:"signed"`
+	Encrypted    bool     `json:"encrypted,omitempty"`
+	EntrySegment int      `json:"entry_segment"`
+	ImportCount  int      `json:"import_count"`
+	ImportHash   string   `json:"import_hash,omitempty"`
+	Dylibs       []string `json:"dylibs,omitempty"`
+}
+
 type StaticELF struct {
-	Class            string             `json:"class"`
-	ByteOrder        string             `json:"byte_order"`
-	Type             string             `json:"type"`
-	Machine          string             `json:"machine"`
-	OSABI            string             `json:"osabi"`
-	EntryPoint       uint64             `json:"entry_point"`
-	EntrySection     string             `json:"entry_section,omitempty"`
-	Interp           string             `json:"interp,omitempty"`
-	PIE              bool               `json:"pie"`
-	Static           bool               `json:"static"`
-	StackExecutable  bool               `json:"stack_executable"`
-	RelRO            bool               `json:"relro"`
-	TextRel          bool               `json:"textrel,omitempty"`
-	BuildID          string             `json:"build_id,omitempty"`
-	ABITag           string             `json:"abi_tag,omitempty"`
-	SOName           string             `json:"soname,omitempty"`
-	Needed           []string           `json:"needed,omitempty"`
-	RPath            []string           `json:"rpath,omitempty"`
-	RunPath          []string           `json:"runpath,omitempty"`
-	ImportCount      int                `json:"import_count"`
-	ExportCount      int                `json:"export_count"`
-	InitArrayCount   int                `json:"init_array_count,omitempty"`
+	Class           string   `json:"class"`
+	ByteOrder       string   `json:"byte_order"`
+	Type            string   `json:"type"`
+	Machine         string   `json:"machine"`
+	OSABI           string   `json:"osabi"`
+	EntryPoint      uint64   `json:"entry_point"`
+	EntrySection    string   `json:"entry_section,omitempty"`
+	Interp          string   `json:"interp,omitempty"`
+	PIE             bool     `json:"pie"`
+	Static          bool     `json:"static"`
+	StackExecutable bool     `json:"stack_executable"`
+	RelRO           bool     `json:"relro"`
+	TextRel         bool     `json:"textrel,omitempty"`
+	BuildID         string   `json:"build_id,omitempty"`
+	ABITag          string   `json:"abi_tag,omitempty"`
+	SOName          string   `json:"soname,omitempty"`
+	Needed          []string `json:"needed,omitempty"`
+	RPath           []string `json:"rpath,omitempty"`
+	RunPath         []string `json:"runpath,omitempty"`
+	ImportCount     int      `json:"import_count"`
+	ExportCount     int      `json:"export_count"`
+	InitArrayCount  int      `json:"init_array_count,omitempty"`
+	// Telfhash is the Trend Micro telfhash over the filtered symbol set; empty
+	// when the symbol set is below TLSH's floor (see TelfhashNote).
+	Telfhash     string `json:"telfhash,omitempty"`
+	TelfhashNote string `json:"telfhash_note,omitempty"`
+	// SyscallStubs is the count of raw system-call instructions in executable
+	// sections (the raw-syscall interposer / loader tell).
+	SyscallStubs     int                `json:"syscall_stubs,omitempty"`
 	Segments         []StaticELFSegment `json:"segments"`
 	Sections         []StaticELFSection `json:"sections"`
 	NoSectionHeaders bool               `json:"no_section_headers,omitempty"`
@@ -590,6 +632,73 @@ type ISOFinding struct {
 	Evidence  string `json:"evidence,omitempty"`
 }
 
+// Archive is the per-file compressed-container analysis (ZIP/TAR/gzip).
+type Archive struct {
+	Score        int              `json:"score"`
+	Threshold    int              `json:"threshold"`
+	Detected     bool             `json:"detected"`
+	Skipped      string           `json:"skipped,omitempty"`
+	Format       string           `json:"format,omitempty"`
+	Members      int              `json:"members,omitempty"`
+	Uncompressed int64            `json:"uncompressed_bytes,omitempty"`
+	Encrypted    int              `json:"encrypted_members,omitempty"`
+	Executables  int              `json:"executable_members,omitempty"`
+	NotInspected string           `json:"not_inspected,omitempty"`
+	Findings     []ArchiveFinding `json:"findings,omitempty"`
+}
+
+// ArchiveFinding is one container detection signal.
+type ArchiveFinding struct {
+	Class     string `json:"class"`
+	Score     int    `json:"score"`
+	Technique string `json:"technique,omitempty"`
+	Detail    string `json:"detail"`
+	Evidence  string `json:"evidence,omitempty"`
+}
+
+// CHM is the per-file Compiled HTML Help analysis.
+type CHM struct {
+	Score        int          `json:"score"`
+	Threshold    int          `json:"threshold"`
+	Detected     bool         `json:"detected"`
+	Skipped      string       `json:"skipped,omitempty"`
+	Entries      int          `json:"entries,omitempty"`
+	ContentFiles int          `json:"content_files,omitempty"`
+	NotInspected string       `json:"not_inspected,omitempty"`
+	Findings     []CHMFinding `json:"findings,omitempty"`
+}
+
+// CHMFinding is one CHM detection signal.
+type CHMFinding struct {
+	Class     string `json:"class"`
+	Score     int    `json:"score"`
+	Technique string `json:"technique,omitempty"`
+	Detail    string `json:"detail"`
+	Evidence  string `json:"evidence,omitempty"`
+}
+
+// LinuxPkg is the per-file Linux software-package analysis (.deb/.rpm/Arch/
+// Flatpak/AppImage/PKGBUILD install-script tradecraft).
+type LinuxPkg struct {
+	Score     int               `json:"score"`
+	Threshold int               `json:"threshold"`
+	Detected  bool              `json:"detected"`
+	Skipped   string            `json:"skipped,omitempty"`
+	Format    string            `json:"format,omitempty"`
+	Name      string            `json:"name,omitempty"`
+	Scripts   []string          `json:"scripts,omitempty"`
+	Findings  []LinuxPkgFinding `json:"findings,omitempty"`
+}
+
+// LinuxPkgFinding is one Linux-package detection signal.
+type LinuxPkgFinding struct {
+	Class     string `json:"class"`
+	Score     int    `json:"score"`
+	Technique string `json:"technique,omitempty"`
+	Detail    string `json:"detail"`
+	Evidence  string `json:"evidence,omitempty"`
+}
+
 // Peel is the per-file obfuscation-chain analysis (NOVEL-012).
 type Peel struct {
 	Score            int           `json:"score"`
@@ -725,6 +834,9 @@ func (c config) buildDocument(in Input) Document {
 			OLEDetections:       len(in.OLEBreach(c.oleThreshold)),
 			PDFDetections:       len(in.PDFBreach(c.pdfThreshold)),
 			ISODetections:       len(in.ISOBreach(c.isoThreshold)),
+			ArchiveDetections:   len(in.ArchiveBreach(c.archiveThreshold)),
+			CHMDetections:       len(in.CHMBreach(c.chmThreshold)),
+			LinuxPkgDetections:  len(in.LinuxPkgBreach(c.linuxPkgThreshold)),
 			PeelDetections:      len(in.PeelBreach(c.peelThreshold)),
 			FusionDetections:    len(in.FusionCorroborated()),
 			Errors:              in.ErrorCount(),
@@ -737,6 +849,9 @@ func (c config) buildDocument(in Input) Document {
 			OLEThreshold:        c.oleThreshold,
 			PDFThreshold:        c.pdfThreshold,
 			ISOThreshold:        c.isoThreshold,
+			ArchiveThreshold:    c.archiveThreshold,
+			CHMThreshold:        c.chmThreshold,
+			LinuxPkgThreshold:   c.linuxPkgThreshold,
 			PeelThreshold:       c.peelThreshold,
 			Verdict:             c.overallVerdict(in),
 			FailOn:              c.failOn.String(),
@@ -784,6 +899,7 @@ func (c config) overallVerdict(in Input) string {
 		len(in.StegoBreach(c.stegoThreshold)) > 0, len(in.EncChainBreach(c.encChainThreshold)) > 0,
 		len(in.LNKBreach(c.lnkThreshold)) > 0, len(in.OLEBreach(c.oleThreshold)) > 0,
 		len(in.PDFBreach(c.pdfThreshold)) > 0, len(in.ISOBreach(c.isoThreshold)) > 0,
+		len(in.LinuxPkgBreach(c.linuxPkgThreshold)) > 0,
 		len(in.PeelBreach(c.peelThreshold)) > 0,
 		len(in.FusionCorroborated()) > 0:
 		return JSONVerdictSuspicious
@@ -885,9 +1001,27 @@ func (c config) buildFile(p string, res *scanner.ScanResult, h *scanner.Heuristi
 				f.Verdict = JSONVerdictSuspicious
 			}
 		}
+		if res.LinuxPkg != nil {
+			f.LinuxPkg = c.buildLinuxPkg(res.LinuxPkg)
+			if f.LinuxPkg.Detected && f.Verdict == JSONVerdictClean {
+				f.Verdict = JSONVerdictSuspicious
+			}
+		}
 		if res.Peel != nil {
 			f.Peel = c.buildPeel(res.Peel)
 			if f.Peel.Detected && f.Verdict == JSONVerdictClean {
+				f.Verdict = JSONVerdictSuspicious
+			}
+		}
+		if res.Archive != nil {
+			f.Archive = c.buildArchive(res.Archive)
+			if f.Archive.Detected && f.Verdict == JSONVerdictClean {
+				f.Verdict = JSONVerdictSuspicious
+			}
+		}
+		if res.CHM != nil {
+			f.CHM = c.buildCHM(res.CHM)
+			if f.CHM.Detected && f.Verdict == JSONVerdictClean {
 				f.Verdict = JSONVerdictSuspicious
 			}
 		}
@@ -958,6 +1092,7 @@ func (c config) buildStatic(s *static.Result) *Static {
 		Detected:            staticBreached(s, c.staticThreshold),
 		IsPE:                s.IsPE,
 		IsELF:               s.IsELF,
+		IsMachO:             s.IsMachO,
 		Skipped:             c.boundedMessage(s.Skipped),
 		Error:               c.errorString(s.Error),
 		ParseError:          c.boundedMessage(s.ParseError),
@@ -989,6 +1124,12 @@ func (c config) buildStatic(s *static.Result) *Static {
 		out.ImportHash = c.boundedHash(e.ImportHash)
 		out.ELF = c.buildStaticELF(e)
 		for _, w := range e.Warnings {
+			out.Warnings = append(out.Warnings, c.boundedMessage(w))
+		}
+	}
+	if mo := s.MachO; mo != nil {
+		out.MachO = c.buildStaticMachO(mo)
+		for _, w := range mo.Warnings {
 			out.Warnings = append(out.Warnings, c.boundedMessage(w))
 		}
 	}
@@ -1066,6 +1207,33 @@ func (c config) buildStatic(s *static.Result) *Static {
 	return out
 }
 
+func (c config) buildStaticMachO(m *static.MachO) *StaticMachO {
+	out := &StaticMachO{
+		Magic:     c.boundedMessage(m.Magic),
+		ByteOrder: m.ByteOrder,
+		Fat:       m.Fat,
+	}
+	for _, img := range m.Arches {
+		arch := StaticMachOArch{
+			CPU:          c.boundedMessage(img.CPUType),
+			FileType:     c.boundedMessage(img.FileType),
+			Signed:       img.Signed,
+			Encrypted:    img.Encrypted,
+			EntrySegment: img.EntrySegment,
+			ImportCount:  img.ImportCount,
+			ImportHash:   c.boundedHash(img.ImportHash),
+		}
+		for _, fl := range img.FlagNames {
+			arch.Flags = append(arch.Flags, c.boundedMessage(fl))
+		}
+		for _, d := range img.Dylibs {
+			arch.Dylibs = append(arch.Dylibs, c.boundedMessage(d.Name))
+		}
+		out.Arches = append(out.Arches, arch)
+	}
+	return out
+}
+
 func (c config) buildStaticELF(e *static.ELF) *StaticELF {
 	out := &StaticELF{
 		Class:            e.Class,
@@ -1087,6 +1255,9 @@ func (c config) buildStaticELF(e *static.ELF) *StaticELF {
 		ImportCount:      e.ImportCount,
 		ExportCount:      e.ExportCount,
 		InitArrayCount:   e.InitArrayCount,
+		Telfhash:         c.boundedHash(e.Telfhash),
+		TelfhashNote:     c.boundedMessage(e.TelfhashNote),
+		SyscallStubs:     e.SyscallStubs,
 		Segments:         []StaticELFSegment{},
 		Sections:         []StaticELFSection{},
 		NoSectionHeaders: e.NoSectionHeaders,
@@ -1278,6 +1449,77 @@ func (c config) buildISO(i *iso.Result) *ISO {
 	}
 	for _, f := range i.Findings {
 		out.Findings = append(out.Findings, ISOFinding{
+			Class: c.boundedMessage(f.Class), Score: f.Score,
+			Technique: c.boundedMessage(f.Technique),
+			Detail:    c.boundedMessage(f.Detail), Evidence: c.boundedMessage(f.Evidence),
+		})
+	}
+	return out
+}
+
+func (c config) buildArchive(a *archive.Result) *Archive {
+	out := &Archive{
+		Score:     a.Score,
+		Threshold: archiveThresholdFor(a, c.archiveThreshold),
+		Detected:  archiveBreached(a, c.archiveThreshold),
+		Skipped:   c.boundedMessage(a.Skipped),
+	}
+	if a.Parsed != nil {
+		out.Format = c.boundedMessage(a.Parsed.Format)
+		out.Members = a.Parsed.Members
+		out.Uncompressed = a.Parsed.Uncompressed
+		out.Encrypted = a.Parsed.Encrypted
+		out.Executables = a.Parsed.Executables
+		out.NotInspected = c.boundedMessage(a.Parsed.NotInspected)
+	}
+	for _, f := range a.Findings {
+		out.Findings = append(out.Findings, ArchiveFinding{
+			Class: c.boundedMessage(f.Class), Score: f.Score,
+			Technique: c.boundedMessage(f.Technique),
+			Detail:    c.boundedMessage(f.Detail), Evidence: c.boundedMessage(f.Evidence),
+		})
+	}
+	return out
+}
+
+func (c config) buildCHM(h *chm.Result) *CHM {
+	out := &CHM{
+		Score:     h.Score,
+		Threshold: chmThresholdFor(h, c.chmThreshold),
+		Detected:  chmBreached(h, c.chmThreshold),
+		Skipped:   c.boundedMessage(h.Skipped),
+	}
+	if h.Parsed != nil {
+		out.Entries = h.Parsed.Entries
+		out.ContentFiles = h.Parsed.ContentDirs
+		out.NotInspected = c.boundedMessage(h.Parsed.NotInspected)
+	}
+	for _, f := range h.Findings {
+		out.Findings = append(out.Findings, CHMFinding{
+			Class: c.boundedMessage(f.Class), Score: f.Score,
+			Technique: c.boundedMessage(f.Technique),
+			Detail:    c.boundedMessage(f.Detail), Evidence: c.boundedMessage(f.Evidence),
+		})
+	}
+	return out
+}
+
+func (c config) buildLinuxPkg(p *linuxpkg.Result) *LinuxPkg {
+	out := &LinuxPkg{
+		Score:     p.Score,
+		Threshold: linuxPkgThresholdFor(p, c.linuxPkgThreshold),
+		Detected:  linuxPkgBreached(p, c.linuxPkgThreshold),
+		Skipped:   c.boundedMessage(p.Skipped),
+	}
+	if p.Parsed != nil {
+		out.Format = c.boundedMessage(p.Parsed.Format)
+		out.Name = c.boundedMessage(p.Parsed.Name)
+		for _, s := range p.Parsed.Scripts {
+			out.Scripts = append(out.Scripts, c.boundedMessage(s))
+		}
+	}
+	for _, f := range p.Findings {
+		out.Findings = append(out.Findings, LinuxPkgFinding{
 			Class: c.boundedMessage(f.Class), Score: f.Score,
 			Technique: c.boundedMessage(f.Technique),
 			Detail:    c.boundedMessage(f.Detail), Evidence: c.boundedMessage(f.Evidence),

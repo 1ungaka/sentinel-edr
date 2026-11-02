@@ -179,3 +179,67 @@ func TestPerf(t *testing.T) {
 		t.Errorf("slowest = %+v", p.Slowest)
 	}
 }
+
+func TestNearMiss(t *testing.T) {
+	// Benign samples a scored detector looked at but did not fire on. The
+	// near-miss metric must count how close each came, not merely that it was
+	// clean. Threshold 8 -> band 2 (a quarter, at least 1).
+	mk := func(id string, expected string, score int) SampleResult {
+		return SampleResult{
+			ID: id, Path: id, Expected: expected, Scored: true, Verdict: VerdictClean,
+			Scores: []DetectorScore{{Detector: DetectorHeuristic, Score: score, Threshold: 8}},
+		}
+	}
+	run := &Run{
+		SchemaVersion: ReportSchemaVersion,
+		Info:          RunInfo{Detectors: []string{DetectorHeuristic}},
+		Samples: []SampleResult{
+			mk("near1", "clean", 7),  // margin 1 -> near
+			mk("near2", "clean", 6),  // margin 2 -> near
+			mk("far", "clean", 2),    // margin 6 -> scored, not near
+			mk("zero", "clean", 0),   // not scored (score 0), still records threshold
+			mk("mal", "wannacry", 7), // malicious: excluded from near miss
+		},
+	}
+	rep := NewReport(run)
+	if len(rep.NearMiss) != 1 {
+		t.Fatalf("want 1 near-miss stat, got %d", len(rep.NearMiss))
+	}
+	nm := rep.NearMiss[0]
+	if nm.Detector != DetectorHeuristic || nm.Threshold != 8 || nm.Band != 2 {
+		t.Errorf("detector/threshold/band = %q/%d/%d, want heuristic/8/2", nm.Detector, nm.Threshold, nm.Band)
+	}
+	if nm.Scored != 3 {
+		t.Errorf("scored = %d, want 3 (near1, near2, far)", nm.Scored)
+	}
+	if nm.NearThreshold != 2 {
+		t.Errorf("near_threshold = %d, want 2 (margin<=2)", nm.NearThreshold)
+	}
+	if nm.MinMargin != 1 {
+		t.Errorf("min_margin = %d, want 1", nm.MinMargin)
+	}
+	want := []MarginBucket{{1, 1}, {2, 1}, {6, 1}}
+	if len(nm.Histogram) != len(want) {
+		t.Fatalf("histogram = %+v, want %+v", nm.Histogram, want)
+	}
+	for i, b := range want {
+		if nm.Histogram[i] != b {
+			t.Errorf("histogram[%d] = %+v, want %+v", i, nm.Histogram[i], b)
+		}
+	}
+}
+
+func TestNearMissEmptyWhenNoScores(t *testing.T) {
+	// A binary-only run (hash/yara) records no scores, so there is no
+	// near-miss section rather than a misleading empty one.
+	run := &Run{
+		SchemaVersion: ReportSchemaVersion,
+		Info:          RunInfo{Detectors: []string{DetectorYara}},
+		Samples: []SampleResult{
+			{ID: "a", Path: "a", Expected: "clean", Scored: true, Verdict: VerdictClean},
+		},
+	}
+	if nm := NewReport(run).NearMiss; nm != nil {
+		t.Errorf("near miss = %+v, want nil for a scoreless run", nm)
+	}
+}

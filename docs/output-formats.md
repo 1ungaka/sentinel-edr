@@ -54,9 +54,15 @@ should ignore unknown fields.
   "summary": {
     "files_scanned": 3, "hash_detections": 0, "yara_detections": 1,
     "heuristic_detections": 1, "static_detections": 0, "stego_detections": 1,
+    "encchain_detections": 0, "lnk_detections": 0, "ole_detections": 0,
+    "pdf_detections": 0, "iso_detections": 0, "linuxpkg_detections": 0,
+    "archive_detections": 0, "chm_detections": 0, "peel_detections": 0,
     "fusion_detections": 0,              // suspicious by corroboration only
     "errors": 0, "elapsed_ms": 12,
     "heuristic_threshold": 7, "static_threshold": 8, "stego_threshold": 4,
+    "encchain_threshold": 8, "lnk_threshold": 8, "ole_threshold": 8,
+    "pdf_threshold": 8, "iso_threshold": 8, "linuxpkg_threshold": 8,
+    "archive_threshold": 8, "chm_threshold": 8, "peel_threshold": 50,
     "verdict": "malicious", "fail_on": "malicious",
     "exit_code": 1, "exit_reason": "exit 1: 1 file(s) matched a hash signature or YARA rule"
   },
@@ -74,9 +80,18 @@ Per file:
 | `hash_match` | `type`, `hash`, `threat` when a signature matched |
 | `yara[]` | `rule`, `namespace`, `tags[]`, `meta[]` as key/value pairs in rule order, `strings[]` with `name`, `offset`, `data_hex`, `preview`, `truncated`, `length`, `xor_key` |
 | `heuristics` | `score`, `threshold`, `detected`, `is_pe`, `is_elf`, `skipped`, `categories[]` (`category`, `raw`, `applied`, `cap`, `weak`, `technique`), `matches[]` (`indicator`, `category`, `source`, `pattern`, `score`, `hits`, `examples[]`, `technique`) |
-| `static` | `score`, `threshold`, `detected`, `is_pe`, `is_elf`, `entropy`, `high_entropy_fraction`, `tlsh`, `ssdeep`, `imphash` (PE), `import_hash` (ELF import-set key, not telfhash), `pe` (format, machine, subsystem, timestamp, entry point and section, imports, DLLs, sections with permissions and entropy, overlay, packer with evidence, Rich header, signature with the certificate chain and `verified: false` plus a note, debug directory), `elf` (class, byte order, type, machine, OS ABI, entry point and section, interpreter, `pie` / `static` / `stack_executable` / `relro` / `textrel`, build-id, ABI tag, SONAME, `needed[]`, `rpath[]`, `runpath[]`, import and export counts, `segments[]` and `sections[]` with permissions and entropy, overlay, packer, `module` with `signed` as presence only and a note saying so), `anomalies[]` (`class`, `category`, `score`, `detail`, `technique`), `categories[]`, `fuzzy_matches[]` (`type`, `hash`, `threat`, `distance`, `score`) |
+| `static` | `score`, `threshold`, `detected`, `is_pe`, `is_elf`, `entropy`, `high_entropy_fraction`, `tlsh`, `ssdeep`, `imphash` (PE), `import_hash` (ELF import-set key, not telfhash), `pe` (format, machine, subsystem, timestamp, entry point and section, imports, DLLs, sections with permissions and entropy, overlay, packer with evidence, Rich header, signature with the certificate chain and `verified: false` plus a note, debug directory), `elf` (class, byte order, type, machine, OS ABI, entry point and section, interpreter, `pie` / `static` / `stack_executable` / `relro` / `textrel`, build-id, ABI tag, SONAME, `needed[]`, `rpath[]`, `runpath[]`, import and export counts, `segments[]` and `sections[]` with permissions and entropy, overlay, packer, `module` with `signed` as presence only and a note saying so, plus `telfhash` / `telfhash_note` (the note is set when the symbol set is below TLSH's floor) and `syscall_stubs`), `is_macho`, `macho` (`magic`, `byte_order`, `fat`, `arches[]` with `cpu`, `filetype`, `flags[]`, `signed`, `encrypted`, `entry_segment`, `import_count`, `import_hash`, `dylibs[]`), `anomalies[]` (`class`, `category`, `score`, `detail`, `technique`), `categories[]`, `fuzzy_matches[]` (`type`, `hash`, `threat`, `distance`, `score`) |
 | `stego` | `score`, `threshold`, `detected`, `is_text`, `encoding`, `skipped`, counts `suspicious` / `benign` / `info`, `longest_run`, `ascii_carrier`, `codepoints[]` (`codepoint`, `name`, `class`, `count`, `benign_context`, `first_offset`, `first_line`, `excuses{}`, `examples[]`), `findings[]` (`class`, `score`, `detail`, `technique`, `novel`) |
-| `fusion` | `tier`, `score`, `threshold`, `confidence`, `agreed[]`, `techniques[]`, `novel[]`, `corroborated`, `explanation`, `sources[]` (`name`, `role`, `hit`, `score`, `threshold`, `ratio`, `weight`, `counted`, `skipped`, `evidence[]` with `label`, `detail`, `technique`, `novel`, `weight`) |
+| `encchain` | `score`, `threshold`, `detected`, `skipped`, `candidates`, `layers_peeled`, `budget_exhausted`, `findings[]` (the decoded PE/ELF, the encoding and the layer depth) |
+| `lnk` | `score`, `threshold`, `detected`, `skipped`, `target_ext`, `args_len`, `findings[]` (`class`, `score`, `technique`, `detail`) — [MS-SHLLINK] |
+| `ole` | `score`, `threshold`, `detected`, `skipped`, `has_vba`, `modules`, `findings[]` (`class`, `score`, `technique`, `detail`) — [MS-CFB] + [MS-OVBA] |
+| `pdf` | `score`, `threshold`, `detected`, `skipped`, `version`, `has_javascript`, `has_openaction`, `encrypted`, `findings[]` (`class`, `score`, `technique`, `detail`) |
+| `iso` | `score`, `threshold`, `detected`, `skipped`, `volume_id`, `files`, `has_joliet`, `findings[]` (`class`, `score`, `technique`, `detail`) |
+| `linuxpkg` | `score`, `threshold`, `detected`, `skipped`, `format` (deb/rpm/arch/flatpak/appimage/docker/snap/…), `name`, `scripts[]` (names only), `findings[]` (`class`, `score`, `technique`, `detail`, `evidence` — a truncated single-line excerpt, never a whole script) |
+| `archive` | `score`, `threshold`, `detected`, `skipped`, `format` (zip/tar/gzip/…), `members`, `uncompressed_bytes`, `encrypted_members`, `executable_members`, `not_inspected`, `findings[]` (`class`, `score`, `technique`, `detail`, `evidence`) — decompression-bomb caps, Zip-Slip and lure/payload members |
+| `chm` | `score`, `threshold`, `detected`, `skipped`, `entries`, `content_files`, `not_inspected` (the LZX content section is not decompressed in v1), `findings[]` (`class`, `score`, `technique`, `detail`) — embedded executable/LNK/dangerous-script payloads |
+| `peel` | `score`, `threshold`, `detected`, `skipped`, `outcome`, `max_depth`, `primary_signature` (the ordered chain, e.g. `base64>gzip>base64`), `exhausted`, `exhaust_reason`, `findings[]` (NOVEL-012) |
+| `fusion` | `tier`, `score`, `threshold`, `confidence`, `agreed[]`, `techniques[]`, `novel[]`, `frameworks[]` (per-technique ATT&CK + Unified Kill Chain phase/stage), `corroborated`, `explanation`, `sources[]` (`name`, `role`, `hit`, `score`, `threshold`, `ratio`, `weight`, `counted`, `skipped`, `evidence[]` with `label`, `detail`, `technique`, `novel`, `weight`). The engine verdict applies the attack-path chaining layer (`FuseChained`); the chaining bonus is folded into `score`/`tier`. |
 
 Verdict precedence per file: `error` when the file could not be read or a
 pass failed on it, `malicious` on a hash or YARA hit, `suspicious` on a

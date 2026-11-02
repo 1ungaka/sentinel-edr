@@ -2,8 +2,8 @@
 
 ## Goal
 Flag files that are built like something that hides: packed, tampered,
-implausibly signed, loader-hijacking or malformed PE and ELF images, and
-files similar to known samples.
+implausibly signed, loader-hijacking or malformed PE, ELF and Mach-O images,
+and files similar to known samples.
 
 ## Categorization
 Anomaly classes map to T1027 (.002, .007, .009), T1036 (.001), T1070.006,
@@ -13,12 +13,14 @@ in [Detectors](../detectors.md). Pyramid of Pain: TTPs (structure),
 hash values (similarity). Tier: SUSPICIOUS.
 
 ## Strategy Abstract
-Own bounds-checked PE and ELF parsers read sections or segments, entry
-point, imports, build record, Authenticode chain, overlay, packer markers,
-dynamic table and kernel-module info. Each observation is a labeled class
-with a weight and a capped category; the threshold (8) needs several
-independent things to be wrong. TLSH, ssdeep and imphash are matched against
-the fuzzy database as a separate `similarity` source.
+Own bounds-checked PE, ELF and Mach-O parsers read sections or segments, entry
+point, imports, build record, Authenticode/code-signature presence, overlay,
+packer markers, dynamic table and kernel-module info. ELF deep-resolution
+resolves `.init_array` constructor targets through the relocations, reads symbol
+versions, and flags a raw-syscall libc interposer. Each observation is a labeled
+class with a weight and a capped category; the threshold (8) needs several
+independent things to be wrong. TLSH, ssdeep, imphash and telfhash are matched
+against the fuzzy database as a separate `similarity` source.
 
 ## Technical Context
 Packed is not malicious: a recognised packer weighs less because the report
@@ -30,10 +32,11 @@ because each one was a false positive on the first measurement pass.
 
 ## Blind Spots and Assumptions
 An unpacked, unsigned, plainly linked credential dumper looks ordinary (that
-is the heuristic pass's job). A preload library that reaches libc through
-raw syscalls instead of `dlsym`. Packed samples are identified, not
-unpacked (NOVEL-012 is the planned peeler). Mach-O, OLE, PDF and archives are
-not parsed yet.
+is the heuristic pass's job). Packed samples are identified, not unpacked (the
+NOVEL-012 peeler walks encoding/compression layers separately). PE, ELF and
+Mach-O are parsed here; OLE, PDF, LNK and ISO have their own detectors and
+Linux packages the `linuxpkg` pass; CHM, UEFI/firmware and recursive archive
+members are not parsed yet.
 
 ## False Positives
 PE: none above the threshold on 49 tool-set binaries; UPX-packed `wget.exe`

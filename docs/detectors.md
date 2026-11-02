@@ -16,6 +16,9 @@ joins their outcomes. Each detector answers a different question:
 | [OLE macro](#ole-macro) | does this Office document carry a malicious VBA macro? | SUSPICIOUS |
 | [PDF document](#pdf-document) | does this PDF auto-run code or carry a payload? | SUSPICIOUS |
 | [ISO container](#iso-container) | is this disk image a mark-of-the-web-bypass lure? | SUSPICIOUS |
+| [Linux software package](#linux-software-package) | does an install-time script run root-level tradecraft? | SUSPICIOUS |
+| [Archive](#archive) | is this container a bomb, a Zip-Slip, or a lure around a payload? | SUSPICIOUS |
+| [CHM help file](#chm-help-file) | does this help file smuggle an executable, shortcut or script? | SUSPICIOUS |
 | [Fusion](#fusion) | do several of the above agree, even below their own thresholds? | never lowers; raises CLEAN to SUSPICIOUS |
 
 SUSPICIOUS is evidence with a score and an explanation, never a confirmed
@@ -131,9 +134,10 @@ returns this table programmatically.
 ## Static structure
 
 `scanner/static` asks whether a file is built like something that is hiding.
-It runs on every file type; the PE parts run on PE images and the ELF parts
-on ELF images (32- and 64-bit, both byte orders: executables, shared objects,
-relocatable objects and kernel modules).
+It runs on every file type; the PE parts run on PE images, the ELF parts on
+ELF images (32- and 64-bit, both byte orders: executables, shared objects,
+relocatable objects and kernel modules), and the Mach-O parts on Mach-O images
+(thin and universal/fat, 32- and 64-bit, both byte orders).
 
 - **Entropy**: whole-file Shannon entropy plus a 256-byte sliding window, so
   a compressed tail inside an otherwise ordinary file shows as a high-entropy
@@ -158,9 +162,24 @@ relocatable objects and kernel modules).
   PIE and bind-now flags), undefined and defined dynamic symbols (a
   relocatable object's `.symtab` instead), GNU build-id and ABI notes,
   `.modinfo` and the appended kernel-module signature, overlay with the
-  signature separated out, AppImage magic, UPX markers, and an import-set
-  hash for clustering (MD5 over the sorted undefined symbol names; a CAU key,
-  not telfhash).
+  signature separated out, AppImage magic, UPX markers, an import-set hash for
+  clustering (MD5 over the sorted undefined symbol names; a CAU key), and
+  **telfhash** (Trend Micro's TLSH over the filtered symbol set) when the
+  binary clears TLSH's 50-byte floor, with an honest note when it does not.
+  Deep-resolution anomalies resolve `.init_array`/`.preinit_array` constructor
+  pointers through the relocations and flag one landing
+  `dynamic.init-array-outside-code`, read symbol versions from
+  `.gnu.version_r`/`_d` (`dynamic.symbol-versions`, informational), and flag a
+  raw-syscall libc interposer (`dynamic.preload-interposer-syscall`).
+- **Mach-O anatomy** from an own parser: the universal/fat architecture list,
+  segments and sections with permissions and entropy, linked dylibs and an
+  import hash over the dylib set, `LC_RPATH`, the `LC_MAIN`/`LC_UNIXTHREAD`
+  entry point, code-signature presence (`LC_CODE_SIGNATURE`, unverified),
+  encryption (`LC_ENCRYPTION_INFO` `cryptid`), and symbol imports/exports. Its
+  anomaly classes (`macho.*`) name RWX and high-entropy segments, code in a
+  writable section, an entry point outside or in a non-executable segment, an
+  executable stack, an encrypted or packed region, insecure `@rpath`/dylib
+  paths, and an unsigned or unverified signature.
 
 Findings are labeled **anomaly classes**, each with a weight, a category and
 an ATT&CK technique where one applies. Categories are capped (Sections 5,
@@ -422,6 +441,96 @@ detectors.
 It is SUSPICIOUS-tier, never MALICIOUS. `--no-iso` disables it and
 `--iso-threshold` tunes the score.
 
+## Linux software package
+
+`scanner/linuxpkg` scores the one thing every Linux software format has in
+common: an install-time script the package manager runs **as root**.
+`apt`/`dnf`/`pacman install` is a trust decision, and a software-supply-chain
+payload (T1195.002) rides in on exactly that trust — a `preinst` that pipes a
+remote download into a shell, an RPM `%post` that opens a reverse shell, a
+`PKGBUILD` that drops an SSH key, a Flatpak manifest that escapes the sandbox.
+The detector pulls those scripts out of the container and scores the behaviours
+in them; it never installs, extracts to disk, or executes anything.
+
+The formats it recognises from their public structure alone:
+
+| Format | What it reads |
+|---|---|
+| Debian `.deb` | `ar` → `control.tar` maintainer scripts (`preinst`/`postinst`/`prerm`/`postrm`); `xz`/`zstd`-packed control members are noted "present but not decoded" |
+| RPM `.rpm` | the uncompressed header's scriptlets (`%pre`/`%post`/`%preun`/`%postun`/`%pretrans`/`%posttrans`) and their declared interpreter |
+| Arch `.pkg.tar(.zst/.xz/.gz)` | `.INSTALL` hooks and `PKGBUILD` recipes (`package()`/`prepare()`) |
+| Flatpak | flatpak-builder manifests (`finish-args` sandbox-escape grants) and single-file bundles (OSTree payload not unpacked) |
+| AppImage | type-2 images (self-mounting ELF with an appended SquashFS, runs unsandboxed) |
+| Docker / OCI | `docker save` / `podman save` tarballs — image-config history `created_by`, `Cmd`/`Entrypoint`/`Env`, and layer entrypoint scripts |
+| Snap | SquashFS packages and `classic`-confinement declarations (runs outside the snap sandbox) |
+| Generic installers | `.zip`/`.tar` bundles carrying install shell scripts |
+| Executable configs | `.desktop`/XDG autostart, systemd units, shell-rc `bash setup`, KDE autostart |
+| APT/nala sources | `sources.list` and deb822 `.sources` (`trusted=yes`, IP-literal and `http` endpoints, piped `Signed-By`) |
+
+The scored behaviours (stable `linuxpkg.*` classes, each ATT&CK-mapped) include
+remote-download-into-shell (`curl|bash`), reverse/bind shell, decode-and-exec,
+cryptominer, SSH `authorized_keys` backdoor, `sudoers` NOPASSWD, the
+download→`chmod`→exec dropper, disable-defenses, anti-forensics, setuid, and
+persistence via systemd/cron/shell-rc, plus the Flatpak permission grants and
+the APT-source and Snap structural notes. Findings carry small additive weights
+(default threshold 8, matching the sibling lnk/ole/pdf/iso detectors): a benign
+`postinst` that runs `ldconfig` or `update-desktop-database` scores zero, while a
+single reverse-shell or remote-download scriptlet crosses on its own.
+
+Every parser is bounded (member, script, decompression and header-size caps) and
+the codebase is stdlib-only, so members packed with `xz`/`zstd` and the SquashFS
+inside an AppImage or Snap are recorded as "present but not inspected" rather than
+guessed at. It is SUSPICIOUS-tier, never MALICIOUS alone, and feeds the fusion
+lattice (so `--quarantine-level suspicious` can auto-block a packaged dropper).
+`--no-pkg` disables it and `--pkg-threshold` tunes the score.
+
+## Archive
+
+`scanner/archive` treats a compressed container — ZIP, TAR, gzip and their
+`tar.gz` nesting — as the subject of inspection in its own right. It asks
+container-*hygiene* questions, not package-identity ones (that is the
+`linuxpkg` detector's job): is this a **decompression bomb**, does a member
+**escape the extraction root** (Zip-Slip / path traversal), is the single
+member a **disguised executable**, is the payload **locked behind
+encryption**. It never writes to disk, never executes a member, and bounds
+every read (size, member count, decompression, magic peek) so a hostile
+archive cannot make it allocate or decompress without limit — a gzip body
+caps at 64 MiB, the member count at 100,000, the whole archive at 256 MiB.
+
+The ATT&CK-mapped signals (`archive.*`): `bomb` (a compression ratio or
+absolute expansion past the caps), `path-traversal` (a member whose path
+escapes the root), `lure-double-extension` (e.g. `invoice.pdf.exe`,
+T1036), `single-executable` and `script-member` (a container whose entire
+reason to exist is to deliver one payload, T1204.002), `executable-member`,
+`encrypted-entry` (a password-locked member hiding its contents from
+inspection, T1027) and `nested-archive` (an archive inside the archive,
+T1027). The default threshold is 8; a benign source tarball of ordinary
+files scores zero, while a one-member `invoice.pdf.exe` ZIP crosses on the
+double-extension-plus-single-executable combination alone.
+
+It is SUSPICIOUS-tier, never MALICIOUS. `--no-archive` disables it and
+`--archive-threshold` tunes the score.
+
+## CHM help file
+
+`scanner/chm` reads Compiled HTML Help (`.chm`, the ITSS container) for the
+things a help file has no business carrying. It walks the uncompressed
+ITSF/ITSP/PMGL directory and scores embedded payloads: `chm.embedded-executable`
+(a lone `.exe`/`.dll`/`.scr` crosses on its own, weight 8 — no legitimate CHM
+ships a PE), `chm.multiple-executables`, `chm.embedded-lnk`, and
+`chm.embedded-script` for a dangerous script type (`.hta`/`.vbs`/`.ps1`/`.bat`/
+`.cmd`/`.wsf`, but deliberately *not* plain `.js`, which help-file table-of-
+contents navigation uses legitimately). Techniques T1204.002 and T1059.
+
+Honest boundary: the LZX-compressed content section is **not** decompressed in
+v1, so the HTML/script bodies and the classic malicious `<OBJECT>`
+ShortCut/WinExec tradecraft inside them are not inspected — the pass records
+"present but not inspected" rather than guessing. It catches the embedded-payload
+shape, which is the high-signal one, and says plainly what it cannot yet see.
+
+It is SUSPICIOUS-tier, never MALICIOUS. `--no-chm` disables it and
+`--chm-threshold` tunes the score.
+
 ## Fusion
 
 Each detector's threshold is tuned so that it alone stays quiet on ordinary
@@ -455,9 +564,51 @@ through the lattice. Those are the detections fusion adds; they are what the
 "Fused-only detections" summary line count. Fuzzy-hash matches are their own
 `similarity` source, separate from the structural score.
 
+On top of that independent weighted sum sits a **conditional chaining** layer —
+the dependent half of the hybrid lattice. The weighted sum treats sources as
+independent votes and cannot express that two findings on the same file
+*reinforce* each other: a packed image that also carries process-injection
+capability is not the sum of two observations, it is a recognisable attack path;
+a document vector that also carries an encoded executable is a dropper. A
+**chain** is a set of predicates that must each bind to a *distinct* counted
+source; when they all match, the chain adds a small bounded bonus and records
+itself so the verdict can name the path it saw. The shipped set is deliberately
+small and every rule needs two independent detectors:
+
+| Chain | Fires when | Technique |
+|---|---|---|
+| `packed-and-injects` | the static pass names a packer **and** the heuristics see process injection | T1055 |
+| `document-dropper` | an OLE/PDF/LNK/ISO vector **and** an encoded executable | T1027.009 |
+| `peel-revealed` | an obfuscation layer (peeler/encchain) **and** a behavioural detector flagging the revealed content | T1027 |
+
+Chaining only ever **adds**, so the lattice stays monotone, and the total bonus
+is capped (0.75, no more than one corroborating source), so no amount of chaining
+can run away from the evidence. Chains build only on sources that already count —
+never a way to resurrect evidence the lattice discarded below the floor. The
+default engine verdict uses this hybrid (`fusion.FuseChained`); the flat weighted
+sum (`fusion.Fuse`) remains available to library callers.
+
 The lattice never creates evidence: a file silent on every detector stays
 clean, and raising any input never lowers the fused score or tier (a
 randomized test pins this). Measured on the 349 files of the Kali Windows tool
 set: zero fused-only detections and zero new false positives; the nearest
 benign file (the UPX-packed `wget.exe`, static 7/8) has no second source
 above the floor.
+
+## Firmware (a separate command)
+
+Firmware is not part of the per-file `cau scan` — it has its own command,
+`cau firmware`, because a BIOS image is a different kind of subject and its
+findings do not join the file-scan fusion lattice. `scanner/uefi` parses a UEFI
+image's Firmware Volumes and FFS files/sections and reports a module inventory,
+the FV header's checksum integrity, and any module GUID on an operator-supplied
+implant blocklist.
+
+It is deliberately conservative: the engine ships **no implant truth set**
+(firmware is overwhelmingly legitimate PEI/DXE/SMM drivers, so scoring module
+shapes would be a false-positive machine), so only two classes score —
+`uefi.volume-checksum-invalid` (a tampered or hand-built FV header, weight 3)
+and `uefi.known-implant-guid` (a `--implants` blocklist match, weight 8,
+T1542.001). Everything else is inventory. Module bodies are not disassembled,
+compressed/GUIDed sections are not decompressed, and NVRAM, signatures and boot
+policy are not analysed. See [the CLI reference](cli.md#cau-firmware).

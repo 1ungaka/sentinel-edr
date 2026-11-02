@@ -70,9 +70,15 @@ hit. Both rules are tested.
 main.go, cmd_eval.go, cmd_static.go, cmd_coverage.go, cmd_rules.go, resources.go
                        CLI commands and resource discovery
 scanner/               Engine (single read), signature DB, YARA, heuristics, fuse.go
-scanner/static/        PE and ELF parsers, entropy, fuzzy hashes, anomalies, packers, Authenticode, clustering
+scanner/static/        PE, ELF and Mach-O parsers, entropy, fuzzy hashes (incl. telfhash), anomalies, packers, Authenticode, clustering
 scanner/stego/         invisible-codepoint pass
-scanner/fusion/        the fusion lattice
+scanner/encchain/      encoded-executable pass
+scanner/lnk/, ole/, pdf/, iso/   document & container detectors (LNK, OLE/VBA, PDF, ISO)
+scanner/linuxpkg/      Linux software-package install-script detector (.deb/.rpm/Arch/Flatpak/AppImage/Docker/Snap)
+scanner/fusion/        the fusion lattice (weighted sum + attack-path chaining)
+internal/procscan/     read-only live process-table scan (cau ps)
+internal/peeler/       obfuscation-chain peeler (cau peel)
+internal/harden/       in-process self-protection (memory, privileges, process concealment)
 internal/report/       text / JSON / SARIF / OCSF reporters and the exit-code policy
 internal/coverage/     ATT&CK coverage matrix, expectation gate, Navigator layer
 internal/rulelint/     YARA rule linter

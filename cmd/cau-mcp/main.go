@@ -55,6 +55,7 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 	noOLE := fs.Bool("no-ole", false, "disable the OLE compound-file (VBA macro) pass")
 	noPDF := fs.Bool("no-pdf", false, "disable the PDF malicious-document pass")
 	noISO := fs.Bool("no-iso", false, "disable the ISO 9660 malicious-container pass")
+	noPkg := fs.Bool("no-pkg", false, "disable the Linux software-package pass (.deb/.rpm/Arch/Flatpak/AppImage/PKGBUILD)")
 	noPeel := fs.Bool("no-peel", false, "disable the obfuscation-chain peeler")
 	noHeur := fs.Bool("no-heuristics", false, "disable the string/API heuristics")
 	noFusion := fs.Bool("no-fusion", false, "disable the fusion lattice")
@@ -137,6 +138,7 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 		OLE:        !*noOLE,
 		PDF:        !*noPDF,
 		ISO:        !*noISO,
+		LinuxPkg:   !*noPkg,
 		Peel:       !*noPeel,
 		NoFusion:   *noFusion,
 	}

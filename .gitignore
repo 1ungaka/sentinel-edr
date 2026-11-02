@@ -24,3 +24,11 @@
 /corpus/**/*.exe
 /corpus/**/*.dll
 /eval-out/
+
+# Held-out recall corpus: the encrypted hash database (hashes.db, ciphertext)
+# and the README are tracked; the fetched malware samples, the generated live
+# manifest, the download cache and any temp file never are.
+/corpus/heldout/samples/
+/corpus/heldout/manifest.json
+/corpus/heldout/.heldout-download.zip
+/corpus/heldout/*.tmp

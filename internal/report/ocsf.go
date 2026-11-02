@@ -365,6 +365,30 @@ func (c config) ocsfFinding(doc Document, f File, now int64) ocsfFinding {
 		titleParts = append(titleParts, fmt.Sprintf("obfuscation chain %d/%d", pl.Score, pl.Threshold))
 		fi.Unmapped["peel"] = map[string]any{"score": pl.Score, "threshold": pl.Threshold, "outcome": pl.Outcome, "max_depth": pl.MaxDepth, "classes": classes}
 	}
+	if av := f.Archive; av != nil && av.Detected {
+		sources = append(sources, "archive")
+		var classes []string
+		for _, fd := range av.Findings {
+			classes = append(classes, fd.Class)
+			if fd.Technique != "" {
+				techs[fd.Technique] = true
+			}
+		}
+		titleParts = append(titleParts, fmt.Sprintf("archive container %d/%d", av.Score, av.Threshold))
+		fi.Unmapped["archive"] = map[string]any{"score": av.Score, "threshold": av.Threshold, "format": av.Format, "classes": classes}
+	}
+	if ch := f.CHM; ch != nil && ch.Detected {
+		sources = append(sources, "chm")
+		var classes []string
+		for _, fd := range ch.Findings {
+			classes = append(classes, fd.Class)
+			if fd.Technique != "" {
+				techs[fd.Technique] = true
+			}
+		}
+		titleParts = append(titleParts, fmt.Sprintf("chm help %d/%d", ch.Score, ch.Threshold))
+		fi.Unmapped["chm"] = map[string]any{"score": ch.Score, "threshold": ch.Threshold, "classes": classes}
+	}
 	if fu := f.Fusion; fu != nil {
 		for _, t := range fu.Techniques {
 			techs[t] = true

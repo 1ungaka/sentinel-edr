@@ -121,6 +121,23 @@ func (r *Report) WriteText(w io.Writer) error {
 		}
 	}
 
+	if len(r.NearMiss) > 0 {
+		fmt.Fprintln(w, "\nnear miss (benign files that scored but did not fire)")
+		fmt.Fprintf(w, "  detector             thr  band  scored  near  nearest  histogram (margin×count)\n")
+		for _, nm := range r.NearMiss {
+			nearest := "-"
+			if nm.MinMargin >= 0 {
+				nearest = fmt.Sprintf("%d", nm.MinMargin)
+			}
+			var hb []string
+			for _, b := range nm.Histogram {
+				hb = append(hb, fmt.Sprintf("%d×%d", b.Margin, b.Count))
+			}
+			fmt.Fprintf(w, "  %-20s %3d %5d %7d %5d %8s  %s\n",
+				nm.Detector, nm.Threshold, nm.Band, nm.Scored, nm.NearThreshold, nearest, strings.Join(hb, " "))
+		}
+	}
+
 	writeFlaggedList(w, "false positives", r.FalsePositives, 50)
 	writeFlaggedList(w, "false negatives", r.FalseNegatives, 50)
 

@@ -45,6 +45,21 @@ daemon protects itself and recovers from attempts to crash it:
 - **Tamper-evidence at startup.** It logs the running binary's own SHA-256;
   compare it to the signed release (`cau verify-self`) to confirm the on-disk
   binary was not swapped.
+- **Process concealment & anti-hook.** On startup the daemon rewrites its own
+  process name so malware that hunts for a defender by name (`pgrep cau`,
+  `pkill`, scanning `/proc/<pid>/comm` and `cmdline`) does not find it: `comm`
+  is always set to a neutral random `[a-z0-9]{6,12}` string (via
+  `prctl(PR_SET_NAME)`) and the command line is overwritten best-effort (ps,
+  `/proc/self/cmdline`). The name is random, never an impersonation of a real
+  process. It also strips the loader-hijack environment variables
+  (`LD_PRELOAD`, `LD_AUDIT`, `LD_LIBRARY_PATH`, `GCONV_PATH`, …) so a function
+  hook cannot be injected through the daemon's own environment, and it reports
+  an attached `ptrace` tracer. The daemon banner logs the real→random name once
+  so an operator can still correlate it. This is **best-effort and defensive**:
+  `comm` always takes, the command-line overwrite is best-effort, and
+  concealment does **not** make the process unkillable — it does not resist
+  `SIGKILL` or a kernel-level kill (that is the resident sensor's / `cau-kernel`'s
+  job). Off Linux the whole step is an honest no-op.
 - **Crash auto-recovery.** Every scan cycle runs behind a panic barrier — a
   panic in a detector, in report writing, or in quarantine is caught, logged,
   counted, and the daemon continues. One hostile file can never take the

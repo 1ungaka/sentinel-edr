@@ -23,8 +23,11 @@ import (
 	"github.com/cau-edr/cau/internal/report"
 	"github.com/cau-edr/cau/internal/sdnotify"
 	"github.com/cau-edr/cau/scanner"
+	"github.com/cau-edr/cau/scanner/archive"
+	"github.com/cau-edr/cau/scanner/chm"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/iso"
+	"github.com/cau-edr/cau/scanner/linuxpkg"
 	"github.com/cau-edr/cau/scanner/lnk"
 	"github.com/cau-edr/cau/scanner/ole"
 	"github.com/cau-edr/cau/scanner/pdf"
@@ -55,12 +58,17 @@ Usage:
   cau add-hash  [flags]                append a hash signature to the database
   cau add-fuzzy [flags]                append a TLSH / ssdeep / imphash signature
   cau eval      <subcommand> [flags]   corpus evaluation harness (see "cau eval help")
+  cau heldout   <subcommand> [flags]   encrypted held-out recall-corpus hash database
   cau rules     lint|list [flags]      lint the YARA rules, or list them with their meta
   cau coverage  [flags]                ATT&CK coverage matrix of the shipped content
                                        (text, JSON or ATT&CK Navigator layer; gate with --expect)
   cau quarantine <subcommand>          vault flagged files (add/list/restore/verify/delete)
   cau canary    plant|check [flags]    plant decoy files and detect tampering
   cau peel      [flags] <file>         walk an obfuscation chain, depth as signal
+  cau firmware  [flags] <image>        parse a UEFI firmware image (FV/FFS inventory, integrity, implant blocklist)
+  cau ps        [flags]                scan the live process table (/proc) for fileless/masquerade/injection
+  cau installed [flags]                audit installed-package maintainer scripts (dpkg/pacman) for tradecraft
+  cau feed      <subcommand>           manage the abuse-intel feed (list/check/update; offline cache + opt-in fetch)
   cau intake    --format <fmt> [flags] ingest a threat-intel feed into the signature DB
   cau update    (--from|--url) [flags] install a signed signature-DB bundle (fail-closed)
   cau selftest  [--record] [flags]     verify detection content has not been tampered with
@@ -113,6 +121,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdCluster(args[1:], stdout, stderr)
 	case "eval":
 		return cmdEval(args[1:], stdout, stderr)
+	case "heldout":
+		return cmdHeldout(args[1:], stdout, stderr)
 	case "rules":
 		return cmdRules(args[1:], stdout, stderr)
 	case "coverage":
@@ -123,6 +133,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdCanary(args[1:], stdout, stderr)
 	case "peel":
 		return cmdPeel(args[1:], stdout, stderr)
+	case "firmware":
+		return cmdFirmware(args[1:], stdout, stderr)
+	case "ps":
+		return cmdPs(args[1:], stdout, stderr)
+	case "feed":
+		return cmdFeed(args[1:], stdout, stderr)
+	case "installed":
+		return cmdInstalled(args[1:], stdout, stderr)
 	case "intake":
 		return cmdIntake(args[1:], stdout, stderr)
 	case "update":
@@ -159,7 +177,10 @@ type scanFlags struct {
 	noOLE             bool
 	noPDF             bool
 	noISO             bool
+	noPkg             bool
 	noPeel            bool
+	noArchive         bool
+	noCHM             bool
 	quarantine        bool
 	quarantineStore   string
 	quarantineLevel   string
@@ -174,7 +195,11 @@ type scanFlags struct {
 	oleThreshold      int
 	pdfThreshold      int
 	isoThreshold      int
+	pkgThreshold      int
+	feed              string
 	peelThreshold     int
+	archiveThreshold  int
+	chmThreshold      int
 	format, output    string
 	pretty            bool
 	failOn            string
@@ -214,8 +239,15 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&f.pdfThreshold, "pdf-threshold", pdf.Threshold, "score at which a PDF document match is reported suspicious")
 	fs.BoolVar(&f.noISO, "no-iso", false, "disable the ISO 9660 malicious-container pass")
 	fs.IntVar(&f.isoThreshold, "iso-threshold", iso.Threshold, "score at which an ISO container match is reported suspicious")
+	fs.BoolVar(&f.noPkg, "no-pkg", false, "disable the Linux software-package pass (.deb/.rpm/Arch/Flatpak/AppImage/PKGBUILD install scripts)")
+	fs.IntVar(&f.pkgThreshold, "pkg-threshold", linuxpkg.Threshold, "score at which a Linux package's install scripts are reported suspicious")
+	fs.StringVar(&f.feed, "feed", "", "abuse-intel feed file to match indicators against (default: search path; empty if none)")
 	fs.BoolVar(&f.noPeel, "no-peel", false, "disable the obfuscation-chain peeler (NOVEL-012)")
 	fs.IntVar(&f.peelThreshold, "peel-threshold", peeler.Threshold, "score at which an obfuscation chain is reported suspicious")
+	fs.BoolVar(&f.noArchive, "no-archive", false, "disable the compressed-container pass (ZIP/TAR/gzip: bombs, Zip-Slip, lure/payload members)")
+	fs.IntVar(&f.archiveThreshold, "archive-threshold", archive.Threshold, "score at which a compressed container is reported suspicious")
+	fs.BoolVar(&f.noCHM, "no-chm", false, "disable the Compiled HTML Help (CHM) pass (embedded executables, shortcuts, dangerous scripts)")
+	fs.IntVar(&f.chmThreshold, "chm-threshold", chm.Threshold, "score at which a CHM file is reported suspicious")
 	fs.BoolVar(&f.quarantine, "quarantine", false, "after scanning, move files with a MALICIOUS verdict into the quarantine vault (free prevention; default off)")
 	fs.StringVar(&f.quarantineStore, "quarantine-store", "", "vault directory for --quarantine (default: the cau quarantine default)")
 	fs.StringVar(&f.quarantineLevel, "quarantine-level", "malicious", "what --quarantine blocks: 'malicious' (hash/YARA only) or 'suspicious' (also the fused multi-indicator score)")
@@ -282,6 +314,10 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "[ERROR] --pdf-threshold must be at least 1")
 		return report.ExitUsage
 	}
+	if f.pkgThreshold < 1 {
+		fmt.Fprintln(stderr, "[ERROR] --pkg-threshold must be at least 1")
+		return report.ExitUsage
+	}
 	if f.isoThreshold < 1 {
 		fmt.Fprintln(stderr, "[ERROR] --iso-threshold must be at least 1")
 		return report.ExitUsage
@@ -308,6 +344,7 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		report.WithOLEThreshold(f.oleThreshold),
 		report.WithPDFThreshold(f.pdfThreshold),
 		report.WithISOThreshold(f.isoThreshold),
+		report.WithLinuxPkgThreshold(f.pkgThreshold),
 		report.WithPeelThreshold(f.peelThreshold),
 		report.WithIndent(f.pretty),
 	}
@@ -483,6 +520,11 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	} else {
 		status("[*] ISO container pass enabled (threshold %d)", f.isoThreshold)
 	}
+	if f.noPkg {
+		status("[*] Linux software-package pass disabled")
+	} else {
+		status("[*] Linux software-package pass enabled (threshold %d)", f.pkgThreshold)
+	}
 	if f.noPeel {
 		status("[*] Obfuscation-chain peeler disabled")
 	} else {
@@ -490,6 +532,11 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	}
 	if f.noFusion {
 		status("[*] Fusion disabled")
+	}
+
+	feed := loadFeedQuiet(f.feed)
+	if feed != nil {
+		status("[*] Abuse-intel feed loaded (%d indicators from %s)", feed.Count(), feed.Source())
 	}
 
 	engine := &scanner.Engine{
@@ -514,8 +561,15 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		PDFThreshold:       f.pdfThreshold,
 		ISO:                !f.noISO,
 		ISOThreshold:       f.isoThreshold,
+		LinuxPkg:           !f.noPkg,
+		LinuxPkgThreshold:  f.pkgThreshold,
+		Intel:              feed,
 		Peel:               !f.noPeel,
 		PeelThreshold:      f.peelThreshold,
+		Archive:            !f.noArchive,
+		ArchiveThreshold:   f.archiveThreshold,
+		CHM:                !f.noCHM,
+		CHMThreshold:       f.chmThreshold,
 		NoFusion:           f.noFusion,
 		MaxInMemory:        f.maxInMemoryMiB << 20,
 		Jobs:               f.jobs,

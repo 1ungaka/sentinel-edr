@@ -243,12 +243,52 @@ func elfAnomalies(e *ELF) []Anomaly {
 			add("dynamic.init-outside-code", CatDynamic, 2, techHijackFlow, "DT_INIT 0x%x is not in an executable segment", e.Init)
 		}
 	}
+	if image && e.ProgramTableInvalid == "" {
+		var bad []string
+		for _, t := range e.InitArrayTargets {
+			if t.Source == "unresolved" || t.Executable {
+				continue
+			}
+			where := t.Section
+			if where == "" {
+				where = "no executable segment"
+			}
+			bad = append(bad, fmt.Sprintf("%s->0x%x in %s", t.Array, t.VA, where))
+		}
+		if len(bad) > 0 {
+			add("dynamic.init-array-outside-code", CatDynamic, 2, techHijackFlow, "%d constructor pointer(s) resolve outside executable code: %s", len(bad), strings.Join(boundList(bad, 6), ", "))
+		}
+	}
+	if len(e.VersionsNeeded) > 0 {
+		var parts []string
+		for _, v := range e.VersionsNeeded {
+			if len(v.Versions) > 0 {
+				parts = append(parts, fmt.Sprintf("%s (%s)", v.File, strings.Join(boundList(v.Versions, 4), ", ")))
+			}
+		}
+		if len(parts) > 0 {
+			add("dynamic.symbol-versions", CatInfo, 0, "", "symbol-version requirements: %s", strings.Join(boundList(parts, 6), "; "))
+		}
+	}
 	if e.Type == etDyn && e.Interp == "" {
-		if hits := interposerHits(e); len(hits) >= 2 && importsDlsym(e) {
-			if k := knownInterposer(e); k != "" {
-				add("dynamic.preload-interposer-known", CatInfo, 0, "", "%s replaces libc entry points by design (%s)", k, strings.Join(boundList(hits, 6), ", "))
-			} else {
-				add("dynamic.preload-interposer", CatDynamic, 3, techPreload, "shared object redefines %d libc entry point(s) and resolves the originals with dlsym: %s", len(hits), strings.Join(boundList(hits, 8), ", "))
+		if hits := interposerHits(e); len(hits) >= 2 {
+			switch {
+			case importsDlsym(e):
+				if k := knownInterposer(e); k != "" {
+					add("dynamic.preload-interposer-known", CatInfo, 0, "", "%s replaces libc entry points by design (%s)", k, strings.Join(boundList(hits, 6), ", "))
+				} else {
+					add("dynamic.preload-interposer", CatDynamic, 3, techPreload, "shared object redefines %d libc entry point(s) and resolves the originals with dlsym: %s", len(hits), strings.Join(boundList(hits, 8), ", "))
+				}
+			case e.SyscallStubs > 0:
+				// The dlsym-free variant the old rule missed: a preload library
+				// that reaches libc through raw syscalls instead of resolving
+				// the originals. Known interposers (libc itself included) are
+				// named, not scored.
+				if k := knownInterposer(e); k != "" {
+					add("dynamic.preload-interposer-known", CatInfo, 0, "", "%s replaces libc entry points by design (%s)", k, strings.Join(boundList(hits, 6), ", "))
+				} else {
+					add("dynamic.preload-interposer-syscall", CatDynamic, 3, techPreload, "shared object redefines %d libc entry point(s) and reaches the kernel through %d raw syscall instruction(s) rather than dlsym: %s", len(hits), e.SyscallStubs, strings.Join(boundList(hits, 8), ", "))
+				}
 			}
 		}
 	}

@@ -143,6 +143,7 @@ func (d heuristicDetector) ScanFile(path string) (eval.Finding, error) {
 		f.Err = h.Error
 		return f, h.Error
 	}
+	f.Scores = []eval.DetectorScore{{Detector: eval.DetectorHeuristic, Score: h.Score, Threshold: d.threshold}}
 	if h.Score < d.threshold {
 		return f, nil
 	}
@@ -249,6 +250,9 @@ func (d staticDetector) ScanFile(path string) (eval.Finding, error) {
 		f.Err = r.Error
 		return f, r.Error
 	}
+	if r.Skipped == "" {
+		f.Scores = []eval.DetectorScore{{Detector: eval.DetectorStatic, Score: r.Score, Threshold: d.threshold}}
+	}
 	if r.Skipped != "" || r.Score < d.threshold {
 		return f, nil
 	}
@@ -329,6 +333,9 @@ func (d stegoDetector) ScanFile(path string) (eval.Finding, error) {
 		f.Err = r.Error
 		return f, r.Error
 	}
+	if r.Skipped == "" {
+		f.Scores = []eval.DetectorScore{{Detector: eval.DetectorStego, Score: r.Score, Threshold: d.threshold}}
+	}
 	if r.Skipped != "" || r.Score < d.threshold {
 		return f, nil
 	}
@@ -365,6 +372,9 @@ func (d encChainDetector) ScanFile(path string) (eval.Finding, error) {
 	start := time.Now()
 	r := encchain.ScanFile(path, encchain.Options{Threshold: d.threshold})
 	f := eval.Finding{Path: path, Verdict: eval.VerdictClean, Duration: time.Since(start)}
+	if r.Skipped == "" {
+		f.Scores = []eval.DetectorScore{{Detector: eval.DetectorEncChain, Score: r.Score, Threshold: d.threshold}}
+	}
 	if r.Skipped != "" || r.Score < d.threshold {
 		return f, nil
 	}

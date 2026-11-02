@@ -25,6 +25,11 @@ const (
 	maxELFNoteDesc   = 1 << 12
 	maxELFModinfo    = 1 << 16
 	maxELFModinfoKey = 256
+	maxELFRelocs     = 1 << 20  // relocation entries read when resolving pointers
+	maxELFPointers   = 4096     // init/preinit array slots resolved
+	maxELFVersions   = 1024     // symbol-version records read
+	maxTelfSymbols   = 1 << 16  // function names fed to telfhash
+	maxSyscallScan   = 16 << 20 // executable bytes scanned for syscall stubs
 )
 
 // ELF header constants.
@@ -67,9 +72,13 @@ const (
 
 	dtNull         = 0
 	dtNeeded       = 1
+	dtPltRelSz     = 2
 	dtHash         = 4
 	dtStrtab       = 5
 	dtSymtab       = 6
+	dtRela         = 7
+	dtRelaSz       = 8
+	dtRelaEnt      = 9
 	dtStrsz        = 10
 	dtSyment       = 11
 	dtInit         = 12
@@ -77,13 +86,19 @@ const (
 	dtSoname       = 14
 	dtRpath        = 15
 	dtSymbolic     = 16
+	dtRel          = 17
+	dtRelSz        = 18
+	dtRelEnt       = 19
+	dtPltRel       = 20
 	dtDebug        = 21
 	dtTextrel      = 22
+	dtJmpRel       = 23
 	dtBindNow      = 24
 	dtInitArray    = 25
 	dtInitArraysz  = 27
 	dtRunpath      = 29
 	dtFlags        = 30
+	dtPreinitArr   = 32
 	dtPreinitArrsz = 33
 	dtGNUHash      = 0x6ffffef5
 	dtFlags1       = 0x6ffffffb
@@ -93,12 +108,25 @@ const (
 	df1Now    = 0x1
 	df1PIE    = 0x08000000
 
-	stbGlobal = 1
-	stbWeak   = 2
-	sttObject = 1
-	sttFunc   = 2
-	sttIFunc  = 10
-	shnUndef  = 0
+	stbGlobal  = 1
+	stbWeak    = 2
+	sttObject  = 1
+	sttFunc    = 2
+	sttIFunc   = 10
+	shnUndef   = 0
+	stvDefault = 0
+
+	shtGNUVerdef  = 0x6ffffffd
+	shtGNUVerneed = 0x6ffffffe
+	shtGNUVersym  = 0x6fffffff
+
+	// Machine-specific R_*_RELATIVE relocation types. A RELATIVE relocation
+	// carries its target in the addend (RELA) or in the slot it points at
+	// (REL), which is how the init-array resolver recovers a PIE's slots.
+	rRelativeX86     = 8    // R_386_RELATIVE and R_X86_64_RELATIVE
+	rRelativeAArch64 = 1027 // R_AARCH64_RELATIVE
+	rRelativeARM     = 23   // R_ARM_RELATIVE
+	rRelativeRISCV   = 3    // R_RISCV_RELATIVE
 
 	ntGNUABITag  = 1
 	ntGNUBuildID = 3
@@ -190,6 +218,26 @@ type ELFNote struct {
 	Desc string `json:"desc,omitempty"`
 }
 
+// ELFPointer is one resolved function pointer from an init/preinit array: its
+// target virtual address, the section that contains it, whether that section
+// is executable, and how the address was recovered.
+type ELFPointer struct {
+	Array      string `json:"array"` // ".init_array" or ".preinit_array"
+	VA         uint64 `json:"va"`
+	Section    string `json:"section,omitempty"`
+	Executable bool   `json:"executable"`
+	// Source is "file" (slot held the address), "relative-reloc" (a
+	// R_*_RELATIVE relocation supplied it) or "unresolved".
+	Source string `json:"source"`
+}
+
+// ELFVersionNeed is one dependency's symbol-version requirement, e.g.
+// libc.so.6 needing GLIBC_2.34.
+type ELFVersionNeed struct {
+	File     string   `json:"file"`
+	Versions []string `json:"versions"`
+}
+
 // ELF is the parsed structure of an Executable and Linkable Format file.
 type ELF struct {
 	// Class is "elf32" or "elf64"; ByteOrder is "little" or "big".
@@ -233,13 +281,33 @@ type ELF struct {
 	// ImportHash is MD5 over the sorted, lower-cased import names. It is a
 	// CAU clustering key, not telfhash-compatible.
 	ImportHash string `json:"import_hash,omitempty"`
+	// Telfhash is the Trend Micro telfhash: TLSH over the filtered, sorted,
+	// lower-cased set of global default-visibility function symbols. It is
+	// compatible with telfhash for inputs TLSH can digest (the symbol text
+	// reaches 50 bytes); a shorter set leaves it empty with TelfhashNote set,
+	// since this TLSH library has no forcehash.
+	Telfhash     string `json:"telfhash,omitempty"`
+	TelfhashNote string `json:"telfhash_note,omitempty"`
 
 	Init           uint64 `json:"init,omitempty"`
 	InitArrayCount int    `json:"init_array_count,omitempty"`
 	PreinitCount   int    `json:"preinit_array_count,omitempty"`
-	TextRel        bool   `json:"textrel,omitempty"`
-	BindNow        bool   `json:"bind_now,omitempty"`
-	IsPIE          bool   `json:"pie"`
+	// InitArrayTargets are the resolved constructor pointers from .init_array
+	// and .preinit_array. A non-PIE image stores the target VA in the slot; a
+	// PIE leaves it 0 and a R_*_RELATIVE relocation carries the VA, so
+	// resolution needs the relocation tables.
+	InitArrayTargets []ELFPointer `json:"init_array_targets,omitempty"`
+	// VersionsNeeded lists the symbol-version requirements (dependency ->
+	// versions); VersionsDefined the versions this object itself defines.
+	VersionsNeeded  []ELFVersionNeed `json:"versions_needed,omitempty"`
+	VersionsDefined []string         `json:"versions_defined,omitempty"`
+	// SyscallStubs counts raw system-call instructions in executable sections
+	// (x86-64 syscall, i386 int 0x80 / sysenter, aarch64 svc #0). It is the
+	// tell for a loader or interposer that reaches the kernel without libc.
+	SyscallStubs int  `json:"syscall_stubs,omitempty"`
+	TextRel      bool `json:"textrel,omitempty"`
+	BindNow      bool `json:"bind_now,omitempty"`
+	IsPIE        bool `json:"pie"`
 	// Static is true for an image that needs no dynamic loader: no PT_INTERP
 	// and no PT_DYNAMIC.
 	Static          bool `json:"static"`
@@ -272,6 +340,19 @@ type ELF struct {
 	shent  int
 	dynOff int
 	dynLen int
+
+	// Addresses and sizes captured from the dynamic table for the pointer
+	// resolver and relocation walk (all virtual addresses).
+	initArrayVA, initArraySz uint64
+	preinitVA, preinitSz     uint64
+	relaVA, relaSz, relaEnt  uint64
+	relVA, relSz, relEnt     uint64
+	jmprelVA, pltRelSz       uint64
+	pltRel                   uint64
+
+	// telf accumulates telfhash-eligible symbol names (lower-cased) as the
+	// symbol tables are walked.
+	telf []string
 }
 
 func (e *ELF) warn(format string, a ...interface{}) {
@@ -354,6 +435,10 @@ func ParseELF(data []byte) (*ELF, error) {
 	e.computeOverlay(data)
 	e.Packer = identifyELFPacker(e, data)
 	e.ImportHash = importSetHash(e.Imports)
+	e.Telfhash, e.TelfhashNote = telfhash(e.telf)
+	e.resolveInitArray(data)
+	e.parseVersions(data)
+	e.scanSyscalls(data)
 	return e, nil
 }
 
@@ -676,10 +761,32 @@ func (e *ELF) parseDynamic(data []byte) {
 			runpath, hasRunpath = val, true
 		case dtInit:
 			e.Init = val
+		case dtInitArray:
+			e.initArrayVA = val
 		case dtInitArraysz:
 			initArraySz = val
+		case dtPreinitArr:
+			e.preinitVA = val
 		case dtPreinitArrsz:
 			preinitSz = val
+		case dtRela:
+			e.relaVA = val
+		case dtRelaSz:
+			e.relaSz = val
+		case dtRelaEnt:
+			e.relaEnt = val
+		case dtRel:
+			e.relVA = val
+		case dtRelSz:
+			e.relSz = val
+		case dtRelEnt:
+			e.relEnt = val
+		case dtJmpRel:
+			e.jmprelVA = val
+		case dtPltRelSz:
+			e.pltRelSz = val
+		case dtPltRel:
+			e.pltRel = val
 		case dtTextrel:
 			e.TextRel = true
 		case dtBindNow:
@@ -710,9 +817,11 @@ func (e *ELF) parseDynamic(data []byte) {
 	}
 	if initArraySz > 0 {
 		e.InitArrayCount = int(initArraySz / ptr)
+		e.initArraySz = initArraySz
 	}
 	if preinitSz > 0 {
 		e.PreinitCount = int(preinitSz / ptr)
+		e.preinitSz = preinitSz
 	}
 	if e.Type == etDyn && !e.IsPIE && e.Interp != "" && !hasSoname {
 		// A PIE linked by an older toolchain carries no DF_1_PIE; the loader
@@ -865,15 +974,17 @@ func (e *ELF) readSymbols(data []byte, off, ent, count int, name func(uint32) st
 		}
 		b := data[p:]
 		var nameOff uint32
-		var info uint8
+		var info, other uint8
 		var shndx uint16
 		if e.is64 {
 			nameOff = r.Uint32(b[0:])
 			info = b[4]
+			other = b[5]
 			shndx = r.Uint16(b[6:])
 		} else {
 			nameOff = r.Uint32(b[0:])
 			info = b[12]
+			other = b[13]
 			shndx = r.Uint16(b[14:])
 		}
 		typ := info & 0xf
@@ -884,6 +995,14 @@ func (e *ELF) readSymbols(data []byte, off, ent, count int, name func(uint32) st
 		n := name(nameOff)
 		if n == "" {
 			continue
+		}
+		// telfhash candidates: global, default-visibility functions, imported
+		// or exported alike, minus telfhash's exclusion list. Collected here
+		// so the digest uses the same table (.dynsym for images, .symtab for
+		// relocatable objects) telfhash would pick.
+		if typ == sttFunc && bind == stbGlobal && other&0x3 == stvDefault &&
+			len(e.telf) < maxTelfSymbols && !telfhashExcluded(n) {
+			e.telf = append(e.telf, strings.ToLower(n))
 		}
 		switch {
 		case shndx == shnUndef:

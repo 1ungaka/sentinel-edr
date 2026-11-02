@@ -52,6 +52,11 @@ type Result struct {
 	IsELF bool `json:"is_elf"`
 	ELF   *ELF `json:"elf,omitempty"`
 
+	// IsMachO is true when the file parsed as a Mach-O (thin or universal).
+	// MachO is then non-nil.
+	IsMachO bool   `json:"is_macho"`
+	MachO   *MachO `json:"macho,omitempty"`
+
 	Anomalies  []Anomaly       `json:"anomalies,omitempty"`
 	Categories []CategoryScore `json:"categories,omitempty"`
 	Score      int             `json:"score"`
@@ -173,6 +178,17 @@ func Analyze(data []byte, opts Options) *Result {
 			r.IsELF = true
 			r.ELF = e
 			anoms = append(anoms, elfAnomalies(e)...)
+		}
+	case IsMachO(data):
+		mo, err := ParseMachO(data)
+		if err != nil {
+			r.ParseError = err.Error()
+			anoms = append(anoms, Anomaly{Class: "format.unparseable", Category: CatFormat, Score: 2,
+				Detail: "Mach-O signature present but headers could not be parsed: " + err.Error()})
+		} else {
+			r.IsMachO = true
+			r.MachO = mo
+			anoms = append(anoms, machoAnomalies(mo)...)
 		}
 	}
 	if opts.FuzzyDB != nil {

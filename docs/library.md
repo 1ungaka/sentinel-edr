@@ -144,7 +144,12 @@ fmt.Println(v.Tier, v.Score, v.Corroborated, v.Explanation)
 ```
 
 `fusion.FuseWith(sources, fusion.Params{...})` takes explicit constants;
-`fusion.Default` holds the shipped ones.
+`fusion.Default` holds the shipped ones. `fusion.Fuse` is the flat weighted sum;
+`fusion.FuseChained` — what the engine itself uses — adds the bounded, capped
+attack-path chains in `fusion.DefaultChains` (each needs two distinct counted
+sources) and records any that fired on `v.Chains`, with `v.ChainBonus` and
+`v.ChainEscalated`. Chaining only ever raises the score and never past
+`fusion.DefaultChainCap`.
 
 ## Reports and the harness from Go
 

@@ -27,10 +27,11 @@ type Class struct {
 }
 
 var (
-	fmtPE   = []string{"pe"}
-	fmtELF  = []string{"elf"}
-	fmtBoth = []string{"pe", "elf"}
-	fmtAny  = []string{"any"}
+	fmtPE    = []string{"pe"}
+	fmtELF   = []string{"elf"}
+	fmtMachO = []string{"macho"}
+	fmtBoth  = []string{"pe", "elf"}
+	fmtAny   = []string{"any"}
 )
 
 // classCatalog is hand-maintained; TestClassCatalogMatchesSource fails when a
@@ -107,7 +108,10 @@ var classCatalog = []Class{
 	{"dynamic.needed-path", CatDynamic, 1, techHijackFlow, fmtELF, "DT_NEEDED names a path instead of a library name"},
 	{"dynamic.textrel", CatDynamic, 1, techObfuscated, fmtELF, "text relocations: code pages rewritten by the loader"},
 	{"dynamic.init-outside-code", CatDynamic, 2, techHijackFlow, fmtELF, "DT_INIT outside an executable segment"},
+	{"dynamic.init-array-outside-code", CatDynamic, 2, techHijackFlow, fmtELF, "a resolved .init_array/.preinit_array constructor pointer lands outside executable code"},
+	{"dynamic.symbol-versions", CatInfo, 0, "", fmtELF, "GNU symbol-version requirements read from .gnu.version_r (informational)"},
 	{"dynamic.preload-interposer", CatDynamic, 3, techPreload, fmtELF, "shared object redefining libc entry points and resolving the originals with dlsym"},
+	{"dynamic.preload-interposer-syscall", CatDynamic, 3, techPreload, fmtELF, "shared object redefining libc entry points and reaching the kernel through raw syscalls instead of dlsym"},
 	{"dynamic.preload-interposer-known", CatInfo, 0, "", fmtELF, "a known interposer (sanitizers, fakeroot, libeatmydata, ...) named at weight 0 (informational)"},
 	{"static.linked", CatInfo, 0, "", fmtELF, "statically linked; import analytics do not apply (informational)"},
 
@@ -128,6 +132,25 @@ var classCatalog = []Class{
 	{"format.interp-without-dynamic", CatFormat, 2, "", fmtELF, "program interpreter requested but no dynamic section"},
 	{"format.type-unknown", CatFormat, 2, "", fmtELF, "ELF type that is neither executable, shared object, relocatable nor core"},
 	{"format.core-dump", CatInfo, 0, "", fmtELF, "core dump; image rules do not apply (informational)"},
+
+	// Mach-O.
+	{"macho.universal", CatInfo, 0, "", fmtMachO, "universal (fat) binary; architecture list (informational)"},
+	{"macho.segment-rwx", CatSections, 3, techEmbeddedPay, fmtMachO, "writable and executable segment"},
+	{"macho.segment-high-entropy", CatSections, 2, techObfuscated, fmtMachO, "executable segment above 7.0 bits/byte"},
+	{"macho.section-exec-writable", CatSections, 2, techMasquerade, fmtMachO, "section marked as code in a writable segment"},
+	{"macho.entry-outside-segments", CatEntry, 3, techObfuscated, fmtMachO, "entry point mapped by no segment"},
+	{"macho.entry-non-exec", CatEntry, 2, techObfuscated, fmtMachO, "entry point in a non-executable segment"},
+	{"macho.stack-exec", CatEntry, 2, "", fmtMachO, "header requests an executable stack (MH_ALLOW_STACK_EXECUTION)"},
+	{"macho.encrypted", CatPacker, 2, techPacking, fmtMachO, "encrypted load region (FairPlay on App Store builds, a protector elsewhere)"},
+	{"macho.imports-none", CatImports, 2, techDynamicAPI, fmtMachO, "executable links no libraries and imports nothing"},
+	{"macho.rpath-insecure", CatDynamic, 2, techHijackFlow, fmtMachO, "LC_RPATH searches an attacker-writable or relative location"},
+	{"macho.dylib-suspicious-path", CatDynamic, 2, techHijackFlow, fmtMachO, "loads a library from a non-system, non-relocatable path"},
+	{"macho.signature-unverified", CatInfo, 0, "", fmtMachO, "code signature present, not verified (informational)"},
+	{"macho.unsigned", CatInfo, 0, "", fmtMachO, "executable without a code signature (informational)"},
+	{"macho.overlay-present", CatOverlay, 1, techEmbeddedPay, fmtMachO, "bytes appended after the last segment"},
+	{"macho.overlay-high-entropy", CatOverlay, 2, techEmbeddedPay, fmtMachO, "high-entropy bytes appended after the last segment"},
+	{"macho.packer", CatPacker, 2, techPacking, fmtMachO, "packed with a recognised packer"},
+	{"macho.packer-generic", CatPacker, 3, techPacking, fmtMachO, "packed executable profile without a named packer"},
 
 	// Similarity.
 	{"fuzzy.tlsh", CatFuzzy, 8, "", fmtAny, "TLSH distance at or below 30 to a database entry"},

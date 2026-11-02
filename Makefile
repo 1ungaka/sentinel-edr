@@ -104,6 +104,37 @@ baseline: build
 	./$(BINARY) eval run --corpus $(CORPUS) --db $(CORPUS_DB) --rules $(RULES) \
 		--out $(BASELINE) --quiet
 
+# ── Recall and specificity (measured on separate corpora) ───────────────────
+
+HELDOUT_MANIFEST ?= corpus/heldout/manifest.json
+
+# Recall (miss rate) against the held-out corpus of real malware the rules were
+# NOT authored from. Opt-in: skipped cleanly when the corpus has not been
+# fetched, so CI (which never downloads malware) is unaffected. Build it with
+# 'cau heldout pull' + scripts/fetch-heldout.sh.
+eval-recall: build
+	@if [ -f "$(HELDOUT_MANIFEST)" ]; then \
+		mkdir -p $(EVAL_OUT); \
+		./$(BINARY) eval validate --corpus $(HELDOUT_MANIFEST) --verify-hashes --require-provenance; \
+		./$(BINARY) eval run --corpus $(HELDOUT_MANIFEST) --rules $(RULES) --out $(EVAL_OUT)/recall.json; \
+		./$(BINARY) eval report $(EVAL_OUT)/recall.json; \
+	else \
+		echo "eval-recall: no $(HELDOUT_MANIFEST); run 'cau heldout pull' + scripts/fetch-heldout.sh (skipping)"; \
+	fi
+
+# Specificity (false positives + near misses) over a real clean population.
+# Point CLEAN_ROOT at a tree known to be benign (e.g. a Kali install's /usr).
+CLEAN_ROOT ?=
+eval-specificity: build
+	@if [ -z "$(CLEAN_ROOT)" ]; then \
+		echo "eval-specificity: set CLEAN_ROOT=<benign dir> (e.g. CLEAN_ROOT=/usr) (skipping)"; \
+	else \
+		mkdir -p $(EVAL_OUT); \
+		scripts/clean-manifest.sh "$(CLEAN_ROOT)" > $(EVAL_OUT)/specificity-manifest.json; \
+		./$(BINARY) eval run --corpus $(EVAL_OUT)/specificity-manifest.json --rules $(RULES) --out $(EVAL_OUT)/specificity.json; \
+		./$(BINARY) eval report $(EVAL_OUT)/specificity.json; \
+	fi
+
 # ── Detection content gates ─────────────────────────────────────────────────
 
 # Rule hygiene: compile, required meta, technique ids, dead strings.

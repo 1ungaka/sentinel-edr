@@ -177,6 +177,11 @@ type SampleResult struct {
 	Signals   []Signal `json:"signals,omitempty"`
 	Detectors []string `json:"detectors,omitempty"`
 
+	// Scores carries the sub-threshold numeric scores of the scored
+	// detectors. It is what the near-miss metric reads: a benign sample that
+	// scored just below a threshold is a latent false positive.
+	Scores []DetectorScore `json:"scores,omitempty"`
+
 	// Scored reports whether the sample entered the confusion matrix.
 	Scored bool `json:"scored"`
 	// SkipReason explains a non-scored, non-errored sample.
@@ -250,6 +255,39 @@ type RuleStat struct {
 	FalsePositivePaths []string `json:"false_positive_paths,omitempty"`
 }
 
+// MarginBucket is one point of a near-miss histogram: how many benign samples
+// scored exactly this far below a detector's firing threshold.
+type MarginBucket struct {
+	Margin int `json:"margin"`
+	Count  int `json:"count"`
+}
+
+// NearMissStat answers, for one scored detector, the question a clean corpus
+// cannot answer on its own: not "how many benign files did we flag" (that is
+// the false-positive count) but "how many came close". A detector whose
+// nearest benign file sits one point under the line is one threshold nudge
+// away from a false-positive storm; one whose nearest benign file is far below
+// has headroom. Only benign samples the detector actually scored (score > 0,
+// below threshold) are counted — a file the detector never scored is not a
+// near miss, it is a non-event.
+type NearMissStat struct {
+	Detector  string `json:"detector"`
+	Threshold int    `json:"threshold"`
+	// Scored is the number of benign samples this detector gave a non-zero
+	// sub-threshold score.
+	Scored int `json:"benign_scored"`
+	// Band is the near-threshold width used for NearThreshold (a quarter of
+	// the threshold, at least 1).
+	Band int `json:"band"`
+	// NearThreshold counts benign samples within Band of firing.
+	NearThreshold int `json:"near_threshold"`
+	// MinMargin is the smallest margin seen — how close the corpus came to a
+	// false positive. -1 when the detector scored no benign sample.
+	MinMargin int `json:"min_margin"`
+	// Histogram is every observed margin and its count, ascending by margin.
+	Histogram []MarginBucket `json:"histogram,omitempty"`
+}
+
 // FlaggedSample is a sample on the wrong side of the line, with enough context
 // to fix it: which file, what was expected, which detector fired and why.
 type FlaggedSample struct {
@@ -319,6 +357,10 @@ type Report struct {
 	ByFamily   []FamilyStat   `json:"by_family"`
 	ByRule     []RuleStat     `json:"by_rule"`
 
+	// NearMiss reports, per scored detector, how close benign samples came to
+	// firing — the margin the clean false-positive count cannot show.
+	NearMiss []NearMissStat `json:"near_miss,omitempty"`
+
 	FalsePositives []FlaggedSample `json:"false_positives"`
 	FalseNegatives []FlaggedSample `json:"false_negatives"`
 	Errors         []SampleError   `json:"errors"`
@@ -352,6 +394,11 @@ func NewReport(run *Run) *Report {
 	familyFP := map[string][]string{}
 	byRule := map[string]*RuleStat{}
 
+	// Near-miss accumulators: detector -> margin -> count over benign samples
+	// the detector scored but did not fire on, plus each detector's threshold.
+	nearHist := map[string]map[int]int{}
+	nearThreshold := map[string]int{}
+
 	for _, s := range rep.Samples {
 		if s.Error != "" {
 			rep.Errors = append(rep.Errors, SampleError{
@@ -377,6 +424,24 @@ func NewReport(run *Run) *Report {
 		default:
 			rep.Totals.FN++
 			rep.FalseNegatives = append(rep.FalseNegatives, flagged(s))
+		}
+
+		// ── near miss ── a benign sample the detector scored but did not fire
+		// on. Score > 0 excludes the overwhelming majority of files a scored
+		// detector looks at and assigns nothing; margin > 0 excludes the ones
+		// that fired (they are false positives, counted above, not near ones).
+		if benign {
+			for _, sc := range s.Scores {
+				nearThreshold[sc.Detector] = sc.Threshold
+				if sc.Score > 0 && sc.Margin() > 0 {
+					h := nearHist[sc.Detector]
+					if h == nil {
+						h = map[int]int{}
+						nearHist[sc.Detector] = h
+					}
+					h[sc.Margin()]++
+				}
+			}
 		}
 
 		// ── per detector ──
@@ -482,6 +547,7 @@ func NewReport(run *Run) *Report {
 	rep.ByDetector = sortedDetectors(byDetector)
 	rep.ByFamily = sortedFamilies(byFamily)
 	rep.ByRule = sortedRules(byRule)
+	rep.NearMiss = buildNearMiss(nearThreshold, nearHist)
 	rep.Perf = computePerf(rep.Samples)
 
 	sortFlagged(rep.FalsePositives)
@@ -489,6 +555,43 @@ func NewReport(run *Run) *Report {
 	sort.SliceStable(rep.Errors, func(i, j int) bool { return rep.Errors[i].Key < rep.Errors[j].Key })
 	sort.SliceStable(rep.Skipped, func(i, j int) bool { return rep.Skipped[i].Key < rep.Skipped[j].Key })
 	return rep
+}
+
+// buildNearMiss turns the per-detector margin histograms into sorted
+// NearMissStats. A detector that scored at least one benign sample appears
+// even if nothing came near, so a reader can tell "no near misses" from "this
+// detector was never exercised". The near band is a quarter of the threshold
+// (at least 1): close enough that a routine threshold adjustment would turn
+// the sample into a false positive.
+func buildNearMiss(thresholds map[string]int, hist map[string]map[int]int) []NearMissStat {
+	if len(thresholds) == 0 {
+		return nil
+	}
+	out := make([]NearMissStat, 0, len(thresholds))
+	for det, thr := range thresholds {
+		band := thr / 4
+		if band < 1 {
+			band = 1
+		}
+		st := NearMissStat{Detector: det, Threshold: thr, Band: band, MinMargin: -1}
+		margins := hist[det]
+		buckets := make([]MarginBucket, 0, len(margins))
+		for m, c := range margins {
+			buckets = append(buckets, MarginBucket{Margin: m, Count: c})
+			st.Scored += c
+			if st.MinMargin == -1 || m < st.MinMargin {
+				st.MinMargin = m
+			}
+			if m <= band {
+				st.NearThreshold += c
+			}
+		}
+		sort.Slice(buckets, func(i, j int) bool { return buckets[i].Margin < buckets[j].Margin })
+		st.Histogram = buckets
+		out = append(out, st)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Detector < out[j].Detector })
+	return out
 }
 
 // computePerf derives the perf section from per-sample durations. Only

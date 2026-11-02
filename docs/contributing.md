@@ -47,7 +47,8 @@ Go 1.24, libyara 4.3 with headers and pkg-config are required; see
    the boundary is refused, not split.
 5. **Honest output.** A pass that did not run says so. A score never becomes
    a MALICIOUS verdict. A fused verdict never lowers a detector's own.
-6. **Never panic on hostile input.** The PE and ELF parsers and the stego and
+6. **Never panic on hostile input.** The PE, ELF and Mach-O parsers, the
+   document/container and Linux-package passes, and the stego and
    heuristic passes read attacker-controlled bytes; a crash is a denial of
    service. Every such entry point has a `Fuzz*` target (`make fuzz`), and
    `Engine.ScanFile` recovers per file so one bad file cannot drop a whole

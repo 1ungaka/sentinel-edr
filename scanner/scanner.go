@@ -17,9 +17,12 @@ import (
 	"time"
 
 	"github.com/cau-edr/cau/internal/peeler"
+	"github.com/cau-edr/cau/scanner/archive"
+	"github.com/cau-edr/cau/scanner/chm"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/fusion"
 	"github.com/cau-edr/cau/scanner/iso"
+	"github.com/cau-edr/cau/scanner/linuxpkg"
 	"github.com/cau-edr/cau/scanner/lnk"
 	"github.com/cau-edr/cau/scanner/ole"
 	"github.com/cau-edr/cau/scanner/pdf"
@@ -95,10 +98,26 @@ type ScanResult struct {
 	// A breach is the SUSPICIOUS tier.
 	ISO *iso.Result
 
+	// LinuxPkg is the Linux software-package analysis (.deb/.rpm/Arch/Flatpak/
+	// AppImage/PKGBUILD install-time scripts that run as root: remote-download-
+	// into-shell, reverse shells, persistence, privilege escalation). nil when
+	// the detector did not run. A breach is the SUSPICIOUS tier.
+	LinuxPkg *linuxpkg.Result
+
 	// Peel is the obfuscation-chain analysis (NOVEL-012): a bounded tree unwrap
 	// of nested encoding/compression layers where chain depth is the signal.
 	// nil when the detector did not run. A breach is the SUSPICIOUS tier.
 	Peel *peeler.Result
+
+	// Archive is the compressed-container analysis (ZIP/TAR/gzip): bombs,
+	// Zip-Slip, lure and payload members. nil when the detector did not run. A
+	// breach is the SUSPICIOUS tier.
+	Archive *archive.Result
+
+	// CHM is the Compiled HTML Help analysis (embedded executables, shortcuts,
+	// dangerous scripts). nil when the detector did not run. A breach is the
+	// SUSPICIOUS tier.
+	CHM *chm.Result
 
 	// Fusion is the lattice's view over every detector that ran: which
 	// sources agreed, how strongly, and what techniques the agreeing evidence

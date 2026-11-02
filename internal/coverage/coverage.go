@@ -22,13 +22,17 @@ import (
 	"github.com/cau-edr/cau/internal/attack"
 	"github.com/cau-edr/cau/internal/peeler"
 	"github.com/cau-edr/cau/scanner"
+	"github.com/cau-edr/cau/scanner/archive"
+	"github.com/cau-edr/cau/scanner/chm"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/iso"
+	"github.com/cau-edr/cau/scanner/linuxpkg"
 	"github.com/cau-edr/cau/scanner/lnk"
 	"github.com/cau-edr/cau/scanner/ole"
 	"github.com/cau-edr/cau/scanner/pdf"
 	"github.com/cau-edr/cau/scanner/static"
 	"github.com/cau-edr/cau/scanner/stego"
+	"github.com/cau-edr/cau/scanner/uefi"
 )
 
 // Source names, identical to the fusion lattice's.
@@ -44,6 +48,10 @@ const (
 	SourceOLE        = "ole"
 	SourcePDF        = "pdf"
 	SourceISO        = "iso"
+	SourceLinuxPkg   = "linuxpkg"
+	SourceArchive    = "archive"
+	SourceCHM        = "chm"
+	SourceUEFI       = "uefi"
 	SourcePeeler     = "peeler"
 )
 
@@ -247,10 +255,46 @@ func Build(in Inputs) *Matrix {
 		})
 	}
 
+	// Linux software-package install-script classes.
+	for _, c := range linuxpkg.Classes() {
+		entries = append(entries, Entry{
+			Source: SourceLinuxPkg, Label: c.Class, Name: c.Class,
+			Technique: c.Technique, Novel: c.Novel, Weight: c.Weight, Tier: TierSuspicious,
+			Description: c.Description,
+		})
+	}
+
 	// Obfuscation-chain peeler classes (NOVEL-012).
 	for _, c := range peeler.Classes() {
 		entries = append(entries, Entry{
 			Source: SourcePeeler, Label: c.Class, Name: c.Class,
+			Technique: c.Technique, Novel: c.Novel, Weight: c.Weight, Tier: TierSuspicious,
+			Description: c.Description,
+		})
+	}
+
+	// Compressed-container (archive) classes.
+	for _, c := range archive.Classes() {
+		entries = append(entries, Entry{
+			Source: SourceArchive, Label: c.Class, Name: c.Class,
+			Technique: c.Technique, Novel: c.Novel, Weight: c.Weight, Tier: TierSuspicious,
+			Description: c.Description,
+		})
+	}
+
+	// Compiled HTML Help (CHM) classes.
+	for _, c := range chm.Classes() {
+		entries = append(entries, Entry{
+			Source: SourceCHM, Label: c.Class, Name: c.Class,
+			Technique: c.Technique, Novel: c.Novel, Weight: c.Weight, Tier: TierSuspicious,
+			Description: c.Description,
+		})
+	}
+
+	// UEFI firmware classes.
+	for _, c := range uefi.Classes() {
+		entries = append(entries, Entry{
+			Source: SourceUEFI, Label: c.Class, Name: c.Class,
 			Technique: c.Technique, Novel: c.Novel, Weight: c.Weight, Tier: TierSuspicious,
 			Description: c.Description,
 		})
@@ -339,7 +383,7 @@ func Build(in Inputs) *Matrix {
 			s.Mapped++
 		}
 	}
-	for _, name := range []string{SourceHash, SourceYara, SourceHeuristic, SourceStatic, SourceSimilarity, SourceStego, SourceEncChain, SourceLNK, SourceOLE, SourcePDF, SourceISO, SourcePeeler} {
+	for _, name := range []string{SourceHash, SourceYara, SourceHeuristic, SourceStatic, SourceSimilarity, SourceStego, SourceEncChain, SourceLNK, SourceOLE, SourcePDF, SourceISO, SourceLinuxPkg, SourcePeeler, SourceArchive, SourceCHM, SourceUEFI} {
 		s := counts[name]
 		if s == nil {
 			s = &SourceSummary{Name: name}
@@ -401,7 +445,15 @@ func sourceProfile(name string) (pyramid, tier string) {
 		return PyramidTTPs, TierSuspicious
 	case SourceISO:
 		return PyramidTTPs, TierSuspicious
+	case SourceLinuxPkg:
+		return PyramidTTPs, TierSuspicious
 	case SourcePeeler:
+		return PyramidTTPs, TierSuspicious
+	case SourceArchive:
+		return PyramidTTPs, TierSuspicious
+	case SourceCHM:
+		return PyramidTTPs, TierSuspicious
+	case SourceUEFI:
 		return PyramidTTPs, TierSuspicious
 	}
 	return "", ""

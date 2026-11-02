@@ -66,6 +66,112 @@ cut a tagged release yet, so everything is under Unreleased.
   write and TLSH-parse errors.
 
 ### Added
+- **`cau firmware` — UEFI firmware scan** (`scanner/uefi`): parses a UEFI image's
+  Firmware Volumes and FFS files/sections and reports a module inventory (GUID,
+  type, UI name, has-PE), FV header checksum integrity, and implant-blocklist
+  matches. Deliberately conservative — ships no implant truth set — so only
+  `uefi.volume-checksum-invalid` (a tampered/hand-built FV header) and
+  `uefi.known-implant-guid` (an operator `--implants` blocklist match) score;
+  everything else is inventory. Module bodies are not disassembled and
+  compressed/GUIDed sections are not decompressed. `--format text|json`,
+  `--threshold`, `--implants`. Adds ATT&CK T1542.001 (System Firmware). A
+  standalone command, not part of the per-file `cau scan`.
+- **CHM detector** (`scanner/chm`): reads Compiled HTML Help (ITSS) files for
+  embedded payloads a help file has no reason to carry — a lone embedded
+  executable (`chm.embedded-executable`, crosses on its own), multiple
+  executables, an embedded `.lnk`, or a dangerous script (`.hta`/`.vbs`/`.ps1`/
+  `.bat`/`.cmd`/`.wsf`, deliberately not plain `.js`). Walks the uncompressed
+  ITSF/ITSP/PMGL directory only; the LZX content section is recorded "present but
+  not inspected" rather than guessed. New flags `--no-chm` / `--chm-threshold`,
+  per-file JSON `chm` object and summary `chm_detections` / `chm_threshold`,
+  text/OCSF surfaces and `--fail-on` counting. T1204.002 / T1059 (already-covered
+  techniques, so coverage stays at 58).
+- **Archive detector** (`scanner/archive`): bounded, write-free ZIP/TAR/gzip
+  (and `tar.gz` nesting) container-hygiene analysis — decompression bombs (ratio
+  + absolute caps), Zip-Slip/path-traversal members, double-extension lures
+  (`invoice.pdf.exe`), disguised single-executable payloads, and encrypted or
+  nested members. Never writes to disk or executes a member; every read is
+  bounded. New flags `--no-archive` / `--archive-threshold`, per-file JSON
+  `archive` object and summary `archive_detections` / `archive_threshold`,
+  text/SARIF/OCSF surfaces and `--fail-on` counting. In the coverage matrix as the
+  `archive` source (T1036 / T1204.002 / T1027 on existing rows).
+- **`cau installed` — installed-package audit** (`internal/linuxpkg` reuse): audits
+  the maintainer/install scripts of already-installed packages in place from dpkg
+  (`/var/lib/dpkg/info`) and pacman (`/var/lib/pacman/local`) metadata — offline,
+  read-only — flagging the same tradecraft as `cau scan` and any abuse-intel
+  indicator reference. RPM is reported as a gap. `--format`, `--threshold`,
+  `--feed`.
+- **`cau feed` — abuse-intel feed** (`internal/intel`): a hybrid offline feed of
+  known-bad IPs/CIDRs/domains/URLs/hashes matched by `cau scan` (`--feed`),
+  `cau installed` and `cau ps`. Subcommands `list` / `check` / `update`; `update`
+  is the only networked action and only with an explicit `--url` (otherwise a
+  plain offline file, `--from`/`--replace`).
+- **Report-JSON for Mach-O and ELF deep-resolution**: the static object now emits
+  `is_macho` and a `macho` object (`magic`, `byte_order`, `fat`, `arches[]` with
+  cpu/filetype/flags/signed/encrypted/entry_segment/import_count/import_hash/dylibs),
+  and the `elf` object gains `telfhash`, `telfhash_note` and `syscall_stubs`.
+- **Linux software-package detector** (`scanner/linuxpkg`): a bounded,
+  stdlib-only, detection-only pass that scores the root-run install-time scripts
+  in `.deb` (ar → `control.tar` maintainer scripts), `.rpm` (header scriptlets),
+  Arch `.pkg.tar` + `PKGBUILD`, Flatpak manifests + bundles, AppImage type-2,
+  Docker/OCI `docker save` tarballs, Snap packages, generic `.zip`/`.tar`
+  installers, executable configs (`.desktop`/XDG/systemd/shell-rc) and APT/nala
+  sources. It scores supply-chain tradecraft (curl-into-shell, reverse/bind
+  shell, decode-and-exec, cryptominer, SSH-key backdoor, sudoers NOPASSWD,
+  dropper, disable-defenses, persistence, sandbox escape; T1195.002 and family),
+  default threshold 8, SUSPICIOUS-tier only, wired into the engine, fusion,
+  coverage matrix and every reporter. New flags `--no-pkg` / `--pkg-threshold`
+  (also `--no-pkg` on `cau-mcp`); JSON per-file `linuxpkg` object and summary
+  `linuxpkg_detections` / `linuxpkg_threshold`. xz/zstd-packed members and
+  AppImage/Snap SquashFS are recorded "present but not inspected", never guessed.
+- **`cau ps` — live process scan** (`internal/procscan`): a read-only,
+  `/proc`-only point-in-time scan of the running process table. It never injects,
+  ptraces, or signals a process, and flags what a file scan structurally misses —
+  fileless / RAM-only execution (memfd, deleted binary, `/dev/shm`; T1620), name
+  masquerading / PID hijacking (T1036.004/005), library-injection hooks
+  (world-writable/deleted `.so`, suspicious `LD_PRELOAD`; T1574.006), reverse-shell
+  command lines, and ptraced processes (T1055.008). Flags `--format text|json`,
+  `--threshold`; exit 0 clean / 1 flagged / 4 usage.
+- **Mach-O static support** (`scanner/static/macho.go`): own bounds-checked
+  parser for thin and universal/fat images (32/64-bit, both byte orders) —
+  segments/sections, dylibs and a dylib-set import hash, `LC_RPATH`,
+  `LC_MAIN`/`LC_UNIXTHREAD` entry, `LC_CODE_SIGNATURE` (presence, unverified) and
+  `LC_ENCRYPTION_INFO` (cryptid). New `macho.*` anomaly classes (RWX/high-entropy
+  segments, writable-executable section, entry outside/non-exec segment,
+  executable stack, encrypted/packed region, insecure rpath/dylib path, unsigned
+  or unverified signature, overlay), all in the static class catalog.
+- **ELF deep-resolution** (`scanner/static/elf_reloc.go`): `.init_array`/
+  `.preinit_array` constructor pointers are resolved through the relocations and
+  a target outside executable code flags `dynamic.init-array-outside-code`;
+  symbol versions are read from `.gnu.version_r`/`_d` (`dynamic.symbol-versions`);
+  a raw-syscall libc interposer flags `dynamic.preload-interposer-syscall`; and
+  real **telfhash** (TLSH over the Trend Micro filtered symbol set) is computed,
+  with an honest note below TLSH's 50-byte floor.
+- **Hybrid fusion — attack-path chaining** (`scanner/fusion/chain.go`): on top of
+  the independent weighted sum, `FuseChained` (now the engine default) adds
+  bounded, capped conditional chains that fire only on a conjunction of two
+  distinct counted sources — `packed-and-injects`, `document-dropper`,
+  `peel-revealed`. Chaining only ever adds (the lattice stays monotone), is capped
+  at 0.75, never resurrects below-floor evidence, and never downgrades a
+  definitive hit. The flat `Fuse` is unchanged for library callers.
+- **Process concealment & anti-hook self-protection** (`internal/harden`): the
+  resident daemon rewrites its own `comm` (always) and command line (best-effort)
+  to a neutral random `[a-z0-9]{6,12}` name so malware hunting a defender by name
+  (`pgrep`/`pkill`, `/proc/<pid>/comm`) does not find it, strips loader-hijack
+  environment variables (`LD_PRELOAD`/`LD_AUDIT`/`LD_LIBRARY_PATH`/`GCONV_PATH`),
+  and reports an attached tracer. Best-effort and defensive — it does **not**
+  resist `SIGKILL` or a kernel-level kill (that is the resident sensor's job); a
+  no-op off Linux. The banner logs the real→random name once.
+- **`cau heldout` — held-out recall corpus** (`internal/heldout`): an encrypted
+  (AES-256-GCM, PBKDF2) hash+intel database for a recall corpus the detectors were
+  not authored from. Subcommands `init`/`pull`/`add`/`remove`/`list`/`manifest`;
+  `pull` ingests the MalwareBazaar CSV export incrementally (resumable download,
+  batched checkpoints, skip-present). Key from `--key-file` / `$CAU_HELDOUT_KEY`.
+  Sample bytes are fetched by `scripts/fetch-heldout.sh`, never committed.
+- **Near-miss eval metric**: `cau eval report` gains a `near_miss` section per
+  scored detector (threshold, benign-scored count, near-threshold band, minimum
+  margin, histogram) so a benign corpus that is *almost* crossing a threshold is
+  visible before it becomes a false positive.
 - **Signed releases + self-verification** (`internal/release`, `cau verify-self`,
   `cau bundle`, and a signing GitHub Actions release job). Each tagged release is
   signed on GitHub's workers with an Ed25519 CI secret: `cau bundle update`

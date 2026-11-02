@@ -161,6 +161,14 @@ func (e *Engine) fuse(res *ScanResult, h *HeuristicResult) *fusion.Verdict {
 		sources = append(sources, src)
 	}
 
+	if lp := res.LinuxPkg; lp != nil {
+		src := fusion.Source{Name: fusion.SourceLinuxPkg, Score: lp.Score, Threshold: lp.EffectiveThreshold(), Skipped: lp.Skipped}
+		for _, f := range lp.Findings {
+			src.Evidence = append(src.Evidence, fusion.Evidence{Label: f.Class, Detail: f.Detail, Technique: f.Technique, Weight: f.Score})
+		}
+		sources = append(sources, src)
+	}
+
 	if pl := res.Peel; pl != nil {
 		src := fusion.Source{Name: fusion.SourcePeeler, Score: pl.Score, Threshold: pl.EffectiveThreshold(), Skipped: pl.Skipped}
 		for _, f := range pl.Findings {
@@ -169,10 +177,29 @@ func (e *Engine) fuse(res *ScanResult, h *HeuristicResult) *fusion.Verdict {
 		sources = append(sources, src)
 	}
 
+	if av := res.Archive; av != nil {
+		src := fusion.Source{Name: fusion.SourceArchive, Score: av.Score, Threshold: av.EffectiveThreshold(), Skipped: av.Skipped}
+		for _, f := range av.Findings {
+			src.Evidence = append(src.Evidence, fusion.Evidence{Label: f.Class, Detail: f.Detail, Technique: f.Technique, Weight: f.Score})
+		}
+		sources = append(sources, src)
+	}
+
+	if ch := res.CHM; ch != nil {
+		src := fusion.Source{Name: fusion.SourceCHM, Score: ch.Score, Threshold: ch.EffectiveThreshold(), Skipped: ch.Skipped}
+		for _, f := range ch.Findings {
+			src.Evidence = append(src.Evidence, fusion.Evidence{Label: f.Class, Detail: f.Detail, Technique: f.Technique, Weight: f.Score})
+		}
+		sources = append(sources, src)
+	}
+
 	if len(sources) == 0 {
 		return nil
 	}
-	return fusion.Fuse(sources)
+	// The hybrid lattice: the weighted sum plus the conditional attack-path
+	// chains. Chaining only ever raises a verdict (bounded by the chain cap),
+	// so turning it on cannot clear a detection the flat sum made.
+	return fusion.FuseChained(sources)
 }
 
 // slug lower-cases s and replaces every run of non-alphanumerics with "-".

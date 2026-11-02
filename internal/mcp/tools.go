@@ -231,6 +231,9 @@ func (s *Server) summarize(r scanner.ScanResult, h *scanner.HeuristicResult) fil
 	if r.ISO != nil {
 		fs.Scores["iso"] = scoreView{r.ISO.Score, r.ISO.EffectiveThreshold(), r.ISO.Detected()}
 	}
+	if r.LinuxPkg != nil {
+		fs.Scores["linuxpkg"] = scoreView{r.LinuxPkg.Score, r.LinuxPkg.EffectiveThreshold(), r.LinuxPkg.Detected()}
+	}
 	if r.Peel != nil {
 		fs.Scores["peel"] = scoreView{r.Peel.Score, r.Peel.EffectiveThreshold(), r.Peel.Detected()}
 	}
@@ -350,6 +353,9 @@ func isSuspicious(r scanner.ScanResult) bool {
 		return true
 	}
 	if r.ISO != nil && r.ISO.Detected() {
+		return true
+	}
+	if r.LinuxPkg != nil && r.LinuxPkg.Detected() {
 		return true
 	}
 	if r.Peel != nil && r.Peel.Detected() {

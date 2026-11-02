@@ -158,8 +158,16 @@ type Verdict struct {
 	// Corroborated is true when the suspicious tier was reached only through
 	// corroboration: no single scored source crossed its own threshold and no
 	// definitive source fired. These are the detections fusion adds.
-	Corroborated bool            `json:"corroborated,omitempty"`
-	Sources      []SourceVerdict `json:"sources"`
+	Corroborated bool `json:"corroborated,omitempty"`
+	// Chains are the conditional attack-path rules that fired (the dependent
+	// half of the hybrid); ChainBonus is the score they added, already folded
+	// into Score. ChainEscalated is true when that bonus alone lifted the
+	// verdict to suspicious — a detection neither the single sources nor the
+	// flat weighted sum reached.
+	Chains         []ChainHit      `json:"chains,omitempty"`
+	ChainBonus     float64         `json:"chain_bonus,omitempty"`
+	ChainEscalated bool            `json:"chain_escalated,omitempty"`
+	Sources        []SourceVerdict `json:"sources"`
 	// Explanation is one line for humans.
 	Explanation string `json:"explanation"`
 }
@@ -179,6 +187,11 @@ type Params struct {
 	Weight float64
 	// Cap bounds every ratio so a single very loud source is still one source.
 	Cap float64
+	// Chains are the conditional attack-path rules applied after the weighted
+	// sum (nil = flat fusion, the historical behaviour). ChainCap bounds their
+	// total bonus (0 = DefaultChainCap).
+	Chains   []Chain
+	ChainCap float64
 }
 
 // Default holds the shipped constants. Floor 0.4 means a heuristic score of
@@ -190,8 +203,19 @@ type Params struct {
 // program).
 var Default = Params{Threshold: 1.0, Floor: 0.4, Weight: 0.5, Cap: 1.5}
 
-// Fuse combines sources with the Default parameters.
+// Fuse combines sources with the Default parameters: the flat weighted sum,
+// with no conditional chaining. It is preserved unchanged so the measured
+// false-positive baseline keeps its meaning.
 func Fuse(sources []Source) *Verdict { return FuseWith(sources, Default) }
+
+// FuseChained is the hybrid: the Default weighted sum plus the DefaultChains
+// attack-path rules. It is what the engine runs; the extra chaining only ever
+// raises a verdict, and never past DefaultChainCap.
+func FuseChained(sources []Source) *Verdict {
+	p := Default
+	p.Chains = DefaultChains
+	return FuseWith(sources, p)
+}
 
 // FuseWith combines sources with explicit parameters.
 func FuseWith(sources []Source, p Params) *Verdict {
@@ -295,6 +319,17 @@ func FuseWith(sources []Source, p Params) *Verdict {
 	})
 	v.Sources = append(append(append(v.Sources, definitive...), scored...), rest...)
 
+	// Conditional chaining — the dependent half of the hybrid. The flat sum
+	// above is the base; chains add a bounded bonus for recognised attack
+	// paths across distinct counted sources. Applied here, after every role is
+	// final, so a chain builds only on sources that already count.
+	baseFused := fused
+	chainBonus, chainHits := applyChains(v.Sources, p.Chains, p.ChainCap)
+	fused += chainBonus
+	v.Chains = chainHits
+	v.ChainBonus = chainBonus
+	v.Score = round(fused, 3)
+
 	techs := map[string]bool{}
 	novel := map[string]bool{}
 	for _, sv := range v.Sources {
@@ -311,6 +346,14 @@ func FuseWith(sources []Source, p Params) *Verdict {
 			}
 		}
 	}
+	for _, c := range chainHits {
+		if c.Technique != "" {
+			techs[c.Technique] = true
+		}
+		if c.Novel != "" {
+			novel[c.Novel] = true
+		}
+	}
 	v.Techniques = sortedKeys(techs)
 	v.Novel = sortedKeys(novel)
 
@@ -324,6 +367,8 @@ func FuseWith(sources []Source, p Params) *Verdict {
 	case fused >= p.Threshold:
 		v.Tier = TierSuspicious
 		v.Corroborated = !anyAlone
+		// A chain did the lifting when the flat sum was still below the bar.
+		v.ChainEscalated = chainBonus > 0 && baseFused < p.Threshold
 		v.Confidence = "medium"
 		if fused >= 1.5*p.Threshold {
 			v.Confidence = "high"
@@ -380,7 +425,13 @@ func explain(v *Verdict) string {
 		return s
 	case TierSuspicious:
 		s := fmt.Sprintf("SUSPICIOUS: %s (fused %.2f / %.2f", strings.Join(parts, " + "), v.Score, v.Threshold)
-		if v.Corroborated {
+		if names := chainNames(v); names != "" {
+			if v.ChainEscalated {
+				s += ", escalated by attack-path chain " + names
+			} else {
+				s += ", attack-path chain " + names
+			}
+		} else if v.Corroborated {
 			s += ", by corroboration: no single source crossed its own threshold"
 		}
 		return s + ")"
@@ -388,6 +439,18 @@ func explain(v *Verdict) string {
 		return fmt.Sprintf("observed: %s (fused %.2f / %.2f)", strings.Join(parts, " + "), v.Score, v.Threshold)
 	}
 	return "clean: no source recorded evidence"
+}
+
+// chainNames joins the fired chains' names for the one-line explanation.
+func chainNames(v *Verdict) string {
+	if len(v.Chains) == 0 {
+		return ""
+	}
+	names := make([]string, len(v.Chains))
+	for i, c := range v.Chains {
+		names[i] = c.Name
+	}
+	return strings.Join(names, ", ")
 }
 
 func sortedKeys(m map[string]bool) []string {
@@ -420,5 +483,8 @@ const (
 	SourceOLE        = "ole"
 	SourcePDF        = "pdf"
 	SourceISO        = "iso"
+	SourceLinuxPkg   = "linuxpkg"
 	SourcePeeler     = "peeler"
+	SourceArchive    = "archive"
+	SourceCHM        = "chm"
 )

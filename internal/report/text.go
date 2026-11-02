@@ -8,9 +8,12 @@ import (
 
 	"github.com/cau-edr/cau/internal/peeler"
 	"github.com/cau-edr/cau/scanner"
+	"github.com/cau-edr/cau/scanner/archive"
+	"github.com/cau-edr/cau/scanner/chm"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/fusion"
 	"github.com/cau-edr/cau/scanner/iso"
+	"github.com/cau-edr/cau/scanner/linuxpkg"
 	"github.com/cau-edr/cau/scanner/lnk"
 	"github.com/cau-edr/cau/scanner/ole"
 	"github.com/cau-edr/cau/scanner/pdf"
@@ -96,11 +99,20 @@ func (r *TextReporter) Write(w io.Writer, in Input) error {
 		if hasResult && res.PDF != nil {
 			c.writePDF(bw, res.PDF)
 		}
+		if hasResult && res.LinuxPkg != nil {
+			c.writeLinuxPkg(bw, res.LinuxPkg)
+		}
 		if hasResult && res.ISO != nil {
 			c.writeISO(bw, res.ISO)
 		}
 		if hasResult && res.Peel != nil {
 			c.writePeel(bw, res.Peel)
+		}
+		if hasResult && res.Archive != nil {
+			c.writeArchive(bw, res.Archive)
+		}
+		if hasResult && res.CHM != nil {
+			c.writeCHM(bw, res.CHM)
 		}
 		if hasResult && res.Fusion != nil {
 			c.writeFusion(bw, res.FilePath, res.Fusion)
@@ -490,6 +502,92 @@ func (c config) writeISO(w io.Writer, i *iso.Result) {
 	fmt.Fprintln(w)
 }
 
+// writeLinuxPkg renders the Linux software-package analysis when it fired.
+func (c config) writeLinuxPkg(w io.Writer, p *linuxpkg.Result) {
+	if p.Skipped != "" || !linuxPkgBreached(p, c.linuxPkgThreshold) {
+		return
+	}
+	path := c.boundedMessage(p.FilePath)
+	threshold := linuxPkgThresholdFor(p, c.linuxPkgThreshold)
+	format := ""
+	if p.Parsed != nil {
+		format = " " + p.Parsed.Format
+	}
+	fmt.Fprintf(w, " [!] DETECTED (Linux package%s) — %s\n", format, path)
+	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
+	fmt.Fprintf(w, "     %-10s: %d / %d threshold\n", "Score", p.Score, threshold)
+	fmt.Fprintln(w)
+	for _, f := range p.Findings {
+		tags := ""
+		if f.Technique != "" {
+			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+		}
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
+		detail := c.boundedMessage(f.Detail)
+		if f.Evidence != "" {
+			detail += ": " + c.boundedMessage(f.Evidence)
+		}
+		fmt.Fprintf(w, "       %s\n", detail)
+	}
+	fmt.Fprintln(w)
+}
+
+// writeArchive renders the compressed-container analysis when it fired.
+func (c config) writeArchive(w io.Writer, a *archive.Result) {
+	if a.Skipped != "" || !archiveBreached(a, c.archiveThreshold) {
+		return
+	}
+	path := c.boundedMessage(a.FilePath)
+	threshold := archiveThresholdFor(a, c.archiveThreshold)
+	format := ""
+	if a.Parsed != nil {
+		format = " " + a.Parsed.Format
+	}
+	fmt.Fprintf(w, " [!] DETECTED (archive%s) — %s\n", format, path)
+	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
+	fmt.Fprintf(w, "     %-10s: %d / %d threshold\n", "Score", a.Score, threshold)
+	fmt.Fprintln(w)
+	for _, f := range a.Findings {
+		tags := ""
+		if f.Technique != "" {
+			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+		}
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
+		detail := c.boundedMessage(f.Detail)
+		if f.Evidence != "" {
+			detail += ": " + c.boundedMessage(f.Evidence)
+		}
+		fmt.Fprintf(w, "       %s\n", detail)
+	}
+	fmt.Fprintln(w)
+}
+
+// writeCHM renders the Compiled HTML Help analysis when it fired.
+func (c config) writeCHM(w io.Writer, h *chm.Result) {
+	if h.Skipped != "" || !chmBreached(h, c.chmThreshold) {
+		return
+	}
+	path := c.boundedMessage(h.FilePath)
+	threshold := chmThresholdFor(h, c.chmThreshold)
+	fmt.Fprintf(w, " [!] DETECTED (CHM help file) — %s\n", path)
+	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
+	fmt.Fprintf(w, "     %-10s: %d / %d threshold\n", "Score", h.Score, threshold)
+	fmt.Fprintln(w)
+	for _, f := range h.Findings {
+		tags := ""
+		if f.Technique != "" {
+			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+		}
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
+		detail := c.boundedMessage(f.Detail)
+		if f.Evidence != "" {
+			detail += ": " + c.boundedMessage(f.Evidence)
+		}
+		fmt.Fprintf(w, "       %s\n", detail)
+	}
+	fmt.Fprintln(w)
+}
+
 // writePeel renders the obfuscation-chain analysis when it fired.
 func (c config) writePeel(w io.Writer, p *peeler.Result) {
 	if p.Skipped != "" || !peelBreached(p, c.peelThreshold) {
@@ -578,7 +676,10 @@ func (c config) writeSummary(w io.Writer, in Input) {
 	oleHits := len(in.OLEBreach(c.oleThreshold))
 	pdfHits := len(in.PDFBreach(c.pdfThreshold))
 	isoHits := len(in.ISOBreach(c.isoThreshold))
+	pkgHits := len(in.LinuxPkgBreach(c.linuxPkgThreshold))
 	peelHits := len(in.PeelBreach(c.peelThreshold))
+	archiveHits := len(in.ArchiveBreach(c.archiveThreshold))
+	chmHits := len(in.CHMBreach(c.chmThreshold))
 	fused := len(in.FusionCorroborated())
 
 	fmt.Fprintln(w)
@@ -595,7 +696,10 @@ func (c config) writeSummary(w io.Writer, in Input) {
 	fmt.Fprintf(w, " OLE-macro detections  : %d\n", oleHits)
 	fmt.Fprintf(w, " PDF detections        : %d\n", pdfHits)
 	fmt.Fprintf(w, " ISO detections        : %d\n", isoHits)
+	fmt.Fprintf(w, " Linux-pkg detections  : %d\n", pkgHits)
 	fmt.Fprintf(w, " Chain-peel detections : %d\n", peelHits)
+	fmt.Fprintf(w, " Archive detections    : %d\n", archiveHits)
+	fmt.Fprintf(w, " CHM detections        : %d\n", chmHits)
 	fmt.Fprintf(w, " Fused-only detections : %d\n", fused)
 	fmt.Fprintf(w, " Errors                : %d\n", in.ErrorCount())
 	fmt.Fprintf(w, " Exit code             : %d (%s)\n", code, reason)

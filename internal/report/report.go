@@ -43,9 +43,12 @@ import (
 
 	"github.com/cau-edr/cau/internal/peeler"
 	"github.com/cau-edr/cau/scanner"
+	"github.com/cau-edr/cau/scanner/archive"
+	"github.com/cau-edr/cau/scanner/chm"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/fusion"
 	"github.com/cau-edr/cau/scanner/iso"
+	"github.com/cau-edr/cau/scanner/linuxpkg"
 	"github.com/cau-edr/cau/scanner/lnk"
 	"github.com/cau-edr/cau/scanner/ole"
 	"github.com/cau-edr/cau/scanner/pdf"
@@ -98,8 +101,14 @@ const (
 	DefaultPDFThreshold = pdf.DefaultThreshold
 	// DefaultISOThreshold mirrors iso.DefaultThreshold.
 	DefaultISOThreshold = iso.DefaultThreshold
+	// DefaultLinuxPkgThreshold mirrors linuxpkg.DefaultThreshold.
+	DefaultLinuxPkgThreshold = linuxpkg.DefaultThreshold
 	// DefaultPeelThreshold mirrors peeler.DefaultThreshold.
 	DefaultPeelThreshold = peeler.DefaultThreshold
+	// DefaultArchiveThreshold mirrors archive.DefaultThreshold.
+	DefaultArchiveThreshold = archive.DefaultThreshold
+	// DefaultCHMThreshold mirrors chm.DefaultThreshold.
+	DefaultCHMThreshold = chm.DefaultThreshold
 )
 
 // TruncationMarker is appended to any string that was cut short. Blob-shaped
@@ -498,6 +507,30 @@ func isoBreached(i *iso.Result, fallback int) bool {
 	return i != nil && i.Skipped == "" && i.Score >= isoThresholdFor(i, fallback)
 }
 
+// LinuxPkgBreach returns the scan results whose Linux-package score reached the
+// threshold.
+func (in Input) LinuxPkgBreach(threshold int) []scanner.ScanResult {
+	var out []scanner.ScanResult
+	for _, r := range in.Results {
+		if linuxPkgBreached(r.LinuxPkg, threshold) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func linuxPkgThresholdFor(p *linuxpkg.Result, fallback int) int {
+	if p != nil && p.Threshold > 0 {
+		return p.Threshold
+	}
+	return fallback
+}
+
+// linuxPkgBreached is the single definition of "the Linux-package detector fired".
+func linuxPkgBreached(p *linuxpkg.Result, fallback int) bool {
+	return p != nil && p.Skipped == "" && p.Score >= linuxPkgThresholdFor(p, fallback)
+}
+
 // PeelBreach returns the scan results whose peeler score reached the threshold.
 func (in Input) PeelBreach(threshold int) []scanner.ScanResult {
 	var out []scanner.ScanResult
@@ -519,6 +552,53 @@ func peelThresholdFor(p *peeler.Result, fallback int) int {
 // peelBreached is the single definition of "the obfuscation-chain peeler fired".
 func peelBreached(p *peeler.Result, fallback int) bool {
 	return p != nil && p.Skipped == "" && p.Score >= peelThresholdFor(p, fallback)
+}
+
+// ArchiveBreach returns the scan results whose archive score reached the
+// threshold.
+func (in Input) ArchiveBreach(threshold int) []scanner.ScanResult {
+	var out []scanner.ScanResult
+	for _, r := range in.Results {
+		if archiveBreached(r.Archive, threshold) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func archiveThresholdFor(a *archive.Result, fallback int) int {
+	if a != nil && a.Threshold > 0 {
+		return a.Threshold
+	}
+	return fallback
+}
+
+// archiveBreached is the single definition of "the archive detector fired".
+func archiveBreached(a *archive.Result, fallback int) bool {
+	return a != nil && a.Skipped == "" && a.Score >= archiveThresholdFor(a, fallback)
+}
+
+// CHMBreach returns the scan results whose CHM score reached the threshold.
+func (in Input) CHMBreach(threshold int) []scanner.ScanResult {
+	var out []scanner.ScanResult
+	for _, r := range in.Results {
+		if chmBreached(r.CHM, threshold) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func chmThresholdFor(c *chm.Result, fallback int) int {
+	if c != nil && c.Threshold > 0 {
+		return c.Threshold
+	}
+	return fallback
+}
+
+// chmBreached is the single definition of "the CHM detector fired".
+func chmBreached(c *chm.Result, fallback int) bool {
+	return c != nil && c.Skipped == "" && c.Score >= chmThresholdFor(c, fallback)
 }
 
 func stegoThresholdFor(s *stego.Result, fallback int) int {
@@ -582,7 +662,10 @@ type config struct {
 	oleThreshold       int
 	pdfThreshold       int
 	isoThreshold       int
+	linuxPkgThreshold  int
 	peelThreshold      int
+	archiveThreshold   int
+	chmThreshold       int
 	stat               StatFunc
 	now                func() time.Time
 
@@ -677,8 +760,17 @@ func WithPDFThreshold(n int) Option { return func(c *config) { c.pdfThreshold = 
 // WithISOThreshold records which threshold the ISO detector ran at.
 func WithISOThreshold(n int) Option { return func(c *config) { c.isoThreshold = n } }
 
+// WithLinuxPkgThreshold records which threshold the Linux-package detector ran at.
+func WithLinuxPkgThreshold(n int) Option { return func(c *config) { c.linuxPkgThreshold = n } }
+
 // WithPeelThreshold records which threshold the obfuscation-chain peeler ran at.
 func WithPeelThreshold(n int) Option { return func(c *config) { c.peelThreshold = n } }
+
+// WithArchiveThreshold records which threshold the archive detector ran at.
+func WithArchiveThreshold(n int) Option { return func(c *config) { c.archiveThreshold = n } }
+
+// WithCHMThreshold records which threshold the CHM detector ran at.
+func WithCHMThreshold(n int) Option { return func(c *config) { c.chmThreshold = n } }
 
 // WithStatFunc overrides how file sizes are resolved (os.Stat by default).
 func WithStatFunc(f StatFunc) Option { return func(c *config) { c.stat = f } }
@@ -744,7 +836,10 @@ func defaultConfig() config {
 		oleThreshold:        DefaultOLEThreshold,
 		pdfThreshold:        DefaultPDFThreshold,
 		isoThreshold:        DefaultISOThreshold,
+		linuxPkgThreshold:   DefaultLinuxPkgThreshold,
 		peelThreshold:       DefaultPeelThreshold,
+		archiveThreshold:    DefaultArchiveThreshold,
+		chmThreshold:        DefaultCHMThreshold,
 		stat:                osFileSize,
 		now:                 time.Now,
 
@@ -808,8 +903,17 @@ func (c *config) normalize() {
 	if c.isoThreshold <= 0 {
 		c.isoThreshold = DefaultISOThreshold
 	}
+	if c.linuxPkgThreshold <= 0 {
+		c.linuxPkgThreshold = DefaultLinuxPkgThreshold
+	}
 	if c.peelThreshold <= 0 {
 		c.peelThreshold = DefaultPeelThreshold
+	}
+	if c.archiveThreshold <= 0 {
+		c.archiveThreshold = DefaultArchiveThreshold
+	}
+	if c.chmThreshold <= 0 {
+		c.chmThreshold = DefaultCHMThreshold
 	}
 	if c.stat == nil {
 		c.stat = osFileSize

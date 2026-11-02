@@ -10,9 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cau-edr/cau/internal/intel"
 	"github.com/cau-edr/cau/internal/peeler"
+	"github.com/cau-edr/cau/scanner/archive"
+	"github.com/cau-edr/cau/scanner/chm"
 	"github.com/cau-edr/cau/scanner/encchain"
 	"github.com/cau-edr/cau/scanner/iso"
+	"github.com/cau-edr/cau/scanner/linuxpkg"
 	"github.com/cau-edr/cau/scanner/lnk"
 	"github.com/cau-edr/cau/scanner/ole"
 	"github.com/cau-edr/cau/scanner/pdf"
@@ -103,11 +107,36 @@ type Engine struct {
 	// ISOThreshold overrides iso.Threshold (0 = package default).
 	ISOThreshold int
 
+	// LinuxPkg enables the Linux software-package detector (.deb/.rpm/Arch/
+	// Flatpak/AppImage/PKGBUILD install scripts). Its result rides on
+	// ScanResult.LinuxPkg.
+	LinuxPkg bool
+	// LinuxPkgThreshold overrides linuxpkg.Threshold (0 = package default).
+	LinuxPkgThreshold int
+	// Intel is the abuse-intelligence feed. When non-nil, indicators found in a
+	// package's install scripts are matched against it. nil disables feed
+	// matching (the offline default).
+	Intel *intel.Feed
+
 	// Peel enables the obfuscation-chain peeler (NOVEL-012). Its result rides
 	// on ScanResult.Peel.
 	Peel bool
 	// PeelThreshold overrides peeler.Threshold (0 = package default).
 	PeelThreshold int
+
+	// Archive enables the compressed-container detector (ZIP/TAR/gzip and
+	// tar.gz: decompression bombs, Zip-Slip, lure and payload members). Its
+	// result rides on ScanResult.Archive.
+	Archive bool
+	// ArchiveThreshold overrides archive.Threshold (0 = package default).
+	ArchiveThreshold int
+
+	// CHM enables the Compiled HTML Help (CHM/ITSS) detector (embedded
+	// executables, shortcuts and dangerous scripts). Its result rides on
+	// ScanResult.CHM.
+	CHM bool
+	// CHMThreshold overrides chm.Threshold (0 = package default).
+	CHMThreshold int
 
 	// NoFusion leaves ScanResult.Fusion nil. Fusion is on by default because
 	// it costs nothing: it is a view over results already computed.
@@ -187,11 +216,32 @@ func (e *Engine) isoThreshold() int {
 	return iso.Threshold
 }
 
+func (e *Engine) linuxPkgThreshold() int {
+	if e.LinuxPkgThreshold > 0 {
+		return e.LinuxPkgThreshold
+	}
+	return linuxpkg.Threshold
+}
+
 func (e *Engine) peelThreshold() int {
 	if e.PeelThreshold > 0 {
 		return e.PeelThreshold
 	}
 	return peeler.Threshold
+}
+
+func (e *Engine) archiveThreshold() int {
+	if e.ArchiveThreshold > 0 {
+		return e.ArchiveThreshold
+	}
+	return archive.Threshold
+}
+
+func (e *Engine) chmThreshold() int {
+	if e.CHMThreshold > 0 {
+		return e.CHMThreshold
+	}
+	return chm.Threshold
 }
 
 // ScanFile runs every configured detector over one file. The heuristic result
@@ -422,6 +472,22 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 		}
 	}
 
+	// ── Linux software package (.deb/.rpm/Arch/Flatpak/AppImage) ──
+	if e.LinuxPkg {
+		if data != nil {
+			res.LinuxPkg = linuxpkg.Analyze(data, linuxpkg.Options{Threshold: e.linuxPkgThreshold(), Intel: e.Intel})
+			res.LinuxPkg.FilePath = path
+		} else {
+			res.LinuxPkg = &linuxpkg.Result{
+				FilePath:  path,
+				Size:      int(fi.Size()),
+				Threshold: e.linuxPkgThreshold(),
+				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+					fi.Size(), e.maxInMemory()),
+			}
+		}
+	}
+
 	// ── obfuscation-chain peeler ───────────────────────
 	if e.Peel {
 		if data != nil {
@@ -434,6 +500,38 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 				FilePath:  path,
 				Size:      int(fi.Size()),
 				Threshold: e.peelThreshold(),
+				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+					fi.Size(), e.maxInMemory()),
+			}
+		}
+	}
+
+	// ── compressed container (archive) ─────────────────
+	if e.Archive {
+		if data != nil {
+			res.Archive = archive.Analyze(data, archive.Options{Threshold: e.archiveThreshold()})
+			res.Archive.FilePath = path
+		} else {
+			res.Archive = &archive.Result{
+				FilePath:  path,
+				Size:      int(fi.Size()),
+				Threshold: e.archiveThreshold(),
+				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+					fi.Size(), e.maxInMemory()),
+			}
+		}
+	}
+
+	// ── Compiled HTML Help (CHM) ───────────────────────
+	if e.CHM {
+		if data != nil {
+			res.CHM = chm.Analyze(data, chm.Options{Threshold: e.chmThreshold()})
+			res.CHM.FilePath = path
+		} else {
+			res.CHM = &chm.Result{
+				FilePath:  path,
+				Size:      int(fi.Size()),
+				Threshold: e.chmThreshold(),
 				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
 					fi.Size(), e.maxInMemory()),
 			}

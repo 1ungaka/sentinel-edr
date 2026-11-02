@@ -100,6 +100,31 @@ var catalog = map[string]Technique{
 	"T1564":     {"T1564", "Hide Artifacts", []string{DefenseEvasion}},
 	"T1620":     {"T1620", "Reflective Code Loading", []string{DefenseEvasion}},
 	"T1622":     {"T1622", "Debugger Evasion", []string{DefenseEvasion, Discovery}},
+
+	// Techniques carried by the Linux-package / config / process detectors
+	// (linuxpkg, procscan) and the UEFI firmware pass. Grouped here rather than
+	// sorted in so the additive block is easy to review. Parent techniques are
+	// included so the catalog stays closed under Parent() (see TestCatalogConsistent).
+	"T1053":     {"T1053", "Scheduled Task/Job", []string{Execution, Persistence, PrivEsc}},
+	"T1098":     {"T1098", "Account Manipulation", []string{Persistence}},
+	"T1195":     {"T1195", "Supply Chain Compromise", []string{InitialAccess}},
+	"T1222":     {"T1222", "File and Directory Permissions Modification", []string{DefenseEvasion}},
+	"T1542":     {"T1542", "Pre-OS Boot", []string{Persistence, DefenseEvasion}},
+	"T1546":     {"T1546", "Event Triggered Execution", []string{Persistence, PrivEsc}},
+	"T1548":     {"T1548", "Abuse Elevation Control Mechanism", []string{PrivEsc, DefenseEvasion}},
+	"T1562":     {"T1562", "Impair Defenses", []string{DefenseEvasion}},
+	"T1053.003": {"T1053.003", "Scheduled Task/Job: Cron", []string{Execution, Persistence, PrivEsc}},
+	"T1098.004": {"T1098.004", "Account Manipulation: SSH Authorized Keys", []string{Persistence}},
+	"T1195.002": {"T1195.002", "Supply Chain Compromise: Compromise Software Supply Chain", []string{InitialAccess}},
+	"T1222.002": {"T1222.002", "File and Directory Permissions Modification: Linux and Mac", []string{DefenseEvasion}},
+	"T1496":     {"T1496", "Resource Hijacking", []string{Impact}},
+	"T1542.001": {"T1542.001", "Pre-OS Boot: System Firmware", []string{Persistence, DefenseEvasion}},
+	"T1543.002": {"T1543.002", "Create or Modify System Process: Systemd Service", []string{Persistence, PrivEsc}},
+	"T1546.004": {"T1546.004", "Event Triggered Execution: Unix Shell Configuration Modification", []string{Persistence, PrivEsc}},
+	"T1547.013": {"T1547.013", "Boot or Logon Autostart Execution: XDG Autostart Entries", []string{Persistence, PrivEsc}},
+	"T1548.003": {"T1548.003", "Abuse Elevation Control Mechanism: Sudo and Sudo Caching", []string{PrivEsc, DefenseEvasion}},
+	"T1562.001": {"T1562.001", "Impair Defenses: Disable or Modify Tools", []string{DefenseEvasion}},
+	"T1571":     {"T1571", "Non-Standard Port", []string{C2}},
 }
 
 var idRe = regexp.MustCompile(`^T[0-9]{4}(\.[0-9]{3})?$`)

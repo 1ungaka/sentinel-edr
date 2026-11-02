@@ -61,16 +61,60 @@ not in the manifest, it is not in the corpus.
   Benign samples should come from a verifiable build: "clean" must be known,
   not assumed.
 
-### Real samples
+### Specificity and recall are measured separately
 
-Never commit live malware. Real corpora live outside the repository (or in an
-encrypted, access-controlled store) and are referenced by a manifest that
-*is* committed, with `root` pointing at the local checkout. Reference every
-sample by SHA-256 and a retrieval URL so anyone with access can rebuild the
-corpus byte-for-byte, keep samples non-executable on disk, and scan from an
-isolated VM. The harness only reads bytes; it never executes anything. Add
-benign samples in the proportion you expect in production: a corpus that is
-95 % malware makes every detector look precise.
+They are different questions, measured on different corpora, and conflating
+them is the most common way a scanner flatters itself:
+
+- **Specificity** — the false-positive side, and now the near-miss margin — is
+  measured on a large **clean** population: a real machine's files, none of
+  them malware. The published figures (0.020 % encoded-executable hits over
+  159,339 files, the stego and static rates) all come from scanning a Kali
+  install. `scripts/clean-manifest.sh <root>` labels a directory tree as a
+  `clean` corpus so `cau eval` produces those numbers, including the near-miss
+  histogram, over the real population. A clean corpus says nothing about what
+  the engine *catches*.
+
+- **Recall** — the miss rate — is measured on a **held-out** corpus of real
+  malware the detectors were **not** authored from. Measuring recall on the
+  samples the rules were written to match (as the `smoke` corpus is, by
+  construction) is the corpus-scale version of the failure the per-rule
+  mutation harness (`scanner/robustness_test.go`) exists to catch: a rule that
+  passes on the sample it was written from. A recall number is only honest
+  against bytes the rules have never seen.
+
+### The held-out recall corpus
+
+`corpus/heldout` holds that set. Its sample identities and threat intel live
+in an **encrypted** database, `corpus/heldout/hashes.db` (AES-256-GCM, a
+PBKDF2-derived key): the hash list is sensitive and a standing temptation to
+tune against, so only the ciphertext is committed, never the hashes or the
+samples. `cau heldout` manages it:
+
+```sh
+export CAU_HELDOUT_KEY=...                 # or --key-file
+cau heldout init
+cau heldout pull --source full             # full MalwareBazaar DB + intel, resumable
+cau heldout list
+```
+
+`pull` downloads the MalwareBazaar CSV export (hashes plus intel: signature,
+tags, file type, first-seen, reporter) and ingests it incrementally,
+checkpointing the encrypted database every `--batch` new records, resuming an
+interrupted download with an HTTP Range request, and skipping hashes already
+present — so it is fast, and a crashed run self-recovers rather than starting
+over. `scripts/fetch-heldout.sh` then downloads the sample bytes by SHA-256,
+verifies each hash, keeps the files non-executable, and writes the live scan
+manifest. `make eval-recall` runs the corpus when it is present. See
+[`corpus/heldout/README.md`](../corpus/heldout/README.md); the one rule that
+keeps the number meaningful is never to author or tune a detector against a
+sample in it.
+
+Never commit live malware. The harness only reads bytes; it never executes
+anything. Keep samples non-executable on disk and scan from an isolated VM.
+Add benign samples in the proportion you expect in production if you want a
+precision number too: a corpus that is 95 % malware makes every detector look
+precise.
 
 ### The smoke corpus
 
@@ -105,6 +149,23 @@ Signals are the unit of attribution. A detector that returns SUSPICIOUS
 without naming a rule contributes to the confusion matrix but nothing to the
 triage lists, and the composite "engine" detector reports per-detector
 attribution on top of the overall verdict.
+
+### Near misses
+
+The report also carries a `near_miss` section: for each scored detector
+(`heuristic`, `static`, `stego`, `encchain`), how close the benign samples
+came to firing without crossing the line. A clean corpus can only ever count
+the false positives it already has; it cannot, on its own, say how close it
+came to more. The near-miss metric answers that — the count of benign files
+the detector scored but did not fire on, the width of the "near" band (a
+quarter of the threshold), how many fell inside it, the single closest margin,
+and the full margin histogram. A detector whose nearest benign file sits one
+point under the threshold is one tuning change away from a false-positive
+storm; one whose nearest benign file is far below has headroom. Each scored
+bridge detector records its sub-threshold score for every file (see
+`internal/eval/scannerbridge`), so this is measured, not estimated. Binary
+detectors (`hash`, `yara`, `fusion`) have no score and no margin, so they do
+not appear.
 
 ## Diff and gate
 

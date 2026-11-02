@@ -2,6 +2,10 @@
 
 ```
 cau scan      [flags] [path ...]     scan files and directories
+cau ps        [flags]                scan the live process table over /proc (read-only)
+cau installed [flags]                audit already-installed packages' maintainer scripts
+cau firmware  [flags] <image>        parse a UEFI firmware image: inventory, FV integrity, implants
+cau feed      <subcommand> [flags]   abuse-intel feed: list / check / update
 cau hash      [flags] <path ...>     print SHA-256, imphash, TLSH and ssdeep digests
 cau cluster   [flags] <path ...>     group PE and ELF files by import-table similarity
 cau add-hash  [flags]                append a hash signature to the database
@@ -59,6 +63,9 @@ directories never.
 | `--no-ole` | off | disable the OLE compound-file (VBA macro) pass |
 | `--no-pdf` | off | disable the PDF malicious-document pass |
 | `--no-iso` | off | disable the ISO 9660 malicious-container pass |
+| `--no-pkg` | off | disable the Linux software-package pass (.deb/.rpm/Arch/Flatpak/AppImage/Docker/Snap install scripts) |
+| `--no-archive` | off | disable the compressed-container pass (ZIP/TAR/gzip: bombs, Zip-Slip, lure/payload members) |
+| `--no-chm` | off | disable the Compiled HTML Help (CHM) pass (embedded executables, shortcuts, dangerous scripts) |
 | `--no-peel` | off | disable the obfuscation-chain peeler (NOVEL-012) |
 | `--no-fusion` | off | disable the fusion lattice |
 | `--heuristic-threshold N` | 7 | heuristic score at which a file is SUSPICIOUS |
@@ -69,6 +76,10 @@ directories never.
 | `--ole-threshold N` | 8 | OLE macro score at which a file is SUSPICIOUS |
 | `--pdf-threshold N` | 8 | PDF document score at which a file is SUSPICIOUS |
 | `--iso-threshold N` | 8 | ISO container score at which a file is SUSPICIOUS |
+| `--pkg-threshold N` | 8 | Linux-package install-script score at which a file is SUSPICIOUS |
+| `--archive-threshold N` | 8 | compressed-container score at which a file is SUSPICIOUS |
+| `--chm-threshold N` | 8 | CHM help-file score at which a file is SUSPICIOUS |
+| `--feed <path>` | search path | abuse-intel feed to match indicators against (empty = none; see `cau feed`) |
 | `--peel-threshold N` | 50 | obfuscation-chain score at which a file is SUSPICIOUS (a depth-2 revealed chain scores 60) |
 | `--yara-timeout D` | 30s | per-file YARA budget; a timed-out scan keeps the matches it found and records a warning |
 | `--max-in-memory MiB` | 64 | larger files are streamed: hashing streams, YARA memory-maps, the heuristic, static and stego passes are skipped with the reason recorded |
@@ -144,6 +155,136 @@ levels are supersets of each other:
 | `malicious` | a hash-signature hit or a YARA match |
 | `heuristic` | ... or a heuristic, static or stego score at its threshold, or a fused verdict reached by corroboration |
 | `clean` | ... or any sub-threshold heuristic or static observation; the run must be spotless |
+
+## cau ps
+
+A point-in-time threat scan of the **live process table**, read entirely from
+`/proc` (`internal/procscan`). It is strictly **read-only** — it never injects,
+ptraces, signals, or stops a process — and complements the file scanner: a
+dropper that already decoded and executed in memory leaves nothing on disk for
+`cau scan`, but its process is still running.
+
+```
+cau ps                       # scan every process, text report
+cau ps --format json         # machine-readable
+sudo cau ps                  # full visibility into other users' processes
+```
+
+It flags processes a benign system would not be running:
+
+- **Fileless / RAM-only execution** — a `memfd:` backing, a deleted executable,
+  or an exe under `/dev/shm` (T1620).
+- **Name masquerading / PID hijacking** — a fake `btop`, a `/tmp/sshd`, a
+  `[kworker]` bracket-name with a real userspace exe (T1036.004 / T1036.005).
+- **Library-injection hooks** — a `.so` mapped from a world-writable, hidden, or
+  deleted path, or a suspicious `LD_PRELOAD` / `LD_LIBRARY_PATH` (T1574.006).
+- **Malicious command lines** — reverse shells, `curl|bash`, droppers (it reuses
+  the `linuxpkg` command-line vectors).
+- **Processes under ptrace** (T1055.008).
+
+Without root, other users' processes are only partly readable; those fields are
+skipped and counted as *unreadable* rather than failing the scan.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--format <fmt>` | `text` | `text` or `json` |
+| `--threshold N` | 8 | per-process score at which a process is flagged |
+| `--feed <path>` | search path | abuse-intel feed to match process command lines against (empty = none) |
+| `--proc-root <dir>` | `/proc` | override the procfs root (testing) |
+
+Exit codes: `0` nothing flagged, `1` one or more processes flagged, `4` usage.
+(The procscan techniques are a **runtime** surface and are not yet part of the
+`cau coverage` ATT&CK matrix, which today ingests the file-scanner detectors.)
+
+## cau installed
+
+Audits the maintainer/install scripts of **already-installed** packages, in
+place, from the package managers' on-disk metadata — offline and read-only. It
+flags any package whose scripts carry the same tradecraft `cau scan` looks for
+(curl-into-shell, reverse shells, SSH-key backdoors, persistence) or that
+reference an abuse-intel indicator. This catches a supply-chain compromise that
+already landed, without re-downloading anything.
+
+```
+cau installed                 # audit every installed package
+cau installed --format json
+```
+
+It covers **dpkg** (`/var/lib/dpkg/info`) and **pacman**
+(`/var/lib/pacman/local`). RPM keeps its scriptlets inside the rpmdb rather than
+as loose files, so it is reported as a **gap**, not silently skipped.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--format <fmt>` | `text` | `text` or `json` |
+| `--threshold N` | 8 | per-package score at which a package is flagged |
+| `--feed <path>` | search path | abuse-intel feed to match against |
+| `--dpkg-info <dir>` | `/var/lib/dpkg/info` | override the dpkg metadata dir (testing) |
+| `--pacman-local <dir>` | `/var/lib/pacman/local` | override the pacman metadata dir (testing) |
+
+Exit codes: `0` nothing flagged, `1` one or more packages flagged, `3` failed,
+`4` usage.
+
+## cau firmware
+
+Parses a **UEFI firmware image** — its Firmware Volumes and the FFS files and
+sections inside them — and reports a module inventory (GUID, type, UI name,
+whether it carries a PE), the FV header's checksum integrity, and any module
+GUID on an operator-supplied implant blocklist. This is the Phase-8 firmware
+wedge: firmware persistence survives disk wipes, and no mainstream EDR publishes
+its firmware layer.
+
+```
+cau firmware ./bios.rom
+cau firmware ./capsule.bin --implants known-implants.txt --format json
+```
+
+It is **honest about its boundary**: the engine ships **no implant truth set**,
+because firmware is overwhelmingly legitimate PEI/DXE/SMM drivers and scoring
+module shapes would be a false-positive machine. So only two things score —
+`uefi.volume-checksum-invalid` (an FV header whose 16-bit checksum does not
+validate, a genuine tamper/hand-built tell) and `uefi.known-implant-guid` (a
+module matching your `--implants` blocklist). Everything else is inventory.
+Module bodies are not disassembled, compressed/GUIDed sections are not
+decompressed, and NVRAM, signatures and boot policy are not analysed. ATT&CK
+T1542.001 (System Firmware).
+
+The `--implants` file is one `guid` or `guid|name` per line, `#` comments.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--format <fmt>` | `text` | `text` or `json` |
+| `--threshold N` | 8 | score at which the image is reported suspicious |
+| `--implants <file>` | none | implant-GUID blocklist (empty/omitted = structural inventory only) |
+
+Exit codes: `0` clean, `1` suspicious, `3` the run failed, `4` usage. (This is a
+standalone command; UEFI is not part of the per-file `cau scan`.)
+
+## cau feed
+
+The abuse-intelligence feed: known-bad IPs, CIDRs, domains, URLs and file hashes
+that `cau scan`, `cau installed` and `cau ps` match references against. It is
+**hybrid** — a plain offline file that works with no network, refreshed on
+demand. `update` is the only subcommand that ever touches the network, and only
+with an explicit `--url`.
+
+```
+cau feed list                         # how many indicators of each kind are loaded
+cau feed check 203.0.113.5 evil.test  # test indicators against the feed (exit 1 on a match)
+cau feed update --from local.txt      # merge a local file, no network
+cau feed update --url https://…       # opt-in fetch and merge
+```
+
+`update` flags: `--from <file>` (merge a local file), `--url <url>` (opt-in
+network fetch), `--replace` (replace the cache instead of merging), `--feed
+<path>` (cache file to write; default `$CAU_ABUSE_FEED`, then
+`./signatures/abuse-feed.txt`, then the system share dirs).
+
+Feed file format (one indicator per line, `#` comments): `value` (auto-classified
+by shape), `value|label`, or `type|value|label` where type is
+`ip|cidr|domain|url|hash`.
+
+Exit codes: `0` ok, `1` `check` found a match, `3` failed, `4` usage.
 
 ## cau hash
 

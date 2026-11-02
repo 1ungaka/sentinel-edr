@@ -248,6 +248,7 @@ func (r *Runner) scanOne(s Sample) SampleResult {
 
 	res.Scored = true
 	res.Signals = f.Signals
+	res.Scores = f.Scores
 	res.Detectors = f.DetectorNames()
 	res.Detected = f.Detected()
 	res.Verdict = f.Verdict

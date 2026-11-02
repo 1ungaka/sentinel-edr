@@ -45,10 +45,13 @@ A roll-up of the OSS engine as it stands; the phase sections below hold the
 detail and the open items. Everything here is measured and gated in CI
 (`make ci`: vet, race tests, rule lint, coverage gate, eval gate).
 
-**Detectors (ten, single-pass, plus a fusion lattice):**
+**Detectors (thirteen, single-pass, plus a fusion lattice):**
 - Hash signatures, YARA (in-process libyara), string/API heuristics.
-- Static structure — own bounds-checked PE and ELF parsers, entropy, packer,
-  overlay, Authenticode, TLSH/ssdeep/imphash similarity.
+- Static structure — own bounds-checked PE, ELF and Mach-O parsers, entropy,
+  packer, overlay, Authenticode, TLSH/ssdeep/imphash/telfhash similarity. ELF
+  deep-resolution (`.init_array` reloc targets, symbol versions, raw-syscall
+  interposer) and Mach-O (thin/universal, segments, dylibs, code-signature and
+  encryption presence) landed 2026-11-02.
 - Invisible-codepoint (stego) pass.
 - Encoded-executable pass (`scanner/encchain`) — base64/hex layers decoding to
   a PE/ELF header; measured 0.020% FP over 159,339 benign files.
@@ -64,15 +67,36 @@ detail and the open items. Everything here is measured and gated in CI
 - ISO container pass (`scanner/iso`) — bounded, cycle-safe ISO 9660 (+Joliet)
   directory enumeration reading the mark-of-the-web-bypass smuggling shape
   (a .lnk paired with an executable payload, hidden payloads, autorun.inf).
+- Linux software-package pass (`scanner/linuxpkg`, 2026-11-02) — bounded,
+  stdlib-only, detection-only reading of the root-run install-time scripts in
+  .deb / .rpm / Arch .pkg.tar + PKGBUILD / Flatpak / AppImage / Docker-OCI
+  (`docker save`) / Snap packages, generic .zip/.tar installers, executable
+  configs (.desktop/XDG/systemd/shell-rc) and APT/nala sources. Scores
+  supply-chain tradecraft (curl-into-shell, reverse shell, dropper, persistence,
+  sandbox escape; T1195.002 and family). `--no-pkg` / `--pkg-threshold`.
+- Archive pass (`scanner/archive`, 2026-11-02) — bounded ZIP/TAR/gzip (+tar.gz
+  nesting) container-hygiene analysis: decompression bombs (ratio + absolute
+  caps), Zip-Slip/path-traversal members, double-extension lures, disguised
+  single-executable payloads, encrypted and nested members. Never writes or
+  executes; `--no-archive` / `--archive-threshold`. In the coverage matrix as the
+  `archive` source (T1036 / T1204.002 / T1027, no new techniques).
+- CHM pass (`scanner/chm`, 2026-11-02) — walks the uncompressed ITSF/ITSP/PMGL
+  directory of a Compiled HTML Help file and scores embedded payloads a help file
+  has no reason to carry: a lone embedded PE, multiple executables, an embedded
+  .lnk, or a dangerous script (.hta/.vbs/.ps1/.bat/.cmd/.wsf, not plain .js).
+  T1204.002 / T1059. `--no-chm` / `--chm-threshold`. Honest boundary: the
+  LZX content section is not decompressed in v1 ("present but not inspected").
 - Fusion lattice — corroboration of sub-threshold detectors; never lowers a
-  verdict.
+  verdict. The engine verdict now uses the **hybrid** `FuseChained`: the flat
+  weighted sum plus bounded, capped attack-path chaining (packed-and-injects,
+  document-dropper, peel-revealed), added 2026-11-02.
 
 **Program surfaces:**
 - ATT&CK coverage matrix derived from the content, gated against
   `baselines/attack-coverage.txt`; text / JSON / Navigator / SARIF output.
   Covered techniques are recorded; gaps are published, never padded.
 - YARA rule linter (`cau rules lint`), `cau rules list`.
-- Output: text, versioned JSON (schema 1.4.0), SARIF 2.1.0, OCSF 1.3.0.
+- Output: text, versioned JSON (schema 1.10.0), SARIF 2.1.0, OCSF 1.3.0.
 - Evaluation harness with a committed smoke corpus and regression gates.
 - Threat-intel intake (`cau intake`, `internal/intake`): STIX 2.1 / MISP /
   MalwareBazaar / LOLDrivers parsers that feed the hash signature database from
@@ -80,6 +104,23 @@ detail and the open items. Everything here is measured and gated in CI
 - Response primitives: an integrity-sealed quarantine vault
   (`cau quarantine`, XOR-neutralized at rest, fail-closed restore) and
   decoy/canary files with a baseline tamper check (`cau canary`).
+- Live process scan (`cau ps`, `internal/procscan`, 2026-11-02) — a read-only,
+  `/proc`-only point-in-time scan of the running process table for what a file
+  scan structurally misses: fileless/RAM-only execution (memfd, deleted binary,
+  `/dev/shm`), name masquerading / PID hijacking, library-injection hooks, and
+  reverse-shell command lines. Never injects, ptraces, or signals. Its
+  techniques (T1620, T1036.004/005, T1574.006, T1055.008) are a runtime surface,
+  not yet in the `cau coverage` file-scanner matrix.
+- Installed-package audit (`cau installed`, 2026-11-02) — audits the
+  maintainer/install scripts of already-installed packages in place from dpkg and
+  pacman on-disk metadata (offline, read-only), flagging the same tradecraft as the
+  `linuxpkg` pass and any abuse-intel indicator reference. RPM is reported as a gap
+  (scriptlets live in the rpmdb, not loose files).
+- Abuse-intel feed (`cau feed`, `internal/intel`, 2026-11-02) — a hybrid offline
+  feed of known-bad IPs/CIDRs/domains/URLs/hashes that `cau scan` (`--feed`),
+  `cau installed` and `cau ps` match references against. `list` / `check` /
+  `update`; `update` is the only networked action and only with an explicit
+  `--url`, otherwise a plain offline file.
 - Obfuscation-chain peeler (`cau peel`, and a `peeler` detector + fusion source
   wired into `cau scan`): a bounded, budget-walled tree unwrap (base64/base32/
   hex, gzip/zlib/flate/bzip2) where depth is the signal; `peel-exhausted` is a
@@ -97,9 +138,14 @@ detail and the open items. Everything here is measured and gated in CI
 - Detection-robustness harnesses for all four content detectors; they found and
   closed two case-sensitivity gaps (wannacry, generic-ransomware extensions).
 
-**ATT&CK coverage of shipped content:** the engine now covers 46 techniques
-with content, and the expectation (`baselines/attack-coverage.txt`) carries no
-hard `gap` rows left — the document/archive detectors closed the last ones. The
+**ATT&CK coverage of shipped content:** the engine now covers 59 techniques
+with content (up from 46 after the Linux software-package detector landed
+2026-11-02: T1195.002, T1547.013, T1496, T1059.004, T1562.001, T1140,
+T1098.004, T1548.003, T1222.002, T1543.002, T1053.003, T1546.004, T1105,
+T1571, T1027, T1070, and T1542.001 System Firmware from the UEFI scan), and the
+expectation (`baselines/attack-coverage.txt`)
+carries no hard `gap` rows left — the document/archive detectors closed the
+last ones. The
 honest incompleteness is now carried by **`partial`** rows: T1057 and T1082
 (discovery via string/import patterns only) and T1564.001 (the ISO-container
 hidden-payload facet ships; host-filesystem hidden executables remain a Phase 11
@@ -114,8 +160,10 @@ parsers — STIX / MISP / MalwareBazaar / LOLDrivers — and `cau intake` shippe
 bindings (Phase 4), the ML ladder (Phase 5), the
 layer-peeler's follow-ons (the entropy/structural estimator and emulation
 fallback — the bounded tree core and its scan-path wiring shipped 2026-11-02)
-and the other NOVEL-012 items (Phase 10 / Phase 12), firmware and
-the broader format/plane sweeps (Phases 8-9), and the entire console/sensor
+and the other NOVEL-012 items (Phase 10 / Phase 12), the deeper firmware
+surfaces (Phase 8 — the `cau firmware` FV/FFS inventory + tamper/implant check
+shipped 2026-11-02; option-ROM/WPBT/boot-order/efivarfs analysis and
+section-level YARA remain), and the entire console/sensor
 control plane (proprietary).
 
 ---
@@ -659,10 +707,23 @@ part of their estate (LoJax, MoonBounce, BlackLotus), and no major EDR publishes
 firmware-scanning layer. This is a wedge, not a parity bet — and honesty about boundaries
 is part of the deliverable.
 
-- [ ] `internal/uefi` — firmware-volume parser (UEFITool-style FFS/sections; as an
-  in-tree Go port or a sidecar binary over the Phase 5 gRPC runtime). Every executable
-  section feeds the same YARA ruleset; reports are bounded structured JSON under the
-  Phase 3 context-budget rules.
+**First surface shipped 2026-11-02** as `scanner/uefi` + the `cau firmware` command
+(`cau firmware [--format text|json] [--threshold N] [--implants <file>] <image>`):
+it parses a UEFI image's Firmware Volumes and FFS files/sections and reports a module
+inventory (GUID, type, UI name, has-PE), the FV header checksum integrity, and
+implant-blocklist matches. It is deliberately conservative and ships **no implant truth
+set** — firmware is overwhelmingly legitimate PEI/DXE/SMM drivers, so only two classes
+score: `uefi.volume-checksum-invalid` (a tampered/hand-built FV header, weight 3) and
+`uefi.known-implant-guid` (an operator `--implants` blocklist match, weight 8). Everything
+else is inventory; module bodies are not disassembled, compressed/GUIDed sections are not
+decompressed, and NVRAM/signatures/boot-policy are not analysed. Adds T1542.001 (System
+Firmware) to the coverage matrix (58 → 59 on the baseline re-record). UEFI is its own
+command, not part of the per-file `cau scan`. The remaining Phase 8 items below stay open.
+
+- [~] `scanner/uefi` — firmware-volume parser (UEFITool-style FFS/sections). **Core
+  shipped** (FV + FFS file/section parse, module inventory, FV checksum, implant
+  blocklist). Still open: feeding each executable section through the YARA ruleset and
+  decompressing GUIDed/compressed sections.
 - [ ] UEFI anomaly surfaces: option ROM inventory, WPBT/ACPI table scan (WPBT is a
   vendor-approved injection primitive), EFI boot-order/entry tampering (where BlackLotus
   lives), efivarfs read-only inventory, DBX/SBAT/MOK revocation state checked against
@@ -689,17 +750,43 @@ is part of the deliverable.
   segments, stripped section tables, interpreter and `RPATH` hijack, `dlsym`-resolving
   libc interposers, loader-only imports, kernel-module signature and `modinfo` state,
   malformed tables), ELF imports in the heuristics pass with a Kernel Rootkit category,
-  measured at 0 detections on 4,974 Kali ELF files. **Open**: `.init_array` target
-  resolution (needs relocations), symbol versions, syscall-stub templates, SSH/cron
-  tamper patterns and autostart paths (content, not parser), telfhash compatibility.
-  The pass is no longer "a PE-only engine behind a Linux CLI". GTFOBins/GTFOArgs intake is behavior content, not
+  measured at 0 detections on 4,974 Kali ELF files. **Deep-resolution shipped
+  2026-11-02** (`scanner/static/elf_reloc.go` + edits): `.init_array`/
+  `.preinit_array` constructor-pointer targets are resolved through the
+  relocations and a pointer landing outside executable code flags
+  `dynamic.init-array-outside-code`; symbol versions are read from
+  `.gnu.version_r`/`_d` (`dynamic.symbol-versions`, informational); a raw-syscall
+  libc interposer flags `dynamic.preload-interposer-syscall`; and real
+  **telfhash** (TLSH over the Trend Micro filtered symbol set) is computed, with
+  an honest note when the binary is below TLSH's 50-byte floor. **Still open**
+  (content, not parser): syscall-stub templates, SSH/cron tamper patterns and
+  autostart paths. The pass is no longer "a PE-only engine behind a Linux CLI".
+  GTFOBins/GTFOArgs intake is behavior content, not
   binary content — without this, the eBPF sensor (#Phase 7-7) is telemetry with no local
   verifier.
+- [x] Mach-O structural pass — **shipped 2026-11-02** as `scanner/static/macho.go`
+  (+ `macho_anomaly.go`, catalog `fmtMachO`): own bounds-checked parser for thin
+  and universal/fat images, 32- and 64-bit, both byte orders. Reads segments and
+  sections (permissions, entropy), linked dylibs and a dylib-set import hash,
+  `LC_RPATH`, the `LC_MAIN`/`LC_UNIXTHREAD` entry point, code-signature presence
+  (`LC_CODE_SIGNATURE`, unverified), encryption (`LC_ENCRYPTION_INFO` cryptid),
+  and symbol imports/exports. Anomaly classes (`macho.*`): universal, RWX and
+  high-entropy segments, writable-executable section, entry outside/non-exec
+  segment, executable stack, encrypted/packed region, insecure rpath/dylib path,
+  unsigned or unverified signature, overlay. Scanner result carries
+  `is_macho`/`macho`, surfaced through `internal/report` (static `is_macho` +
+  `macho` object; `telfhash`/`telfhash_note`/`syscall_stubs` on the `elf` object).
 - [~] Document & archive vectors: OLE (VBA, macro stomping, remote templates), PDF, LNK,
   CHM, ISO; nested-decompression budget with bomb caps. These are the top delivery paths.
-  **Four of the five formats shipped 2026-10-30** (LNK, OLE, PDF, ISO — detail below);
-  CHM is deferred by measure-or-don't-ship (needs LZX decompression), and the shared
-  nested-decompression bomb-cap budget is still open.
+  **All five document formats now ship** (LNK, OLE, PDF, ISO on 2026-10-30; CHM on
+  2026-11-02 — detail below). The shared
+  **nested-decompression bomb-cap budget shipped 2026-11-02** as `scanner/archive`
+  — bounded ZIP/TAR/gzip (+tar.gz) container-hygiene analysis (decompression bombs
+  via ratio + absolute caps, Zip-Slip/path-traversal, double-extension lures,
+  disguised single-executable and nested/encrypted members), wired into the engine,
+  fusion and all four reporters with `--no-archive` / `--archive-threshold`. In the
+  coverage matrix as the `archive` source (T1036 / T1204.002 / T1027 on already-covered
+  rows — no new techniques, count stays 58).
   **LNK shipped 2026-10-30** as `scanner/lnk` ([MS-SHLLINK] parser + detection, wired
   through the engine, fusion, ATT&CK coverage and all four reporters; `--no-lnk` /
   `--lnk-threshold`; adds coverage of T1204.002 and the T1059 family / T1027 from
@@ -716,11 +803,15 @@ is part of the deliverable.
   mark-of-the-web-bypass smuggling shape; `--no-iso` / `--iso-threshold`; adds coverage of
   T1091, takes T1564.001 to *partial* — the ISO-container hidden-payload facet; the
   host-filesystem facet is still the Phase 11 sensor row — and joins T1204.002). **CHM
-  deferred**: meaningful CHM detection needs LZX decompression (the malicious `<OBJECT>`
-  ShortCut command lives in the LZX-compressed HTML topics); a structural-only CHM pass
-  would sit below the FP bar, so per measure-or-don't-ship it waits for the LZX work
-  rather than shipping weak. Each shipped parser lands with its own fuzz harness (see the
-  parser-fuzzing gate).
+  shipped 2026-11-02** as `scanner/chm`: it walks the uncompressed ITSF/ITSP/PMGL
+  directory and scores embedded payloads a help file has no reason to carry — a lone
+  embedded PE (`chm.embedded-executable`, crosses on its own), multiple executables, an
+  embedded `.lnk`, and dangerous scripts (`.hta`/`.vbs`/`.ps1`/`.bat`/`.cmd`/`.wsf`, not
+  plain `.js`); `--no-chm` / `--chm-threshold`; T1204.002 / T1059. The LZX content
+  section is still not decompressed, so the `<OBJECT>` ShortCut/WinExec tradecraft inside
+  compressed topics is "present but not inspected" rather than guessed — the embedded-
+  payload shape (the high-signal one) ships now; the LZX work is the honest remaining
+  gap. Each shipped parser lands with its own fuzz harness (see the parser-fuzzing gate).
 - [x] Quarantine + canary primitives in the OSS engine: quarantine DB with
   integrity-checked restore, decoy/canary files as cheap ground truth for the behavior
   engine. Prevention is free: full on-host response (quarantine, restore, block, kill)

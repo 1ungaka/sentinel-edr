@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"math/rand"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,13 @@ type elfSpec struct {
 	rpath       string
 	runpath     string
 	init        uint64
+	// initArray slots hold their target VA directly (non-PIE style).
+	initArray []uint64
+	// initArrayRelative leaves slots zero and supplies each target through a
+	// RELA R_*_RELATIVE relocation (PIE style).
+	initArrayRelative []uint64
+	// versionNeed emits one .gnu.version_r record per dependency.
+	versionNeed map[string][]string
 	textrel     bool
 	pie         bool
 	forceDyn    bool
@@ -203,6 +211,44 @@ func buildELF(t *testing.T, spec elfSpec) []byte {
 		if spec.runpath != "" {
 			runpathOff = strOff(spec.runpath)
 		}
+		// .gnu.version_r blob. Assembled here, before the string table is
+		// frozen by place(strtab) below, because its names index into dynstr.
+		var verneedBlob []byte
+		var verneedCount uint32
+		if len(spec.versionNeed) > 0 {
+			var files []string
+			for f := range spec.versionNeed {
+				files = append(files, f)
+			}
+			sort.Strings(files)
+			for fi, f := range files {
+				fileOff := strOff(f)
+				vers := spec.versionNeed[f]
+				vnRec := make([]byte, 16)
+				order.PutUint16(vnRec[0:], 1)                 // vn_version
+				order.PutUint16(vnRec[2:], uint16(len(vers))) // vn_cnt
+				order.PutUint32(vnRec[4:], uint32(fileOff))   // vn_file
+				order.PutUint32(vnRec[8:], 16)                // vn_aux -> first aux
+				next := uint32(0)
+				if fi < len(files)-1 {
+					next = uint32(16 + len(vers)*16) // vn_next
+				}
+				order.PutUint32(vnRec[12:], next)
+				verneedBlob = append(verneedBlob, vnRec...)
+				for vi, v := range vers {
+					vOff := strOff(v)
+					aux := make([]byte, 16)
+					order.PutUint32(aux[8:], uint32(vOff)) // vna_name
+					auxNext := uint32(0)
+					if vi < len(vers)-1 {
+						auxNext = 16
+					}
+					order.PutUint32(aux[12:], auxNext) // vna_next
+					verneedBlob = append(verneedBlob, aux...)
+				}
+			}
+			verneedCount = uint32(len(files))
+		}
 		symEnt := 24
 		if !is64 {
 			symEnt = 16
@@ -242,6 +288,52 @@ func buildELF(t *testing.T, spec elfSpec) []byte {
 		symtabOff := place(symtab)
 		hashOff := place(hash)
 
+		ptr := 8
+		if !is64 {
+			ptr = 4
+		}
+		putPtr := func(b []byte, v uint64) {
+			if is64 {
+				order.PutUint64(b, v)
+			} else {
+				order.PutUint32(b, uint32(v))
+			}
+		}
+		// .init_array: direct-value slots, then relative-reloc (zero) slots.
+		var initArrayOff, initArrayVA, initArraySz uint64
+		var relaOff, relaVA, relaSz uint64
+		if len(spec.initArray)+len(spec.initArrayRelative) > 0 {
+			slots := make([]byte, (len(spec.initArray)+len(spec.initArrayRelative))*ptr)
+			for i, v := range spec.initArray {
+				putPtr(slots[i*ptr:], v)
+			}
+			// relative slots stay zero
+			initArrayOff = place(slots)
+			initArrayVA = base + initArrayOff
+			initArraySz = uint64(len(slots))
+			if len(spec.initArrayRelative) > 0 {
+				relaEnt := ptr * 3
+				rela := make([]byte, len(spec.initArrayRelative)*relaEnt)
+				for i, target := range spec.initArrayRelative {
+					b := rela[i*relaEnt:]
+					slotVA := initArrayVA + uint64(len(spec.initArray)+i)*uint64(ptr)
+					putPtr(b[0:], slotVA)         // r_offset
+					putPtr(b[ptr:], rRelativeX86) // r_info: type only, sym 0
+					putPtr(b[2*ptr:], target)     // r_addend = target VA
+				}
+				relaOff = place(rela)
+				relaVA = base + relaOff
+				relaSz = uint64(len(rela))
+			}
+		}
+		// .gnu.version_r blob (assembled above).
+		var verneedOff, verneedVA, verneedSz uint64
+		if len(verneedBlob) > 0 {
+			verneedOff = place(verneedBlob)
+			verneedVA = base + verneedOff
+			verneedSz = uint64(len(verneedBlob))
+		}
+
 		var dynamic []byte
 		dynEnt := 16
 		if !is64 {
@@ -275,6 +367,15 @@ func buildELF(t *testing.T, spec elfSpec) []byte {
 		putDyn(dtSymtab, base+symtabOff)
 		putDyn(dtSyment, uint64(symEnt))
 		putDyn(dtHash, base+hashOff)
+		if initArraySz > 0 {
+			putDyn(dtInitArray, initArrayVA)
+			putDyn(dtInitArraysz, initArraySz)
+		}
+		if relaSz > 0 {
+			putDyn(dtRela, relaVA)
+			putDyn(dtRelaSz, relaSz)
+			putDyn(dtRelaEnt, uint64(ptr*3))
+		}
 		if spec.init != 0 {
 			putDyn(dtInit, spec.init)
 		}
@@ -294,6 +395,15 @@ func buildELF(t *testing.T, spec elfSpec) []byte {
 		secs = append(secs, elfSecOut{name: ".dynsym", typ: shtDynsym, flags: shfAlloc, addr: base + symtabOff, off: symtabOff, size: uint64(len(symtab)), link: dynstrIdx, entsize: uint64(symEnt)})
 		secs = append(secs, elfSecOut{name: ".hash", typ: 5, flags: shfAlloc, addr: base + hashOff, off: hashOff, size: uint64(len(hash)), link: dynstrIdx - 1})
 		secs = append(secs, elfSecOut{name: ".dynamic", typ: 6, flags: shfAlloc | shfWrite, addr: base + dynOff, off: dynOff, size: uint64(len(dynamic)), link: dynstrIdx, entsize: uint64(dynEnt)})
+		if initArraySz > 0 {
+			secs = append(secs, elfSecOut{name: ".init_array", typ: 14, flags: shfAlloc | shfWrite, addr: initArrayVA, off: initArrayOff, size: initArraySz, entsize: uint64(ptr)})
+		}
+		if relaSz > 0 {
+			secs = append(secs, elfSecOut{name: ".rela.dyn", typ: 4, flags: shfAlloc, addr: relaVA, off: relaOff, size: relaSz, link: dynstrIdx + 1, entsize: uint64(ptr * 3)})
+		}
+		if verneedSz > 0 {
+			secs = append(secs, elfSecOut{name: ".gnu.version_r", typ: shtGNUVerneed, flags: shfAlloc, addr: verneedVA, off: verneedOff, size: verneedSz, link: dynstrIdx, info: verneedCount})
+		}
 	}
 	if spec.gnuStack != nil && !isRel {
 		segs = append(segs, elfSegOut{ptGNUStack, *spec.gnuStack, 0, 0, 0, 0})

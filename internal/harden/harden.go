@@ -1,12 +1,34 @@
 package harden
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
+
+// Concealment describes the process-name obfuscation and anti-hook steps.
+type Concealment struct {
+	// Applied is true when either the comm or the command line was rewritten.
+	Applied bool
+	// ProcessName is the randomised name chosen, recorded so the daemon banner
+	// can log the real → random mapping for the administrator.
+	ProcessName string
+	// CommSet / CmdlineMasked report which of the two name surfaces took: comm
+	// (pgrep/pkill, /proc/<pid>/comm) and the command line (ps, cmdline).
+	CommSet       bool
+	CmdlineMasked bool
+	// EnvStripped lists loader-injection variables (LD_PRELOAD, …) removed from
+	// the environment at launch — a non-empty list is a tamper signal.
+	EnvStripped []string
+	// TracerPID is a non-zero attached-tracer PID (ptrace), or 0 if none.
+	TracerPID int
+}
 
 // Report describes what self-protection was applied, for honest logging.
 type Report struct {
 	Supported       bool
 	MemoryProtected bool
 	PrivsLocked     bool
+	Concealment     Concealment
 	// Notes carries any step that could not be applied, so a degraded host is
 	// visible rather than silently unprotected.
 	Notes []string
@@ -24,9 +46,26 @@ func (r Report) Summary() string {
 	if r.PrivsLocked {
 		on = append(on, "no-new-privs")
 	}
+	if c := r.Concealment; c.Applied {
+		where := []string{}
+		if c.CommSet {
+			where = append(where, "comm")
+		}
+		if c.CmdlineMasked {
+			where = append(where, "cmdline")
+		}
+		on = append(on, "process name "+c.ProcessName+" ("+strings.Join(where, "+")+")")
+	}
+	if len(r.Concealment.EnvStripped) > 0 {
+		on = append(on, "stripped "+strings.Join(r.Concealment.EnvStripped, ","))
+	}
 	s := "self-protection: " + strings.Join(on, ", ")
-	if len(r.Notes) > 0 {
-		s += " (" + strings.Join(r.Notes, "; ") + ")"
+	notes := append([]string(nil), r.Notes...)
+	if r.Concealment.TracerPID != 0 {
+		notes = append(notes, "WARNING tracer attached pid "+strconv.Itoa(r.Concealment.TracerPID))
+	}
+	if len(notes) > 0 {
+		s += " (" + strings.Join(notes, "; ") + ")"
 	}
 	return s
 }
@@ -49,5 +88,6 @@ func Apply() Report {
 	} else {
 		r.PrivsLocked = ok
 	}
+	r.Concealment = ConcealProcess()
 	return r
 }

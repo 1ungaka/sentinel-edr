@@ -23,10 +23,17 @@ and the roadmap in [`PLAN.md`](https://github.com/s-b-repo/cau/blob/main/PLAN.md
 ## What it finds
 
 Hash signatures, YARA (in-process libyara), string/API heuristics, a bounds-checked
-PE/ELF static-structure pass, invisible-codepoint (stego) analysis, an
-encoded-executable pass, document/archive detectors (LNK, OLE, PDF, ISO), an
-obfuscation-chain peeler (NOVEL-012), and a known-abused code-signing certificate
-blocklist — joined by a fusion lattice. Every verdict is machine-readable (text,
+PE/ELF/Mach-O static-structure pass, invisible-codepoint (stego) analysis, an
+encoded-executable pass, document/archive detectors (LNK, OLE, PDF, ISO), a Linux
+software-package pass (.deb/.rpm/Arch/Flatpak/AppImage/Docker/Snap install
+scripts), a compressed-archive pass (ZIP/TAR/gzip: bombs, Zip-Slip,
+lure/payload members), a Compiled HTML Help (CHM) pass (embedded executables,
+shortcuts, dangerous scripts), an obfuscation-chain peeler (NOVEL-012), and a
+known-abused code-signing certificate blocklist — joined by a fusion lattice
+with attack-path chaining. Beyond files: a read-only live process scan
+(`cau ps`) for what is already running (fileless, masquerade, injection), an
+installed-package audit (`cau installed`), and an abuse-intel feed
+(`cau feed`). Every verdict is machine-readable (text,
 JSON, SARIF, OCSF) with CI exit codes, and ATT&CK coverage is **derived from the
 shipped content, never hand-typed** (`cau coverage`).
 

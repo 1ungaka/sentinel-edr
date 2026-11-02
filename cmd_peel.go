@@ -78,6 +78,7 @@ func cmdPeel(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Outcome     : %s\n", r.Outcome)
 		fmt.Fprintf(stdout, "Score       : %d\n", r.Score)
 		fmt.Fprintf(stdout, "Max depth   : %d\n", r.MaxDepth)
+		fmt.Fprintf(stdout, "Entropy     : %.3f bits/byte\n", r.RootEntropy)
 		fmt.Fprintf(stdout, "Nodes       : %d\n", r.NodesVisited)
 		fmt.Fprintf(stdout, "Decoded     : %d bytes\n", r.OutputBytes)
 		if r.Exhausted {

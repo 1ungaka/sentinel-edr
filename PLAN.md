@@ -797,9 +797,8 @@ catch and how to catch it, not how to build it. This Phase 4-connected work maps
   across text / JSON (schema 1.9.0) / SARIF / OCSF, and `peeler` content in the ATT&CK
   coverage matrix (T1027, three classes). Measured safe: the eval gate is unchanged
   (recall / precision / FP / FN flat) and a repo self-scan flagged 0 of 291 files.
-  **Open follow-ons:** the entropy/structural estimator (routing below — this increment
-  uses cheap per-layer `Detect`, not segment profiling), the emulation-sidecar fallback,
-  and per-tenant fairness.
+  **Open follow-ons:** the emulation-sidecar fallback and per-tenant fairness (the
+  entropy estimator below shipped 2026-11-02).
 - [~] Chain-depth estimator as a cheap pre-pass: entropy-segment profiling plus
   structural fingerprints (overlay chains, packed-import tables, section anomalies)
   route samples to specialized peelers (archive / packer / script) before full peel cost
@@ -807,6 +806,15 @@ catch and how to catch it, not how to build it. This Phase 4-connected work maps
   regardless of the payload verdict, so a chain that outlives the gate still flags.
   Provenance reconciles benign packers — nested packers inside official packages don't
   alert, the same FP rule as everything else.
+  Shipped 2026-11-02 (`internal/peeler/estimator.go`): a Shannon-entropy + printable-
+  fraction profile ranks the detecting unwrappers per node so the bounded frontier is
+  spent on the most-probable transform first (magic-bearing compression over a text
+  encoding over headerless flate), and the root entropy rides on the result. Ranking
+  only reorders — it never drops a branch or changes a verdict, so the 0-FP envelope and
+  depth-sweep detections are unchanged (re-measured 0 / 116,201). Depth-as-signal scoring
+  was already in the core increment. **Open:** PE/ELF structural fingerprints (overlay
+  chains, packed-import tables) to route to specialized peelers, and provenance
+  reconciliation of benign packers (needs the Phase 7 provenance DB).
 - [~] Chain-signature model: each peel records the ordered transformation set it
   removed; ordered chain patterns become family signatures — the multi-layer equivalent
   of a hash — and enter the same detection-content lifecycle with model cards.

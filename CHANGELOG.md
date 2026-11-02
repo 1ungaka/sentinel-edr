@@ -83,8 +83,12 @@ cut a tagged release yet, so everything is under Unreleased.
   `--peel-threshold`): `ScanResult.Peel`, a `peeler` fusion source, the `peel` /
   `peel_*` fields in text / JSON / SARIF / OCSF, and `peeler` content in
   `cau coverage` (T1027). The eval gate is unchanged (recall / precision / FP /
-  FN flat) and a repo self-scan flags 0 of 291 files. The entropy/structural
-  estimator and emulation fallback are tracked as follow-ons in PLAN.md.
+  FN flat) and a repo self-scan flags 0 of 291 files. A cheap entropy estimator
+  ranks each node's frontier so the bounded budget is spent on the most-probable
+  transform first (reordering only — detections and the 0-FP envelope are
+  unchanged); the input's Shannon entropy rides on the result. The PE/ELF
+  structural-fingerprint routing and the emulation fallback are tracked as
+  follow-ons in PLAN.md.
 - **JSON report schema 1.9.0**: added the optional per-file `peel` object and the
   summary fields `peel_detections` / `peel_threshold` (additive, minor bump).
 - **Quarantine vault** (`cau quarantine`, `internal/quarantine`): a local,

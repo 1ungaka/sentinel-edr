@@ -99,6 +99,10 @@ type Result struct {
 	// NodesVisited and OutputBytes report the spend, for operators and tests.
 	NodesVisited int64 `json:"nodes_visited"`
 	OutputBytes  int64 `json:"output_bytes"`
+	// RootEntropy is the Shannon entropy (bits/byte) of the input, from the
+	// estimator pre-pass. High entropy on a blob that does not peel points at a
+	// terminal packed/encrypted layer.
+	RootEntropy float64 `json:"root_entropy,omitempty"`
 
 	// ── detector contract (set by the engine; empty for standalone peels) ──
 	FilePath  string    `json:"file_path,omitempty"`
@@ -203,10 +207,17 @@ type peel struct {
 	// the standard deadlock-free pattern for bounded parallel recursion.
 	sem chan struct{}
 
-	mu       sync.Mutex
-	seen     map[[32]byte]struct{} // CAS: a blob hash peeled once is never re-peeled
-	chains   []Chain
-	maxDepth int
+	mu          sync.Mutex
+	seen        map[[32]byte]struct{} // CAS: a blob hash peeled once is never re-peeled
+	chains      []Chain
+	maxDepth    int
+	rootEntropy float64
+}
+
+func (st *peel) recordRootEntropy(e float64) {
+	st.mu.Lock()
+	st.rootEntropy = e
+	st.mu.Unlock()
 }
 
 // Peel walks the obfuscation tree rooted at data and returns the verdict.
@@ -262,15 +273,22 @@ func (st *peel) walk(blob []byte, path []string, depth int) {
 		return
 	}
 
+	// Estimator pre-pass: rank the detecting unwrappers by how likely each is
+	// to be the real next layer, so the bounded frontier is spent on the most
+	// probable transforms first. Ranking never drops a branch or changes a
+	// verdict — it only reorders.
+	prof := estimate(blob)
+	frontier := rankUnwrappers(blob, st.p.unwrappers, prof)
+	if depth == 0 {
+		st.recordRootEntropy(prof.entropy)
+	}
+
 	// Spawn a bounded child per applicable layer, up to the frontier width.
 	var wg sync.WaitGroup
 	children := 0
-	for _, u := range st.p.unwrappers {
+	for _, u := range frontier {
 		if children >= st.budget.maxChildren {
 			break
-		}
-		if !u.Detect(blob) {
-			continue
 		}
 		out, err := u.Unwrap(blob, st.budget.remainingOutput())
 		if err != nil {
@@ -322,6 +340,7 @@ func (st *peel) finish(exhausted bool, reason string) Result {
 	st.mu.Lock()
 	chains := append([]Chain(nil), st.chains...)
 	maxDepth := st.maxDepth
+	rootEntropy := st.rootEntropy
 	st.mu.Unlock()
 
 	sort.SliceStable(chains, func(i, j int) bool { return chains[i].Depth > chains[j].Depth })
@@ -333,6 +352,7 @@ func (st *peel) finish(exhausted bool, reason string) Result {
 		ExhaustReason: reason,
 		NodesVisited:  st.budget.Nodes(),
 		OutputBytes:   st.budget.OutputBytes(),
+		RootEntropy:   rootEntropy,
 	}
 
 	// Outcome by precedence. Only a *chain* (depth >= minChainDepth) promotes a

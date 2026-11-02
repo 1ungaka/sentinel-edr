@@ -1,4 +1,4 @@
-# CAU EDR — Certs Are Useless
+# CAU EDR == Certs Are Useless
 
 [![ci](https://github.com/s-b-repo/cau/actions/workflows/ci.yml/badge.svg)](https://github.com/s-b-repo/cau/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/go-1.24+-00ADD8?logo=go)](go.mod)

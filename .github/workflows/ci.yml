@@ -1,77 +1,199 @@
 name: ci
 
+# One workflow, six lanes. Every gate in this repository is already a make target
+# in the Makefile; the workflow only decides which lane runs what, how long it
+# may take and what gets published. The lanes share a checkout and a composite
+# action, not a job: a red `test` can never mask a green `detection gates`, and
+# every failure has a name a reviewer can assign instead of a line in one
+# 20-minute log.
+
 on:
+  pull_request:
+    # Documentation, wiki, packaging and completion-only changes cannot move any
+    # gate in this workflow, so they get no runner time. main pushes and tags are
+    # never path-filtered: they are the integration gate and the release trigger,
+    # and a tag whose head commit is a docs change must still cut a release.
+    paths-ignore:
+      - "**.md"
+      - "wiki/**"
+      - "docs/**"
+      - "completions/**"
+      - "packaging/**"
+      - "scripts/**"
+      - "debian/**"
+      - ".github/dependabot.yml"
+      - ".github/workflows/wiki.yml"
+      - ".github/workflows/package.yml"
   push:
     branches: [main]
     tags: ["v*"]
-  pull_request:
+  # A CGO build against a moving runner image (Go, libyara, glibc) is the one
+  # thing a push-only pipeline never exercises. The nightly run is the drift
+  # canary, and nothing else needs the GH runner image to stay honest.
+  schedule:
+    - cron: "27 4 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A superseded PR run is worthless; a run of main, or of a release tag, is not.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  test:
-    name: build, test, evaluate
+  lint:
+    name: lint, vet, vendor tree
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
+      - uses: ./.github/actions/cau-env
 
-      - name: Install libyara
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libyara-dev yara pkg-config
-          pkg-config --modversion yara
-
-      - name: Lint
+      - name: gofmt and go vet
         run: make lint
+
+      # Debian and Arch build offline out of the committed vendor/ tree
+      # (debian/rules: GOPROXY=off), so a stale vendor/ breaks packaging rather
+      # than this pipeline. Catch it here, where it costs seconds.
+      - name: vendor/ matches go.mod
+        run: |
+          go mod vendor
+          if ! git diff --exit-code -- vendor; then
+            echo "::error::vendor/ is stale: run 'go mod vendor' and commit the result"
+            exit 1
+          fi
+
+  test:
+    name: unit tests (race)
+    runs-on: ubuntu-latest
+    # TestMeasureRealELF walks ~5k system files on an Ubuntu runner and the
+    # Makefile gives the suite a 25-minute budget; the job has to be able to
+    # reach that budget or a slow runner fails a green tree.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/cau-env
+
+      - name: Race tests over every package
+        run: make test-race
+
+  gates:
+    name: detection gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/cau-env
+
+      - name: Build both binaries
+        run: make build build-mcp
+
+      - name: Rule lint
+        run: make lint-rules
+
+      - name: ATT&CK coverage gate and matrix
+        run: |
+          set -o pipefail
+          make coverage | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Corpus validation and regression gate
+        run: |
+          set -o pipefail
+          make eval | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Published even when a gate above failed: the report is the evidence for
+      # the failure, so a reviewer should never have to re-run the job to get it.
+      - name: Publish the gate reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-and-coverage
+          path: |
+            eval-out/report.json
+            eval-out/attack-navigator.json
+            eval-out/attack-coverage.sarif
+
+  selfscan:
+    name: self-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # The recipe docs/cli.md documents ("CI recipes") but never wired up: the
+      # SARIF this project produces for other people lands in its own
+      # code-scanning dashboard, so a rule or heuristic that starts firing on
+      # the tree is a review item instead of an artifact nobody opens.
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/cau-env
 
       - name: Build
         run: make build
-
-      - name: Build the MCP server
-        run: make build-mcp
-
-      - name: Unit tests (race)
-        run: make test-race
-
-      - name: Lint the bundled YARA rules
-        run: make lint-rules
-
-      - name: ATT&CK coverage gate and Navigator layer
-        run: make coverage
-
-      - name: Corpus validation
-        run: make eval-validate
-
-      - name: Regression gate against baseline
-        run: make eval-gate
 
       - name: Scan the repository with itself (SARIF and OCSF)
         run: |
           ./cau scan --dir . --format sarif --output cau.sarif --fail-on none --quiet
           ./cau scan --dir . --format ocsf --output cau.ocsf.json --fail-on none --quiet
 
-      - uses: actions/upload-artifact@v4
-        if: always()
+      - name: Upload the SARIF to code scanning
+        # The guard matters: if the scan step died there is no SARIF to upload,
+        # and code scanning keeps the last good set rather than being wiped.
+        if: always() && hashFiles('cau.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
         with:
-          name: eval-and-sarif
+          sarif_file: cau.sarif
+          category: cau-self-scan
+
+      - name: Publish the self-scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-scan
           path: |
-            eval-out/report.json
-            eval-out/attack-navigator.json
-            eval-out/attack-coverage.sarif
             cau.sarif
             cau.ocsf.json
+
+  fuzz:
+    name: fuzz the untrusted-input parsers
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/cau-env
+
+      - name: Build
+        run: make build
+
+      # A smoke hunt, not a campaign. Every seed corpus already runs as a unit
+      # test in the race lane, so the value here is coverage-guided mutation on
+      # top of them: 30s per target catches a freshly-introduced nil deref, and
+      # a crasher it finds is exactly the "commit the seed, fix before merge"
+      # case docs/contributing.md describes.
+      - name: Coverage-guided hunt over every Fuzz* target
+        run: make fuzz FUZZTIME=30s
+
+      - name: Publish the crasher it found
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers
+          path: |
+            **/testdata/fuzz/**
 
   release:
     name: build and sign release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: test
+    needs: [lint, test, gates, selfscan, fuzz]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     env:
@@ -84,23 +206,27 @@ jobs:
       CAU_RELEASE_PUBLIC_KEY: ${{ vars.CAU_RELEASE_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: Install libyara
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libyara-dev pkg-config
 
-      - name: Build
+      - uses: ./.github/actions/cau-env
+
+      - name: Build the release tarballs
         run: |
-          make build VERSION=${GITHUB_REF_NAME}
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          make build VERSION="$tag"
+          # cau-mcp ships with every package (Debian, Arch, make install) and was
+          # the only artifact the release job never built.
+          make build-mcp VERSION="$tag"
           mkdir -p dist
-          cp cau dist/cau-${GITHUB_REF_NAME}-linux-amd64
-          tar -czf dist/cau-${GITHUB_REF_NAME}-linux-amd64.tar.gz cau rules signatures LICENSE README.md
+          for art in cau cau-mcp; do
+            cp "$art" "dist/${art}-${tag}-linux-amd64"
+            tar -czf "dist/${art}-${tag}-linux-amd64.tar.gz" "$art" rules signatures LICENSE README.md
+          done
+          ls -l dist
 
-      - name: Sign the update bundle and release checksums
+      - name: Sign the update bundle, the integrity baseline and the checksums
         run: |
+          set -euo pipefail
           if [ -z "$CAU_RELEASE_SIGNING_KEY" ]; then
             echo "::warning::CAU_RELEASE_SIGNING_KEY is not set; publishing an UNSIGNED release"
             (cd dist && sha256sum * > SHA256SUMS)
@@ -111,36 +237,44 @@ jobs:
           KEYFILE="$(mktemp)"
           printf '%s' "$CAU_RELEASE_SIGNING_KEY" > "$KEYFILE"
           trap 'shred -u "$KEYFILE" 2>/dev/null || rm -f "$KEYFILE"' EXIT
+          tag="${GITHUB_REF_NAME}"
 
           # 1) Signed signature-DB bundle, for `cau update`.
           ./cau bundle update --db signatures/hashes.txt --sign-key "$KEYFILE" \
-            --out dist --db-version "${GITHUB_REF_NAME}" --min-engine "${GITHUB_REF_NAME#v}"
+            --out dist --db-version "$tag" --min-engine "${tag#v}"
 
-          # 2) Signed SHA256SUMS over every release artifact, for `cau verify-self`.
+          # 2) Signed detection-content integrity baseline (`cau selftest`).
+          ./cau selftest --record --sign-key "$KEYFILE" --manifest dist/integrity.json
+
+          # 3) The pinned public key, so `cau verify-self` has something to check
+          #    against on a machine that holds no repository secret.
+          if [ -n "$CAU_RELEASE_PUBLIC_KEY" ]; then
+            printf '%s' "$CAU_RELEASE_PUBLIC_KEY" > dist/release-pubkey.hex
+          else
+            echo "::warning::CAU_RELEASE_PUBLIC_KEY is not set; the release will not self-verify before publishing"
+          fi
+
+          # 4) Signed SHA256SUMS over everything now in dist/ — the tarballs,
+          #    both binaries, the bundle and the integrity manifest. Order is the
+          #    contract: a file staged after this line ships unsigned, which is
+          #    how the integrity manifest and the public key used to ship.
           #    The binary thereby references itself: its own hash is in a file it
           #    can fetch and verify against the pinned key.
-          ./cau bundle checksums --sign-key "$KEYFILE" --out dist $(find dist -maxdepth 1 -type f ! -name 'SHA256SUMS*')
-
-      - name: Record a signed detection-content integrity baseline
-        if: env.CAU_RELEASE_SIGNING_KEY != ''
-        run: |
-          umask 077
-          KEYFILE="$(mktemp)"
-          printf '%s' "$CAU_RELEASE_SIGNING_KEY" > "$KEYFILE"
-          trap 'shred -u "$KEYFILE" 2>/dev/null || rm -f "$KEYFILE"' EXIT
-          ./cau selftest --record --sign-key "$KEYFILE" --manifest dist/integrity.json
+          ./cau bundle checksums --sign-key "$KEYFILE" --out dist \
+            $(find dist -maxdepth 1 -type f ! -name 'SHA256SUMS*')
 
       - name: Verify the signed artifacts before publishing
         if: env.CAU_RELEASE_SIGNING_KEY != '' && env.CAU_RELEASE_PUBLIC_KEY != ''
         run: |
-          # Publish the public key and self-verify the built binary against the
-          # SHA256SUMS we just signed — a release that cannot verify itself must
-          # not ship. (The binary references itself: its own hash is in a signed
-          # file it can fetch and check against this pinned key.)
-          printf '%s' "$CAU_RELEASE_PUBLIC_KEY" > dist/release-pubkey.hex
+          # A release that cannot verify itself must not ship: the built binary
+          # computes its own SHA-256 and checks it against the signed
+          # SHA256SUMS above, signature before hash.
           ./cau verify-self --from dist --pubkey dist/release-pubkey.hex \
             --name "cau-${GITHUB_REF_NAME}-linux-amd64"
 
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          fail_on_unmatched_files: true
+          # v1.2.0-rc1 ships as a pre-release; v1.2.0 does not.
+          prerelease: ${{ contains(github.ref_name, '-') }}

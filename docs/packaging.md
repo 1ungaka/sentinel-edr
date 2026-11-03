@@ -9,17 +9,24 @@ guide; the user-facing instructions live in [installation.md](installation.md).
 
 `make ci` is the engine gate (lint, tests, race, rules lint, coverage gate, eval
 baseline). `.github/workflows/package.yml` is the packaging gate, on every push,
-every pull request and every tag:
+every pull request and every tag. The `pull_request` trigger is a
+`paths-ignore` list, so a change confined to Markdown, wiki, docs, completions,
+packaging, scripts or `debian/` gets no runner time, and each job carries a
+bounded runtime:
 
 | Job | Container | Builds | Then |
 |---|---|---|---|
-| `debian` | `debian:trixie` | source + binary `.deb` | `dpkg -i`, then `scripts/package-smoke.sh` |
-| `kali` | `kalilinux/kali-rolling` | binary `.deb` | `apt install ./*.deb`, then smoke test |
-| `arch` | `archlinux:latest` | `.pkg.tar.zst` from the `PKGBUILD` | `pacman -U`, then smoke test |
+| `Debian (.deb)` | `debian:trixie` | source + binary `.deb` (the source package is built from the tag tarball) | `dpkg -i`, then `scripts/package-smoke.sh` |
+| `Kali Linux (.deb)` | `kalilinux/kali-rolling:latest` | binary `.deb` | `apt install ./*.deb`, then smoke test |
+| `Arch Linux (.pkg.tar.zst)` | `archlinux:latest` | `.pkg.tar.zst` from the `PKGBUILD` | `pacman -U`, then smoke test |
 
 Each job attaches its artifact to the GitHub release when the run is triggered
-by a `v*` tag, so a release always carries the `.deb`, the Kali `.deb` and the
-`.pkg.tar.zst` next to the source tarball and the signed update bundle.
+by a `v*` tag, which now works because every publishing job carries
+`contents: write` (the workflow-wide `contents: read` left the attach steps
+able to fail only with a 403), so a release always carries the `.deb`, the Kali
+`.deb` and the `.pkg.tar.zst` next to the source tarball and the signed update
+bundle. The checkout is full-depth, so `git describe` stamps the tag version
+into a package instead of a commit sha.
 
 `scripts/package-smoke.sh` is distro-agnostic and asserts the behaviour a user
 buys the package for:

@@ -90,7 +90,15 @@ rules/, signatures/    bundled detection content
 corpus/smoke/          committed synthetic corpus
 baselines/             baseline report, gate policy, ATT&CK coverage expectation
 docs/                  these pages
-.github/workflows/     lint, build, race tests, rule lint, coverage gate, corpus validation, eval gate, SARIF/OCSF self-scan, releases on tags
+.github/workflows/     ci.yml: lint + vendor check, race tests, detection gates
+                       (rule lint, coverage gate, corpus validation, eval gate),
+                       SARIF/OCSF self-scan uploaded to code scanning, a fuzz
+                       hunt, signed releases on tags
+                       package.yml: the Debian/Kali/Arch packaging proof (build,
+                       install, smoke test, attach to the release)
+                       wiki.yml: wiki/ -> the GitHub wiki
+                       actions/cau-env: the shared Go + libyara + pkg-config
+                       environment
 ```
 
 ## The engine / console boundary

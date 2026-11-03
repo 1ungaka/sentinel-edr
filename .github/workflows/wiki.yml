@@ -3,7 +3,9 @@ name: wiki
 # Publishes the Markdown in wiki/ to the GitHub wiki whenever those pages (or
 # this workflow) change on main. The wiki is a separate git repo
 # (<repo>.wiki.git); it must be enabled and initialized once (create any page in
-# the web UI) before the first push can succeed.
+# the web UI) before the first push can succeed. The job is bounded by a
+# timeout because it clones and pushes a whole second repository, so a hung git
+# must not hold the wiki concurrency slot open.
 on:
   push:
     branches: [main]
@@ -22,6 +24,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 

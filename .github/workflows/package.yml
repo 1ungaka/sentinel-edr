@@ -40,15 +40,12 @@ jobs:
     name: Debian (.deb)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # The last step attaches the built package to the tag, which needs
-    # contents: write; the workflow-wide contents: read meant every tag build
-    # could only fail that upload with a 403 and publish nothing.
+    # The release step attaches the built package to a tag ref, which needs
+    # contents: write; the workflow-wide contents: read meant a tag build could
+    # only fail that upload with a 403 and publish nothing.
     permissions:
       contents: write
     container: debian:trixie
-    # The job attaches its packages to the GitHub release on a tag run.
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         # The Makefile derives the version from `git describe`, so a shallow checkout
@@ -123,16 +120,14 @@ jobs:
     name: Kali Linux (.deb)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # The last step attaches the built package to the tag, which needs
-    # contents: write; the workflow-wide contents: read meant every tag build
-    # could only fail that upload with a 403 and publish nothing.
+    # The release step attaches the built package to a tag ref, which needs
+    # contents: write; the workflow-wide contents: read meant a tag build could
+    # only fail that upload with a 403 and publish nothing.
     permissions:
       contents: write
     container:
       image: kalilinux/kali-rolling:latest
       options: --user root
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         # The Makefile derives the version from `git describe`, so a shallow checkout
@@ -194,14 +189,12 @@ jobs:
     name: Arch Linux (.pkg.tar.zst)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # The last step attaches the built package to the tag, which needs
-    # contents: write; the workflow-wide contents: read meant every tag build
-    # could only fail that upload with a 403 and publish nothing.
+    # The release step attaches the built package to a tag ref, which needs
+    # contents: write; the workflow-wide contents: read meant a tag build could
+    # only fail that upload with a 403 and publish nothing.
     permissions:
       contents: write
     container: archlinux:latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         # The Makefile derives the version from `git describe`, so a shallow checkout

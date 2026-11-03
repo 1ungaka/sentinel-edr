@@ -7,11 +7,16 @@ source scripts/dev-env.sh   # only for a user-local Go / libyara layout
 make build                  # ./cau
 make lint                   # gofmt + go vet
 make test                   # unit tests
-make test-race              # with the race detector; what CI runs
+make test-race              # with the race detector; the CI `test` lane
 make bench                  # YARA, heuristics, static and stego benchmarks
 make eval                   # validate the smoke corpus, run it, gate against the baseline
-make ci                     # lint + build + race tests + eval
+make ci                     # lint + build + race tests + eval; the local aggregate
 ```
+
+`.github/workflows/ci.yml` runs these same targets as six named, time-bounded
+lanes (`lint`, `test`, `gates`, `selfscan`, `fuzz`, `release`) instead of one
+serial `make ci` job, and the packaging proof
+(`.github/workflows/package.yml`) is a separate workflow.
 
 Go 1.24, libyara 4.3 with headers and pkg-config are required; see
 [Installation](installation.md).

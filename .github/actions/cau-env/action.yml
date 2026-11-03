@@ -1,0 +1,26 @@
+name: cau build environment
+description: >-
+  The Go toolchain pinned by go.mod plus libyara 4.3+ and pkg-config, which the
+  cgo YARA binding requires. Every job in this repository compiles or links
+  against libyara (there is no !cgo build), so the environment is one action used
+  by all of them instead of one copy of the same apt-get per job.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+        cache: true
+
+    - name: Install libyara and pkg-config
+      shell: bash
+      run: |
+        # --no-install-recommends: libyara-dev pulls the runtime shared library,
+        # which is what the test binaries link against because the project builds
+        # go-yara through its default pkg-config cgo flags. The yara CLI is not
+        # installed: YARA runs in-process (docs/installation.md).
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends libyara-dev pkg-config
+        pkg-config --modversion yara

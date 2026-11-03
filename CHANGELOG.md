@@ -5,6 +5,60 @@ All notable changes to CAU EDR. The format follows
 
 ## Unreleased
 
+### Added
+- **The self-scan SARIF is uploaded to code scanning.** The `selfscan` lane runs
+  `cau scan --dir .` in SARIF and OCSF and hands `cau.sarif` to
+  `github/codeql-action/upload-sarif@v3` (`security-events: write`), which is
+  the CI recipe `docs/cli.md` documents but no workflow ever wired up. A rule or
+  heuristic that starts firing on the tree is now a review item rather than an
+  artifact nobody opens.
+- **A `fuzz` lane and a `vendor/` consistency gate.** Every pull request runs
+  `make fuzz FUZZTIME=30s`, a coverage-guided hunt over every `Fuzz*` target
+  (the seed corpora already run as unit tests, so the lane buys mutation
+  coverage, not re-runs), and the `lint` lane runs `go mod vendor` plus
+  `git diff --exit-code -- vendor`, so a stale committed tree fails where it
+  costs seconds instead of in the Debian and Arch builds that carry
+  `GOPROXY=off`.
+- **CI now proves the Debian source package builds.** `dpkg-buildpackage
+  -us -uc -S` runs from a copy of the tree, so the "source + binary `.deb`"
+  claim in `docs/packaging.md` is measured rather than aspirational.
+  `.github/dependabot.yml` is new (weekly, grouped updates for the actions the
+  workflows pin); the Go module ecosystem is deliberately absent because the
+  `vendor/` tree is committed.
+
+### Changed
+- **The CI pipeline is six parallel, named, time-bounded lanes** rather than one
+  serial job: `lint` (15 min), `test` (45 min, `make test-race` over every
+  package), `gates` (20 min: `make build build-mcp`, `make lint-rules`,
+  `make coverage`, `make eval`), `selfscan` (20 min), `fuzz` (30 min) and
+  `release` (30 min, on a `v*` tag, `needs` the other five). The five
+  non-release lanes share the new composite action `.github/actions/cau-env`
+  (Go pinned by `go.mod`, libyara 4.3+, pkg-config); the unneeded `yara` CLI is
+  no longer installed. A per-ref `concurrency` group cancels a superseded
+  pull-request run, a nightly `schedule` is the drift canary for CGO against a
+  moving Go/libyara/glibc runner image, `workflow_dispatch` was added, and pull
+  requests touching only Markdown, wiki, docs, completions, packaging, scripts
+  or `debian/` get no runner time. `make ci` is unchanged and is still the
+  local aggregate.
+- **A release ships `cau-mcp` and signs everything it publishes.** The release
+  job builds `cau` *and* `cau-mcp` (`cau-mcp` was the only artifact the release
+  job never built), and the signed `SHA256SUMS` is generated after the integrity
+  manifest and the pinned public key are staged, so both are covered by the
+  signature instead of shipped unsigned.
+
+### Fixed
+- **`package.yml` could never attach anything to a release.** The workflow set
+  `permissions: contents: read` workflow-wide, while the `action-gh-release`
+  steps that attach the `.deb`, the Kali `.deb` and the `.pkg.tar.zst` to a tag
+  need `contents: write`, so each could only fail with a 403 and publish
+  nothing; every job now carries `contents: write`.
+- **`package.yml`'s `pull_request` allow list silently skipped work.** It omitted
+  `main.go`, `scripts/package-smoke.sh` and every new top-level file, so a
+  change there ran no packaging gate; the trigger is now a `paths-ignore` list.
+  The full-depth checkout (`fetch-depth: 0`) lets `git describe` stamp the tag
+  version into a package instead of a commit sha, and `workflow_dispatch` plus a
+  bounded runtime per job make the three container legs re-runnable by hand.
+
 ## 0.1.0 - 2026-11-02
 
 First tagged release: the detection engine, the evaluation harness and the

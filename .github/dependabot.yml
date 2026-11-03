@@ -1,0 +1,24 @@
+version: 2
+
+# The workflows and the composite action they share pin their actions to
+# floating major tags (checkout, setup-go in .github/actions/cau-env,
+# upload-artifact, upload-sarif, action-gh-release), and nothing in the
+# repository watches those pins, so a new major can land silently. Grouping them
+# into one pull request keeps a week of patch bumps from arriving as five. The
+# Go module ecosystem is deliberately absent: the vendor/ tree is committed and
+# debian/rules plus packaging/arch/PKGBUILD both build with GOPROXY=off, so a
+# dependency bump is a vendor-refresh plus a gate run, not something a bot
+# should open.
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels:
+      - ci
+    groups:
+      actions:
+        patterns:
+          - "*"

@@ -14,9 +14,10 @@ optdepends=('systemd: scheduled and resident scanning units'
             'fish: fish completion for cau')
 provides=('cau-edr')
 source=("https://github.com/s-b-repo/cau/archive/refs/tags/v${pkgver}/${pkgname}-${pkgver}.tar.gz")
-# sha256sums are recorded from the tagged tarball once the tag is cut, and
-# refreshed with `updpkgsums` (see docs/packaging.md).
-sha256sums=('SKIP')
+# Recorded from the tagged tarball: `sha256sum cau-${pkgver}.tar.gz` on the
+# file GitHub serves at the source URL above. Refreshed with updpkgsums on each
+# new tag (see docs/packaging.md).
+sha256sums=('b31d3d220ad2dd6da8ca8e60ec98c60428161ed7b6fe08889ac727c44ce3d1f9')
 
 build() {
     cd "${srcdir}/${pkgname}-${pkgver}"

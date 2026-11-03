@@ -46,7 +46,7 @@ jobs:
           apt-get update -qq
           apt-get install -y --no-install-recommends \
             build-essential debhelper pkg-config golang-go libyara-dev \
-            curl
+            curl ca-certificates
           echo "golang: $(go version)"
           echo "libyara: $(pkg-config --modversion yara)"
 

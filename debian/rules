@@ -45,6 +45,14 @@ override_dh_auto_install:
 override_dh_installsystemd:
 	dh_installsystemd --no-enable --no-start
 
+# dwz tries to deduplicate the debug-info of the stripped binaries and fails on
+# Go's DWARF sections ("Unknown debugging section .debug_addr" on a binary built
+# by Go 1.24), which aborts the build. There is nothing to win either: the Go
+# toolchain's debug info is not deduplicable this way, and the cau-dbgsym
+# package carries the unoptimised copy. Debian's other Go packages skip dwz the
+# same way.
+override_dh_dwz:
+
 override_dh_auto_clean:
 	$(MAKE) clean || true
 	rm -rf debian/.gocache

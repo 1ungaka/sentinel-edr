@@ -51,11 +51,13 @@ jobs:
 
       - name: Build the source and binary packages
         run: |
-          # -us -uc: unsigned, produced inside CI. The source package proves the
-          # debian/ directory plus the committed vendor/ tree build offline.
-          dpkg-buildpackage -us -uc -b
+          # -us -uc: unsigned, produced inside CI. The SOURCE package is the
+          # real proof that debian/ plus the committed vendor/ tree build
+          # offline, so this builds both, not only the binary.
+          dpkg-buildpackage -us -uc
           mkdir -p dist
-          mv ../cau_*.deb ../cau_*.build ../cau_*.buildinfo ../cau_*.changes ../cau_*.dsc ../cau_*.tar.xz dist/ || true
+          mv ../cau_*.deb ../cau_*.build ../cau_*.buildinfo ../cau_*.changes dist/ || true
+          mv ../cau_*.dsc ../cau_*.tar.* dist/ || true
           ls -l dist/
 
       - name: Install the package

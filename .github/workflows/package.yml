@@ -10,34 +10,39 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
-    paths:
-      - "debian/**"
-      - "packaging/**"
-      - "Makefile"
-      - "corpus/smoke/**"
-      - ".github/workflows/package.yml"
-      - "go.mod"
-      - "go.sum"
-      - "vendor/**"
-      - "cmd/**"
-      - "internal/**"
-      - "scanner/**"
-      - "rules/**"
-      - "signatures/**"
-      - "docs/cau*.1"
-      - "completions/**"
-      - "LICENSE"
-      - "README.md"
-      - "CHANGELOG.md"
+    # The allow list omitted main.go, scripts/package-smoke.sh, docs/packaging.md
+    # and every file a new contributor adds at the top level, so those changes
+    # silently skipped the packaging gate.
+    paths-ignore:
+      - "**.md"
+      - "wiki/**"
+      - "docs/**"
+      - ".github/dependabot.yml"
+      - ".github/workflows/wiki.yml"
+      - ".github/workflows/ci.yml"
+  # Re-run the packaging proof by hand after a container image or a toolchain
+  # change: the three legs pin nothing but `latest`, so an upstream image move
+  # has to be provable without waiting for the next tag.
+  workflow_dispatch:
 
+# Only read the repository: the jobs that publish to a release widen the token
+# themselves.
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A superseded PR run is worthless; a run of main, or of a release tag, is not.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   debian:
     name: Debian (.deb)
     runs-on: ubuntu-latest
     container: debian:trixie
+    # The job attaches its packages to the GitHub release on a tag run.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -72,9 +77,12 @@ jobs:
             dpkg-buildpackage -us -uc -b
           fi
           mkdir -p dist
-          for f in ../cau_*.deb ../cau_*.dsc ../cau_*.debian.tar.* \
-                   ../cau_*.build ../cau_*.buildinfo ../cau_*.changes; do
-            mv "$f" dist/
+          # Collect what dpkg-buildpackage produced: a binary-only run makes no
+          # .dsc and no .debian.tar, so each artefact is moved only when it
+          # exists rather than letting an unmatched glob abort the job.
+          for f in ../cau_*.deb ../cau_*.udeb ../cau_*.dsc ../cau_*.debian.tar.* \
+                   ../cau_*.buildinfo ../cau_*.changes; do
+            if [ -e "$f" ]; then mv "$f" dist/; fi
           done
           ls -l dist/
 
@@ -102,6 +110,8 @@ jobs:
     container:
       image: kalilinux/kali-rolling:latest
       options: --user root
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -109,7 +119,13 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update -qq
+          # kali.org's mirrors return a 500 now and then; retrying is the
+          # documented remedy and the package set itself does not change.
+          for attempt in 1 2 3; do
+            apt-get update -qq && break
+            echo "apt-get update failed (attempt $attempt), retrying" >&2
+            sleep 5
+          done
           apt-get install -y --no-install-recommends \
             build-essential debhelper pkg-config golang-go libyara-dev
           go version
@@ -143,6 +159,8 @@ jobs:
     name: Arch Linux (.pkg.tar.zst)
     runs-on: ubuntu-latest
     container: archlinux:latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 

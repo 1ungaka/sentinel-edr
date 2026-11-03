@@ -39,12 +39,24 @@ jobs:
   debian:
     name: Debian (.deb)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The last step attaches the built package to the tag, which needs
+    # contents: write; the workflow-wide contents: read meant every tag build
+    # could only fail that upload with a 403 and publish nothing.
+    permissions:
+      contents: write
     container: debian:trixie
     # The job attaches its packages to the GitHub release on a tag run.
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        # The Makefile derives the version from `git describe`, so a shallow checkout
+        # silently stamps every package with a commit sha instead of the tag, and
+        # scripts/package-smoke.sh only asserts the version is not `dev`, so the
+        # mistake is invisible. The PKGBUILD stamps the same way.
+        with:
+          fetch-depth: 0
 
       - name: Install the build toolchain
         run: |
@@ -103,10 +115,19 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           files: dist/cau_*_amd64.deb
+          # A release tag must publish every distro leg: a silent pattern miss
+          # is a published release missing its package.
+          fail_on_unmatched_files: true
 
   kali:
     name: Kali Linux (.deb)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The last step attaches the built package to the tag, which needs
+    # contents: write; the workflow-wide contents: read meant every tag build
+    # could only fail that upload with a 403 and publish nothing.
+    permissions:
+      contents: write
     container:
       image: kalilinux/kali-rolling:latest
       options: --user root
@@ -114,20 +135,31 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        # The Makefile derives the version from `git describe`, so a shallow checkout
+        # silently stamps every package with a commit sha instead of the tag, and
+        # scripts/package-smoke.sh only asserts the version is not `dev`, so the
+        # mistake is invisible. The PKGBUILD stamps the same way.
+        with:
+          fetch-depth: 0
 
       - name: Install the build toolchain
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # kali.org's mirrors return a 500 now and then; retrying is the
-          # documented remedy and the package set itself does not change.
-          for attempt in 1 2 3; do
-            apt-get update -qq && break
-            echo "apt-get update failed (attempt $attempt), retrying" >&2
-            sleep 5
+          # kali.org's mirrors return a 500 now and then, which fails the whole
+          # job rather than one download. apt's own retry option plus an outer
+          # retry of the index covers both the transient and the persistent case.
+          set -eu
+          apt_opts="-o Acquire::Retries=5"
+          for attempt in 1 2 3 4 5; do
+            if apt-get $apt_opts update -qq &&
+               apt-get $apt_opts install -y --no-install-recommends \
+                 build-essential debhelper pkg-config golang-go libyara-dev; then
+              break
+            fi
+            echo "apt attempt $attempt failed, retrying" >&2
+            sleep 15
           done
-          apt-get install -y --no-install-recommends \
-            build-essential debhelper pkg-config golang-go libyara-dev
           go version
           pkg-config --modversion yara
 
@@ -154,15 +186,30 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           files: dist/cau_*_amd64.deb
+          # A release tag must publish every distro leg: a silent pattern miss
+          # is a published release missing its package.
+          fail_on_unmatched_files: true
 
   arch:
     name: Arch Linux (.pkg.tar.zst)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The last step attaches the built package to the tag, which needs
+    # contents: write; the workflow-wide contents: read meant every tag build
+    # could only fail that upload with a 403 and publish nothing.
+    permissions:
+      contents: write
     container: archlinux:latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        # The Makefile derives the version from `git describe`, so a shallow checkout
+        # silently stamps every package with a commit sha instead of the tag, and
+        # scripts/package-smoke.sh only asserts the version is not `dev`, so the
+        # mistake is invisible. The PKGBUILD stamps the same way.
+        with:
+          fetch-depth: 0
 
       - name: Install the build toolchain
         run: |
@@ -197,3 +244,6 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           files: dist/*.pkg.tar.zst
+          # A release tag must publish every distro leg: a silent pattern miss
+          # is a published release missing its package.
+          fail_on_unmatched_files: true

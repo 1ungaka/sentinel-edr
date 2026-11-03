@@ -1,0 +1,47 @@
+# Maintainer: Stephan Botes <stephanbotes0@gmail.com>
+pkgname=cau
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='transparent open-source malware detection engine: explained verdicts, labeled classes, ATT&CK techniques'
+arch=('x86_64')
+url='https://github.com/s-b-repo/cau'
+license=('MIT')
+depends=('glibc' 'yara')
+makedepends=('go' 'pkgconf')
+optdepends=('systemd: scheduled and resident scanning units'
+            'bash-completion: bash completion for cau'
+            'zsh: zsh completion for cau'
+            'fish: fish completion for cau')
+provides=('cau-edr')
+source=("https://github.com/s-b-repo/cau/archive/refs/tags/v${pkgver}/${pkgname}-${pkgver}.tar.gz")
+# sha256sums are recorded from the tagged tarball once the tag is cut, and
+# refreshed with `updpkgsums` (see docs/packaging.md).
+sha256sums=('SKIP')
+
+build() {
+    cd "${srcdir}/${pkgname}-${pkgver}"
+
+    # The vendored Go module tree is committed, so the build needs no network
+    # and no module cache; -mod=vendor makes a missing vendor/ fail loudly
+    # instead of falling back to a fetch.
+    export CGO_ENABLED=1
+    export GOFLAGS='-mod=vendor'
+    export GOPROXY=off
+    # -trimpath keeps the build reproducible, as in the Debian package.
+    go build -trimpath -ldflags "-X main.version=${pkgver}" -o cau .
+    go build -trimpath -ldflags "-X main.version=${pkgver}" -o cau-mcp ./cmd/cau-mcp
+}
+
+package() {
+    cd "${srcdir}/${pkgname}-${pkgver}"
+
+    # The same install target the Debian package drives: one install path, two
+    # packagers, so the two cannot drift. It already places the binary, the
+    # content, the man pages, the shell completions, the license and the
+    # systemd units.
+    #
+    # VERSION is passed explicitly because a release tarball carries no .git:
+    # without it, `make install` re-stamps the binary as "dev" and overwrites
+    # the one built above with an unversioned build.
+    make install install-systemd PREFIX=/usr DESTDIR="${pkgdir}" VERSION="${pkgver}"
+}

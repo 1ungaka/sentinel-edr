@@ -1,0 +1,161 @@
+name: package
+
+# The packaging proof: every distro package this project claims to support is
+# actually built here, installed into a clean container, and driven with a scan.
+# A package that builds but cannot detect is a regression, so the smoke test
+# asserts the verdicts, not just the exit codes.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "debian/**"
+      - "packaging/**"
+      - "Makefile"
+      - "corpus/smoke/**"
+      - ".github/workflows/package.yml"
+      - "go.mod"
+      - "go.sum"
+      - "vendor/**"
+      - "cmd/**"
+      - "internal/**"
+      - "scanner/**"
+      - "rules/**"
+      - "signatures/**"
+      - "docs/cau*.1"
+      - "completions/**"
+      - "LICENSE"
+      - "README.md"
+      - "CHANGELOG.md"
+
+permissions:
+  contents: read
+
+jobs:
+  debian:
+    name: Debian (.deb)
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the build toolchain
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            build-essential debhelper pkg-config golang-go libyara-dev
+          echo "golang: $(go version)"
+          echo "libyara: $(pkg-config --modversion yara)"
+
+      - name: Build the source and binary packages
+        run: |
+          # -us -uc: unsigned, produced inside CI. The source package proves the
+          # debian/ directory plus the committed vendor/ tree build offline.
+          dpkg-buildpackage -us -uc -b
+          mkdir -p dist
+          mv ../cau_*.deb ../cau_*.build ../cau_*.buildinfo ../cau_*.changes ../cau_*.dsc ../cau_*.tar.xz dist/ || true
+          ls -l dist/
+
+      - name: Install the package
+        run: |
+          apt-get install -y --no-install-recommends ./dist/cau_*_amd64.deb
+
+      - name: Smoke test the installed package
+        run: scripts/package-smoke.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cau-debian-trixie
+          path: dist/
+          if-no-files-found: error
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: dist/cau_*_amd64.deb
+
+  kali:
+    name: Kali Linux (.deb)
+    runs-on: ubuntu-latest
+    container:
+      image: kalilinux/kali-rolling:latest
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the build toolchain
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            build-essential debhelper pkg-config golang-go libyara-dev
+          go version
+          pkg-config --modversion yara
+
+      - name: Build the binary package
+        run: |
+          dpkg-buildpackage -us -uc -b
+          mkdir -p dist
+          mv ../cau_*.deb ../cau_*.build ../cau_*.changes dist/ || true
+          ls -l dist/
+
+      - name: Install the package
+        run: apt-get install -y --no-install-recommends ./dist/cau_*_amd64.deb
+
+      - name: Smoke test the installed package
+        run: scripts/package-smoke.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cau-kali-rolling
+          path: dist/
+          if-no-files-found: error
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: dist/cau_*_amd64.deb
+
+  arch:
+    name: Arch Linux (.pkg.tar.zst)
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the build toolchain
+        run: |
+          pacman -Sy --noconfirm --needed base-devel go pkgconf yara sudo git
+
+      - name: Build the package as the unprivileged builder
+        run: |
+          # makepkg refuses to run as root, and the package is built from the
+          # committed tree: the vendor/ directory is what makes the build work
+          # without network access to the module proxy.
+          useradd -m -G wheel builder || true
+          chown -R builder "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE/packaging/arch"
+          sudo -u builder makepkg -s --noconfirm
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp *.pkg.tar.zst "$GITHUB_WORKSPACE/dist/"
+          ls -l "$GITHUB_WORKSPACE/dist/"
+
+      - name: Install the package
+        run: pacman -U --noconfirm "$GITHUB_WORKSPACE"/dist/*.pkg.tar.zst
+
+      - name: Smoke test the installed package
+        run: scripts/package-smoke.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cau-archlinux
+          path: dist/
+          if-no-files-found: error
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: dist/*.pkg.tar.zst

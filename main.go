@@ -74,6 +74,7 @@ Usage:
   cau selftest  [--record] [flags]     verify detection content has not been tampered with
   cau verify-self (--from|--url) [flags] verify this binary against the signed release manifest
   cau bundle    update|checksums [flags] produce signed release artifacts (CI)
+  cau completion <shell>                 print a shell completion script (bash|zsh|fish)
   cau version                          print the version
 
 Scan examples:
@@ -151,6 +152,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdVerifySelf(args[1:], stdout, stderr)
 	case "bundle":
 		return cmdBundle(args[1:], stdout, stderr)
+	case "completion":
+		return cmdCompletion(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "%s %s\n", toolName, version)
 		return report.ExitOK

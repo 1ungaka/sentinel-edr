@@ -1,0 +1,52 @@
+cau for Debian / Kali
+=====================
+
+Build notes
+-----------
+
+This package is NOT built with dh-golang. Three of its Go dependencies are not
+packaged in Debian:
+
+  * github.com/hillu/go-yara/v4   (cgo binding to libyara)
+  * github.com/glaslos/ssdeep
+  * github.com/glaslos/tlsh
+
+Because Debian/Kali buildds have no network access, the source tree must carry
+a vendored module tree. Before building the source package, run:
+
+    go mod vendor
+
+and make sure vendor/ is part of the source (committed, or included in the
+.orig tarball). debian/rules sets GOFLAGS=-mod=vendor and GOPROXY=off so the
+build fails loudly if vendor/ is missing rather than attempting to fetch.
+
+The build also requires:
+
+  * golang-go >= 1.24 (CGO_ENABLED=1)
+  * libyara-dev >= 4.3 and pkg-config
+
+Runtime layout
+--------------
+
+  /usr/bin/cau              the scanner CLI
+  /usr/bin/cau-mcp          the Model Context Protocol server
+  /usr/share/cau/rules/     bundled YARA rules
+  /usr/share/cau/signatures/ bundled hash and fuzzy-hash databases
+
+The binary locates /usr/share/cau automatically.
+
+Systemd units
+-------------
+
+Optional units are installed under /lib/systemd/system but are NOT enabled or
+started on install, because this is a scanning tool and should not begin
+walking the filesystem unattended without an operator's decision:
+
+  cau-daemon.service   resident interval scanner
+  cau-scan.service     oneshot scan (driven by the timer)
+  cau-scan.timer       schedules cau-scan.service
+
+They run as the unprivileged system user "cau" (created in the postinst). Edit
+the scan target/interval, then: systemctl enable --now cau-scan.timer
+
+ -- Stephan Botes <stephanbotes0@gmail.com>

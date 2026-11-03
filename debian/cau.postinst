@@ -1,0 +1,19 @@
+#!/bin/sh
+# Create the unprivileged system user that the optional cau-daemon.service and
+# cau-scan.service units run as. Harmless if the units are never enabled.
+set -e
+
+case "$1" in
+    configure)
+        if ! getent passwd cau >/dev/null; then
+            adduser --system --group --no-create-home --home /var/lib/cau \
+                    --shell /usr/sbin/nologin cau
+        fi
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

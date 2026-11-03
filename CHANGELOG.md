@@ -1,12 +1,45 @@
 # Changelog
 
 All notable changes to CAU EDR. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project has not
-cut a tagged release yet, so everything is under Unreleased.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+## 0.1.0 - 2026-11-02
+
+First tagged release: the detection engine, the evaluation harness and the
+packaging for Debian, Kali Linux and Arch Linux all ship as one version. Every
+claim on this page is covered by a test, a measured baseline or a CI gate.
+
+### Notable
+
+- **Packaging that is proven, not claimed.** `dpkg-buildpackage` and `makepkg`
+  both build from this repository (the vendored Go module tree is committed, so
+  the Debian buildds and the AUR builder need no module-proxy network access).
+  `.github/workflows/package.yml` then installs each package into a clean
+  Debian trixie, Kali rolling and Arch Linux container and runs
+  `scripts/package-smoke.sh`, which asserts the verdicts rather than only the
+  exit codes: the malicious smoke sample is caught with zero flags, the benign
+  one stays clean, man pages, completions and content are installed, and
+  `cau selftest` fails closed. A `.deb`, a Kali `.deb` and a
+  `.pkg.tar.zst` are attached to every `v*` release; `scripts/apt-repo.sh`
+  builds a signed apt repository from them (see `docs/packaging.md`).
+- **The detector list and thresholds are one story.** The engine's detectors,
+  thresholds, report formats and content are identical across `cau scan`,
+  `cau-mcp` and the packages: all three install through the same Makefile
+  target, and the version stamped into a binary is derived from the tag, not
+  from the build directory (which is also why the builds are `-trimpath`
+  reproducible).
+- **`cau selftest` refuses to trust unrecorded content.** With no recorded
+  manifest it fails closed (exit 3) instead of reporting success on content
+  nobody measured. The release pipeline records a signed manifest.
+
+
 ### Fixed
+- **`scripts/clean-manifest.sh` was not executable**, although the Makefile
+  invokes it as a command (`make eval-specificity` failed with "Permission
+  denied" on a fresh clone). It now carries the executable bit it always had;
+  the other scripts are only `source`d and so deliberately do not.
 - **Unbounded input read in `cau peel` and `cau intake`** (memory-exhaustion
   DoS). Both read the input file with `os.ReadFile`, so a multi-gigabyte file,
   `/dev/zero`, or a FIFO could exhaust memory (reproduced: a 3 GiB file OOM-killed
@@ -410,6 +443,20 @@ cut a tagged release yet, so everything is under Unreleased.
   `make eval` in CI.
 - JSON (schema 1.2.0) and SARIF 2.1.0 output, `--fail-on` exit-code policy,
   `--jobs` concurrency, resource discovery relative to the install prefix.
+- **Distribution packaging.** Debian/Kali source and binary packages
+  (`debian/`: control, rules, postinst creating the unprivileged `cau` user,
+  postrm removing it only on purge, docs, watch with a real tagged upstream),
+  an Arch `PKGBUILD` + `.SRCINFO` ready for the AUR (`packaging/arch/`), the
+  systemd units installed by both, a `make install` that also carries the man
+  pages, shell completions and the license (plus `make install-systemd`),
+  `scripts/apt-repo.sh` for a signed apt repository, and CI that builds,
+  installs and smoke-scans every one of those packages (`package.yml`).
+- **Shell completion** (`cau completion bash|zsh|fish`): the scripts are
+  embedded in the binary, mirror the real dispatch, accept both `-flag` and
+  `--flag` spellings, and are installed for all three shells. A test asserts
+  every command in `cau help` appears in every script, so the two cannot drift.
+- **Man pages** for `cau` and `cau-mcp` (`docs/cau.1`, `docs/cau-mcp.1`),
+  installed under the share directory and by every package.
 
 ### Changed
 - **Durable atomic writes:** the quarantine vault and the update channel now

@@ -1,0 +1,36 @@
+Source: cau
+Section: admin
+Priority: optional
+Maintainer: Stephan Botes <stephanbotes0@gmail.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ golang-go (>= 2:1.24~),
+ libyara-dev (>= 4.3),
+ pkg-config,
+Standards-Version: 4.7.0
+Homepage: https://github.com/s-b-repo/cau
+Vcs-Browser: https://github.com/s-b-repo/cau
+Vcs-Git: https://github.com/s-b-repo/cau.git
+Rules-Requires-Root: no
+
+Package: cau
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+ adduser,
+Description: transparent open-source malware detection engine
+ CAU is a malware detection and triage engine written in Go. Fourteen
+ detectors read every file once; every finding is explained with a labeled
+ class and a MITRE ATT&CK technique, and every report is machine-readable
+ with CI-friendly exit codes (JSON and SARIF output).
+ .
+ It scans files and directories, inspects the live process table for fileless,
+ masquerade and injection indicators, analyses UEFI firmware images, and
+ gates detection changes against a measured evaluation baseline. YARA matching
+ is provided through libyara.
+ .
+ This package ships the "cau" scanner, the "cau-mcp" Model Context Protocol
+ server, and the bundled detection content (YARA rules and signature
+ databases). Optional systemd units for scheduled and resident scanning are
+ installed but not enabled by default.

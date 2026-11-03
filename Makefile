@@ -7,8 +7,14 @@ BINARY   ?= cau
 MCPBINARY ?= cau-mcp
 PKG      := ./...
 GOFLAGS  ?=
+# VERSION is derived from the newest reachable tag, so `make build` on a
+# checkout always reports the version the tag would ship. -trimpath strips the
+# build directory from recorded file paths, which makes the binary reproducible:
+# the same tree built in different directories (or by two packagers) produces
+# the same bytes.
 VERSION  ?= $(shell command git describe --tags --always --dirty 2>/dev/null || git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -X main.version=$(VERSION)
+BUILDFLAGS ?= -trimpath
 
 CORPUS   ?= corpus/smoke/manifest.json
 CORPUS_DB ?= corpus/smoke/hashes.txt
@@ -21,18 +27,19 @@ EVAL_OUT ?= eval-out
 export CGO_ENABLED=1
 
 .PHONY: all build test test-race vet fmt fmt-check lint bench clean install \
-        eval eval-validate eval-run eval-gate baseline lint-rules coverage \
-        coverage-gate coverage-record fuzz ci build-mcp
+         install-systemd \
+         eval eval-validate eval-run eval-gate baseline lint-rules coverage \
+         coverage-gate coverage-record fuzz ci build-mcp
 
 all: build build-mcp
 
 build:
-	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(BINARY) .
+	go build $(GOFLAGS) $(BUILDFLAGS) -ldflags '$(LDFLAGS)' -o $(BINARY) .
 
 # cau-mcp: the Model Context Protocol server (Phase 3). Same engine, driven by
 # an LLM agent or IDE over JSON-RPC on stdio.
 build-mcp:
-	go build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(MCPBINARY) ./cmd/cau-mcp
+	go build $(GOFLAGS) $(BUILDFLAGS) -ldflags '$(LDFLAGS)' -o $(MCPBINARY) ./cmd/cau-mcp
 
 # TESTFLAGS carries a generous timeout: the static package's real-binary
 # measurement tests (TestMeasureRealELF walks ~5k system files) are slow under
@@ -162,12 +169,40 @@ ci: lint build build-mcp test-race lint-rules coverage-gate eval
 # Installs the binary plus its content to PREFIX. The binary finds
 # $(PREFIX)/share/cau automatically (see resources.go).
 PREFIX ?= /usr/local
+# The share-relative install prefix. Debian, Arch and Fedora all agree on
+# /usr/share for these five trees, so every packaging path installs the same
+# files through the same target instead of reimplementing the list.
+SHARE       = $(DESTDIR)$(PREFIX)/share
+LICENSEDIR  = $(SHARE)/licenses/cau
+DOCDIR      = $(SHARE)/doc/cau
+MANDIR      = $(SHARE)/man/man1
+BASHCOMPDIR = $(SHARE)/bash-completion/completions
+ZSHCOMPDIR  = $(SHARE)/zsh/site-functions
+FISHCOMPDIR = $(SHARE)/fish/vendor_completions.d
+
 install: build build-mcp
 	install -d $(DESTDIR)$(PREFIX)/bin $(DESTDIR)$(PREFIX)/share/cau/rules $(DESTDIR)$(PREFIX)/share/cau/signatures
 	install -m 0755 $(BINARY) $(DESTDIR)$(PREFIX)/bin/$(BINARY)
 	install -m 0755 $(MCPBINARY) $(DESTDIR)$(PREFIX)/bin/$(MCPBINARY)
 	install -m 0644 rules/*.yar $(DESTDIR)$(PREFIX)/share/cau/rules/
 	install -m 0644 signatures/hashes.txt signatures/fuzzy.txt $(DESTDIR)$(PREFIX)/share/cau/signatures/
+	install -d $(LICENSEDIR) $(DOCDIR) $(MANDIR) $(BASHCOMPDIR) $(ZSHCOMPDIR) $(FISHCOMPDIR)
+	install -m 0644 LICENSE $(LICENSEDIR)/LICENSE
+	install -m 0644 README.md CHANGELOG.md $(DOCDIR)/
+	install -m 0644 docs/cau.1 $(MANDIR)/cau.1
+	install -m 0644 docs/cau-mcp.1 $(MANDIR)/cau-mcp.1
+	install -m 0644 completions/cau.bash $(BASHCOMPDIR)/cau
+	install -m 0644 completions/cau.zsh $(ZSHCOMPDIR)/_cau
+	install -m 0644 completions/cau.fish $(FISHCOMPDIR)/cau.fish
+
+# The optional scheduled-scan units are installed but not enabled: a security
+# scanner that starts walking the filesystem at install time is a surprise, not
+# a feature. The Debian package and the PKGBUILD install these too.
+install-systemd:
+	install -d $(DESTDIR)$(PREFIX)/lib/systemd/system
+	install -m 0644 packaging/systemd/cau-daemon.service $(DESTDIR)$(PREFIX)/lib/systemd/system/
+	install -m 0644 packaging/systemd/cau-scan.service $(DESTDIR)$(PREFIX)/lib/systemd/system/
+	install -m 0644 packaging/systemd/cau-scan.timer $(DESTDIR)$(PREFIX)/lib/systemd/system/
 
 clean:
 	rm -rf $(BINARY) $(BINARY).exe $(EVAL_OUT) coverage.out

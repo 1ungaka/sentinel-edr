@@ -5,6 +5,33 @@
 /dist/
 /bin/
 
+# Packaging build output: Debian's debian/ tree and the Arch build dirs are
+# build products of the respective builders, never checked in. The sources
+# that ARE tracked live in debian/ (control, rules, postinst, postrm, docs,
+# watch, changelog, copyright) and packaging/arch/ (PKGBUILD, .SRCINFO).
+# dpkg-buildpackage and makepkg both leave their artifacts in the repository
+# root and in debian/.
+/cau_*.deb
+/cau_*.dsc
+/cau_*.debian.tar.*
+/cau_*.build
+/cau_*.buildinfo
+/cau_*.changes
+/debian/cau/
+/debian/cau.*/
+/debian/*.debhelper
+/debian/*.debhelper.log
+/debian/*.substvars
+/debian/files
+/debian/.debhelper/
+/debian/.gocache/
+/packaging/arch/pkg/
+/packaging/arch/src/
+/packaging/arch/*.pkg.tar.*
+/packaging/arch/cau
+/packaging/arch/cau-mcp
+/aptrepo/
+
 # Go
 *.test
 *.out

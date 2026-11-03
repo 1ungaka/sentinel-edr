@@ -50,7 +50,7 @@ corroborate each other, and never lowers anything.
 ## Quick start
 
 ```sh
-sudo apt install golang-go libyara-dev pkg-config build-essential   # or: brew install go yara pkg-config
+sudo apt install golang-go libyara-dev pkg-config build-essential   # or: pacman -S go yara pkgconf, or: brew install go yara pkg-config
 git clone https://github.com/s-b-repo/cau.git cau && cd cau
 make build
 ./cau scan --file corpus/smoke/malicious/mimikatz_strings.bin --db corpus/smoke/hashes.txt
@@ -142,3 +142,14 @@ environments and never commit them to this repository.
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+## Support
+
+If this work has helped you, you can support more independent security research
+with Monero:
+
+```
+478Lb78LDscQ8ukEDTZqXgEtjoBX1jMuVGvgfy2RagxZZk89YuyVYsganfLUKnwggz8YiBxhG25yWWiHUppG9uarSiseseY
+```
+
+XMR · Optional support, always appreciated.

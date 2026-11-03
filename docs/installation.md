@@ -17,6 +17,8 @@ installation that pkg-config can find, but are not exercised by CI.
 sudo apt install golang-go libyara-dev pkg-config build-essential
 # Fedora
 sudo dnf install golang yara-devel pkgconf-pkg-config gcc
+# Arch Linux
+sudo pacman -S go yara pkgconf
 # macOS
 brew install go yara pkg-config
 ```
@@ -61,15 +63,94 @@ This installs:
 | Path | Content |
 |---|---|
 | `$PREFIX/bin/cau` | the binary |
+| `$PREFIX/bin/cau-mcp` | the MCP server |
 | `$PREFIX/share/cau/rules/*.yar` | the bundled YARA rules |
 | `$PREFIX/share/cau/signatures/hashes.txt` | the hash signature database |
 | `$PREFIX/share/cau/signatures/fuzzy.txt` | the fuzzy-hash database (empty on purpose, see [Detection content](detection-content.md)) |
+| `$PREFIX/share/man/man1/cau*.1` | the man pages |
+| `$PREFIX/share/licenses/cau/LICENSE` | the license |
+| `$PREFIX/share/doc/cau/` | this documentation, the README and the changelog |
+| `$PREFIX/share/bash-completion/completions/cau` | bash completion |
+| `$PREFIX/share/zsh/site-functions/_cau` | zsh completion |
+| `$PREFIX/share/fish/vendor_completions.d/cau.fish` | fish completion |
+
+Print a completion script instead of installing it:
+
+```sh
+cau completion bash   > /etc/bash_completion.d/cau
+cau completion zsh    > /usr/share/zsh/site-functions/_cau
+cau completion fish   > /usr/share/fish/vendor_completions.d/cau.fish
+```
+
+The optional scheduled-scan units are not installed by default:
+
+```sh
+sudo make install-systemd PREFIX=/usr
+```
+
+## Packages
+
+The fastest supported install path. Every package is built, installed and
+smoke-tested by CI on Debian, Kali Linux and Arch Linux — the CI job scans a
+known-malicious sample with the installed binary before it publishes anything
+(see [packaging.md](packaging.md) for the maintainer detail).
+
+### Debian and Kali Linux
+
+```sh
+# GitHub release assets: cau_<version>-1_amd64.deb
+sudo apt install ./cau_<version>-1_amd64.deb
+```
+
+Or add the signed repository once, and take updates through apt:
+
+```sh
+curl -fsSL https://<host>/pubkey.asc | sudo tee /usr/share/keyrings/cau.asc
+echo 'deb [signed-by=/usr/share/keyrings/cau.asc] https://<host> stable main' \
+    | sudo tee /etc/apt/sources.list.d/cau.list
+sudo apt update && sudo apt install cau
+```
+
+The package installs `cau` and `cau-mcp` into `/usr/bin`, the YARA rules and
+signature databases into `/usr/share/cau`, man pages, and shell completions for
+bash, zsh and fish. A systemd timer (`cau-scan.timer`) ships with it but is not
+enabled: `sudo systemctl enable --now cau-scan.timer` starts scheduled scanning.
+Detections are content, not just the binary — update them with `cau update`.
+
+Build the package from source yourself:
+
+```sh
+sudo apt install build-essential debhelper golang-go libyara-dev pkg-config
+dpkg-buildpackage -us -uc          # needs a checkout with vendor/ committed
+sudo apt install ../cau_*_amd64.deb
+```
+
+### Arch Linux
+
+```sh
+# from a checkout of this repository
+cd packaging/arch && makepkg -si
+# or, once published, from the AUR
+yay -S cau
+```
+
+The `PKGBUILD` builds from the committed vendored module tree, so it never
+touches the Go module proxy, and stamps the version from the tag.
+
+### What the package does not do for you
+
+`cau selftest` refuses to trust content it cannot verify and exits 3 until an
+integrity manifest has been recorded with `cau selftest --record`. That is the
+documented behaviour, not a broken install: the manifest that ships in a
+release is the one `cau selftest` verifies against.
 
 ## Release tarballs
 
-CI builds `cau-<tag>-linux-amd64.tar.gz` with the rules and signatures for
-every `v*` tag and attaches it to the GitHub release together with
-`SHA256SUMS`. No tag has been cut yet; until then, build from source.
+CI builds `cau-<tag>-linux-amd64.tar.gz` with the rules and signatures for every
+`v*` tag and attaches it to the GitHub release together with `SHA256SUMS`, the
+`cau_<version>-1_amd64.deb`, the Kali `.deb` and the
+`cau-<version>-1-x86_64.pkg.tar.zst`. No tag has been cut yet; until then, build
+from source.
 
 ## Resource discovery
 

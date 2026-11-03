@@ -1,0 +1,50 @@
+#!/usr/bin/make -f
+# Build CAU for Debian/Kali. The upstream Makefile already does a
+# PREFIX/DESTDIR-aware install, so we drive it directly rather than using
+# dh-golang: the cgo dependency on libyara and the non-Debian Go modules
+# (go-yara, ssdeep, tlsh) make a vendored, Makefile-driven build the simplest
+# correct path.
+
+export DH_VERBOSE = 1
+export CGO_ENABLED = 1
+
+# Debian buildds have no network. go-yara, ssdeep and tlsh are not packaged in
+# Debian, so the source tree must carry a vendor/ directory (run "go mod
+# vendor" and commit it, or include it in the orig tarball). GOFLAGS forces the
+# offline vendored build; GOPROXY=off makes a missing vendor/ fail loudly
+# instead of silently trying to fetch.
+export GOPROXY = off
+export GOFLAGS = -mod=vendor
+export GOCACHE = $(CURDIR)/debian/.gocache
+
+# Upstream version without the Debian revision, stamped into the binary.
+UPSTREAM_VERSION := $(shell dpkg-parsechangelog -SVersion | sed 's/-[^-]*$$//')
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	$(MAKE) build build-mcp VERSION=$(UPSTREAM_VERSION)
+
+# The upstream test suite needs a sample corpus (and, for some targets,
+# network access) that are not available during an offline package build. It
+# is exercised by upstream CI instead (and by scripts/package-smoke.sh below,
+# which installs the built package and scans with it).
+override_dh_auto_test:
+
+# The install is driven by the upstream Makefile rather than dh_auto_install so
+# the binary, the content, the man pages, the completions, the license and the
+# systemd units all come from one file list — the same list the Arch PKGBUILD
+# installs, so the two packages cannot drift apart.
+override_dh_auto_install:
+	$(MAKE) install install-systemd DESTDIR=$(CURDIR)/debian/cau PREFIX=/usr \
+		VERSION=$(UPSTREAM_VERSION)
+
+# Install the units but do not enable or start them: this is a security tool,
+# not a service that should begin scanning the whole filesystem on install.
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start
+
+override_dh_auto_clean:
+	$(MAKE) clean || true
+	rm -rf debian/.gocache

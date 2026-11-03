@@ -1,0 +1,100 @@
+.TH CAU-MCP 1 "2026-11-02" "CAU EDR" "CAU EDR User Commands"
+.SH NAME
+cau\-mcp \- CAU EDR Model Context Protocol server
+.SH SYNOPSIS
+.B cau-mcp
+.RI [ options ]
+.SH DESCRIPTION
+.B cau-mcp
+exposes the same detection engine as
+.BR cau (1)
+over the Model Context Protocol: JSON-RPC 2.0, by default on standard input and
+standard output. An MCP client (an LLM agent or an IDE) drives the engine
+through bounded tools (scan, explain, draft and test rules, coverage), with file
+access confined to the directories passed with \fB\-\-root\fP.
+.PP
+Resources are resolved with the same discovery rules as the scanner, so a
+package install under \fB/usr\fP needs no configuration. The engine behind the
+server is the scanner's, not a second implementation: the detectors, thresholds
+and report formats are identical.
+.PP
+Without any \fB\-\-root\fP, the file-touching tools are disabled and only the
+hash, rule and coverage tools remain available.
+.SH OPTIONS
+.TP
+.BR \-root " " \fIpath\fP
+An allowed scan root for the file-touching tools. Repeatable. With no root,
+file tools are disabled.
+.TP
+.BR \-db " " \fIfile\fR
+The hash signature database. Auto-discovered when omitted. Unlike the scanner,
+the server treats it as required and exits when it cannot be found.
+.TP
+.BR \-rules " " \fIfile\fR
+The YARA rules file or directory. Auto-discovered when omitted; when YARA rules
+are missing, YARA is disabled and the server continues.
+.TP
+.BR \-fuzzy\-db " " \fIfile\fR
+The fuzzy-hash database (TLSH, ssdeep, imphash).
+.TP
+.BR \-max\-bytes " " \fIn\fR
+Per-file size cap for file tools.
+.TP
+.BR \-max\-files " " \fIn\fR
+Maximum files a single scan_dir call may enumerate.
+.TP
+.BR \-yara\-timeout " " \fIduration\fR
+Per-file YARA scan budget (default 10s).
+.TP
+.BR \-http " " \fIaddress\fR
+Serve the streamable-HTTP transport on this address (for example
+\fB127.0.0.1:8923\fP) instead of stdio. Binding to a non-loopback address
+exposes the scanner to everyone who can reach it, within the \fB\-\-root\fP
+sandbox.
+.TP
+.BR \-no\-yara\fR, \fB\-no\-static\fR, \fB\-no\-stego\fR, \fB\-no\-encchain\fR, \fB\-no\-lnk\fR, \fB\-no\-ole\fR, \fB\-no\-pdf\fR, \fB\-no\-iso\fR, \fB\-no\-pkg\fR, \fB\-no\-peel\fR, \fB\-no\-heuristics\fR, \fB\-no\-fusion\fR
+Disable one detector. A detector disabled by a flag is reported as disabled, not
+silently skipped.
+.TP
+.BR \-version\fR
+Print the version and exit.
+.SH EXIT STATUS
+.TP
+.B 0
+The server ran and shut down cleanly.
+.TP
+.B 1
+A startup failure: the signature database could not be loaded, the sandbox or
+an explicit \fB\-\-rules\fP path was invalid, or the transport failed.
+.TP
+.B 2
+The command line was invalid.
+.SH FILES
+.TP
+.I /usr/share/cau/rules/*.yar
+Bundled YARA rules.
+.TP
+.I /usr/share/cau/signatures/hashes.txt
+Bundled hash signature database.
+.TP
+.I /usr/share/cau/signatures/fuzzy.txt
+Bundled fuzzy-hash database.
+.SH ENVIRONMENT
+.TP
+.BR CAU_SIGNATURES ", " CAU_RULES ", " CAU_FUZZY
+Default resource paths, as in
+.BR cau (1).
+.SH EXAMPLES
+Serve to an MCP client, letting it scan a single directory:
+.PP
+.RS
+.nf
+cau-mcp \-\-root /srv/uploads \-\-db /usr/share/cau/signatures/hashes.txt
+.fi
+.RE
+.SH "SEE ALSO"
+.BR cau (1)
+.SH AUTHORS
+Stephan Botes.
+.SH LICENSE
+MIT license.

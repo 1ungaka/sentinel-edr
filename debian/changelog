@@ -1,0 +1,20 @@
+cau (0.1.0-1) unstable; urgency=medium
+
+  * Initial Debian and Kali Linux packaging.
+  * Engine: one-read detection pipeline across hash signatures, YARA, string
+    and API heuristics, static structure (entropy, packer, section and
+    entry-point anomalies, TLSH/ssdeep/imphash similarity) and invisible-
+    codepoint steganography, fused so sub-threshold sources that corroborate
+    each other are reported SUSPICIOUS with the agreeing sources named.
+  * Detections ignore code-signing certificates; verdicts carry a labeled
+    class and a MITRE ATT&CK technique.
+  * Machine-readable output with CI exit codes: text, JSON, SARIF and OCSF.
+  * cau-mcp: the same engine served over the Model Context Protocol.
+  * Bundled content: YARA rules, hash signatures, fuzzy-hash database, with
+    an ATT&CK coverage gate in CI against a recorded technique list.
+  * Optional systemd units (cau-daemon.service, cau-scan.service and
+    cau-scan.timer) are installed but not enabled.
+  * Signed releases: Ed25519-signed signature bundles and a self-verifying
+    binary (cau verify-self).
+
+ -- Stephan Botes <stephanbotes0@gmail.com>  Mon, 02 Nov 2026 21:42:00 +0200

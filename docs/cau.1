@@ -1,0 +1,252 @@
+.TH CAU 1 "2026-11-02" "CAU EDR" "CAU EDR User Commands"
+.SH NAME
+cau \- transparent, open-source malware detection engine
+.SH SYNOPSIS
+.B cau
+.I command
+.RI [ flags ]
+.RI [ path ...]
+.br
+.B cau completion
+.RI < bash | zsh | fish >
+.br
+.B cau version
+.SH DESCRIPTION
+.B CAU EDR
+is a malware detection and triage engine written in Go. Detectors read every
+file once: hash signatures, YARA rules, string and API heuristics, a static
+structural pass (entropy, packer detection, section and entry-point anomalies,
+TLSH/ssdeep/imphash similarity) and a steganography pass (zero-width and other
+invisible codepoints in text and code).
+.PP
+Every finding is explained with a labeled class and a MITRE ATT&CK technique,
+and every report is machine-readable with CI-friendly exit codes. A fusion
+lattice joins the detectors' evidence, so sub-threshold sources that corroborate
+each other are reported as SUSPICIOUS with the sources that agreed named.
+.PP
+Detections do not trust code-signing certificates. A file signed by a known
+key is still scanned on its content; the signature is reported, not believed.
+.SH COMMANDS
+.TP
+.B cau scan \fR[\fPflags\fR] \fP[\fBpath\fP ...\fR]
+Scan files and directories recursively. Flags select detectors, thresholds,
+output and failure behaviour.
+.TP
+.B cau hash \fR[\fPflags\fR] \fP<\fBpath\fP ...\fR\fP
+Print the SHA-256, imphash, TLSH and ssdeep digests of a file.
+.TP
+.B cau cluster \fR[\fPflags\fR] \fP<\fBpath\fP ...\fR\fP
+Group PE files by import-table similarity.
+.TP
+.B cau add-hash \fR[\fPflags\fR]
+Append a hash signature to the database.
+.TP
+.B cau add-fuzzy \fR[\fPflags\fR]
+Append a TLSH, ssdeep or imphash signature.
+.TP
+.B cau eval \fR<\fBvalidate\fP|\fBrun\fP|\fBreport\fP|\fBdiff\fP|\fBgate\fP|\fBpolicy\fP\fR>
+Corpus evaluation harness: validate a manifest, run it, report on it, diff two
+runs and gate a run against a measured baseline.
+.TP
+.B cau heldout \fR<\fBinit\fP|\fBadd\fP|\fBpull\fP|\fBsync\fP|\fBremove\fP|\fBrm\fP|\fBlist\fP|\fBmanifest\fP\fR>
+Manage the encrypted held-out recall-corpus hash database.
+.TP
+.B cau rules \fR<\fBlint\fP|\fBlist\fR\fP\fR
+Lint the YARA rules, or list them with their metadata.
+.TP
+.B cau coverage \fR[\fPflags\fR]
+ATT&CK coverage matrix of the shipped content, as text, JSON, SARIF or an ATT&CK
+Navigator layer; \fB\-\-expect\fP gates the content against a recorded technique list.
+.TP
+.B cau quarantine \fR<\fBadd\fP|\fBlist\fP|\fBrestore\fP|\fBverify\fP|\fBdelete\fR\fP\fR
+Vault flagged files in a protected store and restore them deliberately.
+.TP
+.B cau canary \fR<\fBplant\fP|\fBcheck\fP\fR\fP\fR
+Plant decoy files and detect tampering with them.
+.TP
+.B cau peel \fR[\fPflags\fR] \fP<\fBfile\fR\fP\fR
+Walk an obfuscation chain, reporting depth as a signal in its own right.
+.TP
+.B cau firmware \fR[\fPflags\fR] \fP<\fBimage\fR\fP\fR
+Parse a UEFI firmware image: firmware-volume and file inventory, integrity and
+an implant blocklist.
+.TP
+.B cau ps \fR[\fPflags\fR]
+Scan the live process table for fileless, masquerade and injection indicators.
+.TP
+.B cau installed \fR[\fPflags\fR]
+Audit installed-package maintainer scripts (dpkg and pacman) for root-level
+tradecraft.
+.TP
+.B cau feed \fR<\fBlist\fP|\fBcheck\fP|\fBupdate\fR\fP\fR
+Manage the local abuse-intel feed from its offline cache.
+.TP
+.B cau intake \fB\-\-format \fP<\fPfmt\fP>\fP \fR[\fPflags\fR]
+Ingest a threat-intel feed into the signature database.
+.TP
+.B cau update \fB\-\-from\fP|\fB\-\-url\fP \fR[\fPflags\fR]
+Install a signed signature-database bundle; fail-closed on a bad signature.
+.TP
+.B cau selftest \fR[\fB\-\-record\fP\fR] \fR[\fPflags\fR]
+Verify the bundled detection content has not been tampered with.
+.TP
+.B cau verify\-self \fB\-\-from\fP|\fB\-\-url\fP \fR[\fPflags\fR]
+Verify this binary against the signed release manifest.
+.TP
+.B cau bundle \fR<\fBupdate\fP|\fBchecksums\fR\fR\fR
+Produce signed release artifacts; intended for CI.
+.TP
+.B cau completion \fR<\fBshell\fP\fR\fP\fR
+Print the shell-completion script for \fBbash\fP, \fBzsh\fP or \fBfish\fP.
+.TP
+.B cau version
+Print the engine version.
+.SH OPTIONS
+The options carried by \fBcau scan\fP, the command most often used:
+.TP
+.BR \-file " " \fIfile\fR
+Scan a single file (positional arguments are accepted too).
+.TP
+.BR \-dir " " \fIdirectory\fR
+Scan a directory recursively.
+.TP
+.BR \-db " " "\fIfile\fR"
+The hash signature database. When omitted it is auto-discovered.
+.TP
+.BR \-rules " " "\fIdirectory\fR"
+The YARA rules directory.
+.TP
+.BR \-format " " "\fBtext\fP|\fBjson\fP|\fBsarif\fP|\fBocsf\fR"
+Output format. Machine formats never write the banner to stdout, so stdout is
+always valid for a parser.
+.TP
+.BR \-fail\-on " " "\fBclean\fP|\fBheuristic\fP|\fBmalicious\fP|\fBnone\fR
+The findings tier that makes the run exit non-zero.
+.TP
+.BR \-jobs " " \fIn\fR
+Parallel workers.
+.TP
+.BR \-interval " " \fIduration\fR
+Daemon mode: rescan every interval (for example \fB15m\fR) until a termination
+signal arrives.
+.TP
+.BR \-pretty\fR, \fB\-quiet\fR
+Pretty-print machine formats, or suppress the banner and progress.
+.TP
+.B \-no\-yara\fR, \fB\-no\-heur\fR, \fB\-no\-static\fR, \fB\-no\-fuzzy\fR, \fB\-no\-stego\fR, \fB\-no\-fusion\fR
+Disable a single detector. Disabled detectors are named in the report rather
+than silently omitted.
+.PP
+Each detector has a matching threshold flag, for example
+\fB\-heuristic\-threshold\fR and \fB\-stego\-threshold\fR, that sets the score at
+which the tier is reported. \fBcau scan \-h\fR lists them all.
+.SH EXIT STATUS
+.TP
+.B 0
+The run completed and nothing at or above \fB\-\-fail\-on\fR was found.
+.TP
+.B 1
+A finding at or above \fB\-\-fail\-on\fR was reported.
+.TP
+.B 2
+The run completed but some inputs could not be scanned. The package manager and
+CI use this for a partial scan.
+.TP
+.B 3
+The run itself failed: a missing signature database, an unusable input, a
+timeout.
+.TP
+.B 4
+The command line was invalid.
+.SH RESOURCES
+The signature database, YARA rules and fuzzy database are located in this order,
+the first that exists winning:
+.RS
+.IP 1. 3
+the matching command-line flag,
+.IP 2. 3
+the matching environment variable
+.RB ( CAU_SIGNATURES ,
+.BR CAU_RULES ,
+.BR CAU_FUZZY ),
+.IP 3. 3
+next to the binary,
+.IP 4. 3
+the share directory relative to the binary, which is how a package install
+under \fB/usr\fP is found,
+.IP 5. 3
+\fB/usr/local/share/cau\fP and \fB/usr/share/cau\fP,
+.IP 6. 3
+the current working directory.
+.RE
+.PP
+When nothing is found, the error lists every path that was tried. A missing
+signature database is fatal; missing rules or a missing fuzzy database disable
+that detector with a message on stderr, because advertising a feature that
+silently did not run is worse than reporting it off.
+.SH FILES
+.TP
+.I /usr/share/cau/rules/*.yar
+Bundled YARA rules.
+.TP
+.I /usr/share/cau/signatures/hashes.txt
+Bundled hash signature database.
+.TP
+.I /usr/share/cau/signatures/fuzzy.txt
+Bundled fuzzy-hash database.
+.TP
+.I /usr/bin/cau\fR, \fI/usr/bin/cau-mcp
+The scanner and the Model Context Protocol server.
+.TP
+.I /usr/share/man/man1/cau.1
+This manual page.
+.SH EXAMPLES
+Scan one file and exit non-zero on a malicious verdict:
+.PP
+.RS
+.nf
+cau scan --file suspicious.exe
+.fi
+.RE
+.PP
+Scan a tree, emitting SARIF for CI, and fail only on malicious findings:
+.PP
+.RS
+.nf
+cau scan --dir ./build --format sarif --output cau.sarif --fail-on malicious
+.fi
+.RE
+.PP
+Run as a scheduled service; the unit ships with the package and is not enabled
+by default:
+.PP
+.RS
+.nf
+sudo install -Dm0644 cau-scan.timer /etc/systemd/system/
+sudo systemctl enable --now cau-scan.timer
+.fi
+.RE
+.SH ENVIRONMENT
+.TP
+.B CAU_SIGNATURES
+Path to the hash signature database.
+.TP
+.B CAU_RULES
+Path to the YARA rules directory.
+.TP
+.B CAU_FUZZY
+Path to the fuzzy-hash database.
+.TP
+.B CAU_SIGNERS
+Path to the known-abused-signer blocklist.
+.SH "SEE ALSO"
+.BR cau\-mcp (1),
+.B sha256sum (1),
+.BR zshcompsys (1)
+.PP
+The project wiki and the evaluation methodology are in the repository:
+.BR https://github.com/s-b-repo/cau
+.SH AUTHORS
+CAU EDR is written and maintained by Stephan Botes.
+.SH LICENSE
+MIT license.

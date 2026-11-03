@@ -56,12 +56,21 @@ jobs:
           # The upstream version is the changelog version without the Debian
           # revision, the same derivation debian/rules stamps into the binary.
           upver=$(dpkg-parsechangelog -SVersion | sed 's/-[^-]*$//')
-          # A 3.0 (quilt) source package needs the upstream tarball, which is
-          # what `uscan` fetches from the tag that debian/watch describes
-          # (a .tar.gz is accepted; the archive format matches the name).
-          curl -fsSL -o "../cau_${upver}.orig.tar.gz" \
-            "https://github.com/s-b-repo/cau/archive/refs/tags/v${upver}.tar.gz"
-          dpkg-buildpackage -us -uc          # -us -uc: unsigned, built inside CI
+          if [ "v${upver}" = "${GITHUB_REF_NAME:-}" ]; then
+            # From a release tag the tree IS the upstream tarball, so build the
+            # source package too: a 3.0 (quilt) source build needs the upstream
+            # tarball that `uscan` fetches from the tag debian/watch describes,
+            # and a .tar.gz from GitHub is accepted (the format matches the
+            # name).
+            curl -fsSL -o "../cau_${upver}.orig.tar.gz" \
+              "https://github.com/s-b-repo/cau/archive/refs/tags/v${upver}.tar.gz"
+            dpkg-buildpackage -us -uc        # source + binary, unsigned
+          else
+            # On a branch the tree has moved past the tag, and dpkg-source
+            # would abort with "unexpected upstream changes". The binary
+            # package, which is what ships to users, builds from the tree.
+            dpkg-buildpackage -us -uc -b
+          fi
           mkdir -p dist
           for f in ../cau_*.deb ../cau_*.dsc ../cau_*.debian.tar.* \
                    ../cau_*.build ../cau_*.buildinfo ../cau_*.changes; do

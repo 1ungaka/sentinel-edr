@@ -51,13 +51,21 @@ jobs:
 
       - name: Build the source and binary packages
         run: |
-          # -us -uc: unsigned, produced inside CI. The SOURCE package is the
-          # real proof that debian/ plus the committed vendor/ tree build
-          # offline, so this builds both, not only the binary.
-          dpkg-buildpackage -us -uc
+          set -eu
+          # The upstream version is the changelog version without the Debian
+          # revision, the same derivation debian/rules stamps into the binary.
+          upver=$(dpkg-parsechangelog -SVersion | sed 's/-[^-]*$//')
+          # A 3.0 (quilt) source package needs the upstream tarball, which is
+          # what `uscan` fetches from the tag that debian/watch describes
+          # (a .tar.gz is accepted; the archive format matches the name).
+          curl -fsSL -o "../cau_${upver}.orig.tar.gz" \
+            "https://github.com/s-b-repo/cau/archive/refs/tags/v${upver}.tar.gz"
+          dpkg-buildpackage -us -uc          # -us -uc: unsigned, built inside CI
           mkdir -p dist
-          mv ../cau_*.deb ../cau_*.build ../cau_*.buildinfo ../cau_*.changes dist/ || true
-          mv ../cau_*.dsc ../cau_*.tar.* dist/ || true
+          for f in ../cau_*.deb ../cau_*.dsc ../cau_*.debian.tar.* \
+                   ../cau_*.build ../cau_*.buildinfo ../cau_*.changes; do
+            mv "$f" dist/
+          done
           ls -l dist/
 
       - name: Install the package

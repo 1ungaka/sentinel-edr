@@ -231,13 +231,18 @@ jobs:
           # orig tarball and `uscan` can all pin it.
           #
           # Determinism is built in three steps, and all three are load-bearing:
-          #   1. The distro packaging is excluded by pathspec, not by
+          #   1. What is excluded is chosen by pathspec, not by
           #      .gitattributes export-ignore. export-ignore looks right and is
           #      the wrong tool: GitHub's codeload archive — which
           #      actions/checkout downloads instead of cloning — applies it, so
           #      marking debian/ export-ignore silently deleted debian/,
           #      packaging/ and .github/ from every CI checkout and three jobs
           #      died on a missing debian/changelog.
+          #      What comes out: packaging/arch/ (the PKGBUILD that hashes this
+          #      tarball, so it cannot be inside it), debian/ and .github/.
+          #      What stays: packaging/systemd/, because the PKGBUILD installs
+          #      the units out of the source tree, and excluding the whole
+          #      tree breaks `make install-systemd` for Arch users.
           #   2. tar restamps every member to a FIXED epoch. Using the tag's
           #      commit date here would look natural and would be wrong: it
           #      makes the bytes change on every new commit, and the recorded
@@ -252,7 +257,7 @@ jobs:
           v=${tag#v}
           stage=$(mktemp -d)
           git archive --format=tar --prefix="cau-${v}/" "$tag" -- . \
-            ':(exclude)packaging' ':(exclude)debian' ':(exclude).github' |
+            ':(exclude)packaging/arch' ':(exclude)debian' ':(exclude).github' |
             tar -x -C "$stage"
           tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 \
             --numeric-owner --format=gnu -C "$stage" -cf - "cau-${v}" |

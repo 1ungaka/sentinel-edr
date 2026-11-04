@@ -13,11 +13,13 @@ optdepends=('systemd: scheduled and resident scanning units'
             'zsh: zsh completion for cau'
             'fish: fish completion for cau')
 provides=('cau-edr')
-source=("https://github.com/s-b-repo/cau/archive/refs/tags/v${pkgver}/${pkgname}-${pkgver}.tar.gz")
-# Recorded from the tagged tarball: `sha256sum cau-${pkgver}.tar.gz` on the
-# file GitHub serves at the source URL above. Refreshed with updpkgsums on each
-# new tag (see docs/packaging.md).
-sha256sums=('ed728293d6709a0e51850ce25bf553fab7c41bed2c7367d60ab150f0cf0e1140')
+source=("https://github.com/s-b-repo/cau/releases/download/v${pkgver}/${pkgname}-${pkgver}.tar.gz")
+# The release asset, not the per-request /archive/ URL: GitHub regenerates the
+# archive for every request and the bytes are not stable, so a checksum taken
+# from one fetch does not match the next. `sha256sum cau-${pkgver}.tar.gz` on
+# the release asset above, refreshed with updpkgsums on each tag
+# (see docs/packaging.md).
+sha256sums=('65280451c4f5a2718d90ea8ec130efcf39d9665f8565bc98acb6bae123c0d0a9')
 
 build() {
     cd "${srcdir}/${pkgname}-${pkgver}"

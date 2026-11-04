@@ -164,9 +164,22 @@ are Debian-based, without a second one.
 3. Bump `debian/changelog` to the same upstream version with a `-1` Debian
    revision; `debian/rules` derives the binary's version from it.
 4. Commit, then `git tag -a vX.Y.Z -m '...'` and `git push origin main --tags`.
-5. CI builds and uploads the packages and the source tarball to the release; run
-   `scripts/apt-repo.sh` over the downloaded artifacts and republish the
+   Cut the tag once, after the tree is final: the `PKGBUILD` checksum is a
+   function of the tag's bytes, so moving a tag invalidates it (this cost a
+   green Debian and Kali a red Arch).
+5. CI builds and uploads the packages and the source tarball to the release;
+   run `scripts/apt-repo.sh` over the downloaded artifacts and republish the
    repository.
+
+### The source tarball is a release asset, on purpose
+
+The release job builds it with `git archive`, which is byte-deterministic (two
+runs produce the same sha256), and the `PKGBUILD` source URL points at that
+asset. GitHub's `/archive/<ref>/...tar.gz` URLs are regenerated per request and
+are **not** byte-stable: the checksum recorded from one fetch is not the bytes
+the next fetcher downloads, which is exactly how the Arch build broke while the
+tree was unchanged. A fixed asset gives the `PKGBUILD`, the Debian `.orig`
+tarball and `uscan` something they can pin.
 
 ## What is not automated yet
 

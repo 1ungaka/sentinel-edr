@@ -222,6 +222,14 @@ jobs:
             cp "$art" "dist/${art}-${tag}-linux-amd64"
             tar -czf "dist/${art}-${tag}-linux-amd64.tar.gz" "$art" rules signatures LICENSE README.md
           done
+          # The source tarball, and why it is built here rather than linked:
+          # GitHub's /archive/ tarballs are generated per request and are not
+          # byte-stable, so a sha256 recorded from one fetch does not match the
+          # bytes a packager downloads next (this is what broke the Arch build:
+          # makepkg's source validation failed on a URL the tree had not
+          # changed). A release asset is fixed bytes, so the PKGBUILD, the
+          # Debian orig tarball and `uscan` can all pin it.
+          git archive --prefix="cau-${tag#v}/" -o "dist/cau-${tag#v}.tar.gz" "$tag"
           ls -l dist
 
       - name: Sign the update bundle, the integrity baseline and the checksums

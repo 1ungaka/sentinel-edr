@@ -16,10 +16,17 @@ provides=('cau-edr')
 source=("https://github.com/s-b-repo/cau/releases/download/v${pkgver}/${pkgname}-${pkgver}.tar.gz")
 # The release asset, not the per-request /archive/ URL: GitHub regenerates the
 # archive for every request and the bytes are not stable, so a checksum taken
-# from one fetch does not match the next. `sha256sum cau-${pkgver}.tar.gz` on
-# the release asset above, refreshed with updpkgsums on each tag
-# (see docs/packaging.md).
-sha256sums=('a9f156fe7c9e1515f65e0d915ab936260d70062076eb7df56361de005ca6bbe7')
+# from one fetch is not the bytes the next fetcher downloads.
+#
+# Where this value comes from: sha256sum of the cau-0.1.0.tar.gz published at
+# the source URL above, which is what makepkg validates. It is not reproducible
+# locally and need not be: the release job builds the tarball with a fixed epoch,
+# sorted names and zeroed owner/group out of a tree that excludes packaging/
+# (see .gitattributes), so the asset depends on the tagged source alone, and the
+# same runner image produces the same bytes for the same source. Refresh it with
+# updpkgsums or by hashing the published asset after a new tag (see
+# docs/packaging.md).
+sha256sums=('7249f2a9e90614272e50e0e12ce869455f67b64ece3b768251beeb25d06f266d')
 
 build() {
     cd "${srcdir}/${pkgname}-${pkgver}"

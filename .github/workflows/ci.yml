@@ -229,11 +229,29 @@ jobs:
           # makepkg's source validation failed on a URL the tree had not
           # changed). This asset is fixed bytes, so the PKGBUILD, the Debian
           # orig tarball and `uscan` can all pin it.
-          # `git archive` is itself byte-deterministic for a given tree (verified
-          # locally: two runs, one checksum), and .gitattributes export-ignores
-          # the distro packaging out of it, so the hash does not move when
-          # packaging/arch/PKGBUILD or debian/ is edited.
-          git archive --prefix="cau-${tag#v}/" -o "dist/cau-${tag#v}.tar.gz" "$tag"
+          #
+          # Determinism is built in three steps, and all three are load-bearing:
+          #   1. .gitattributes export-ignores the distro packaging (packaging/,
+          #      debian/, .github/) so the hash does not move when packaging is
+          #      edited — and so the PKGBUILD does not hash a tarball that
+          #      contains itself.
+          #   2. tar restamps every member to a FIXED epoch. Using the tag's
+          #      commit date here would look natural and would be wrong: it
+          #      makes the bytes change on every new commit, and the recorded
+          #      checksum would only match the tree at the instant it was
+          #      taken. A constant makes the checksum a function of content
+          #      alone, which is what a packager needs to pin.
+          #   3. --sort=name, owner/group 0 and gzip -n remove the remaining
+          #      per-run variation (name order, usernames, gzip timestamp).
+          # Verified locally: two runs produce one checksum, and the checksum is
+          # unchanged by a commit that only touches packaging/.
+          SOURCE_DATE_EPOCH=1735689600
+          stage=$(mktemp -d)
+          git archive --format=tar --prefix="cau-${tag#v}/" "$tag" | tar -x -C "$stage"
+          tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 \
+            --numeric-owner --format=gnu -C "$stage" -cf - "cau-${tag#v}" |
+            gzip -9n > "dist/cau-${tag#v}.tar.gz"
+          rm -rf "$stage"
           ls -l dist
 
       - name: Sign the update bundle, the integrity baseline and the checksums

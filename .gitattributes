@@ -1,0 +1,14 @@
+# Attributes for `git archive`, which is what the release job uses to build the
+# source tarball attached to every release. An "upstream source" tarball excludes
+# the distro packaging, the same way a project that ships its own tarball does
+# not include debian/ or the PKGBUILD inside it: those are added by the packager.
+#
+# This matters for a reason that is not cosmetic. The PKGBUILD must record the
+# sha256 of the tarball its source line points at, and that tarball used to
+# contain the PKGBUILD itself, so the checksum could never converge: editing the
+# hash changed the tree, which changed the tarball, which changed the hash.
+# Excluding packaging/ from the archive makes the hash a function of the tagged
+# source only, so it stays valid while packaging files are edited.
+/packaging/ export-ignore
+/debian/ export-ignore
+/.github/ export-ignore

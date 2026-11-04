@@ -16,9 +16,15 @@ bounded runtime:
 
 | Job | Container | Builds | Then |
 |---|---|---|---|
-| `Debian (.deb)` | `debian:trixie` | source + binary `.deb` (the source package is built from the tag tarball) | `dpkg -i`, then `scripts/package-smoke.sh` |
-| `Kali Linux (.deb)` | `kalilinux/kali-rolling:latest` | binary `.deb` | `apt install ./*.deb`, then smoke test |
-| `Arch Linux (.pkg.tar.zst)` | `archlinux:latest` | `.pkg.tar.zst` from the `PKGBUILD` | `pacman -U`, then smoke test |
+| `Debian (.deb, x86_64)` / `Debian (.deb, arm64)` | `debian:trixie` | source + binary `.deb` (the source package is built from the tag tarball) | `dpkg -i`, then `scripts/package-smoke.sh` |
+| `Kali Linux (.deb, x86_64)` / `Kali Linux (.deb, arm64)` | `kalilinux/kali-rolling:latest` | binary `.deb` | `apt install ./*.deb`, then smoke test |
+| `Arch Linux (.pkg.tar.zst, x86_64)` / `Arch Linux (.pkg.tar.zst, arm64)` | `archlinux:latest` | `.pkg.tar.zst` from the `PKGBUILD` | `pacman -U`, then smoke test |
+
+Both architectures are built natively, not cross-compiled: the arm64 jobs run
+on an arm64 runner (`ubuntu-24.04-arm`), so the cgo binding to libyara is
+compiled, not translated, and the package is the one an arm64 user actually
+gets. `arch=('x86_64' 'aarch64')` in the PKGBUILD is the declaration of that,
+and `.SRCINFO` carries both entries.
 
 Each job attaches its artifact to the GitHub release when the run is triggered
 by a `v*` tag, which now works because every publishing job carries
@@ -192,13 +198,13 @@ removes `debian/` from every CI checkout.
 
 ## What is not automated yet
 
-- **arm64.** CI publishes amd64 only. The PKGBUILD and `debian/` trees are
-  architecture-independent code, so a GitHub Actions arm64 runner (or a
-  crossbuild with `dpkg --print-architecture`) can produce an `arm64` `.deb` by
-  repeating the same steps; the smoke test script and the apt-repo script accept
-  the extra architecture as an argument already.
 - **Kali Linux repository.** Kali packages are built from Kali's own
   repositories. The `.deb` installs on Kali unchanged; landing it in Kali's repos
   is a submission to Kali's packaging queue, not a change to this code.
 - **No RPM or Homebrew core.** The Fedora and macOS paths stay build-from-source
   (they are documented in [installation.md](installation.md)).
+- **arm64 user-space libraries.** The arm64 package is built on an arm64 runner
+  against that image's libyara, so it links only what the image provides. A
+  distro that ships an older libyara than the base image would need a rebuild
+  there; the same is true of every package here, and `dpkg` states the
+  dependency.

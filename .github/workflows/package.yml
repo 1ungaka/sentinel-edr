@@ -37,9 +37,23 @@ concurrency:
 
 jobs:
   debian:
-    name: Debian (.deb)
-    runs-on: ubuntu-latest
+    name: Debian (.deb, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both architectures, natively: the cgo binding to libyara is built, not
+        # cross-compiled, so the arm64 package is the one an arm64 user gets.
+        include:
+          - {arch: amd64, runner: ubuntu-latest}
+          - {arch: arm64, runner: ubuntu-24.04-arm}
+    # The release step attaches the built package to a tag ref, which needs
+    # contents: write; the workflow-wide contents: read meant a tag build could
+    # only fail that upload with a 403 and publish nothing.
+    permissions:
+      contents: write
+    container: debian:trixie
     # The release step attaches the built package to a tag ref, which needs
     # contents: write; the workflow-wide contents: read meant a tag build could
     # only fail that upload with a 403 and publish nothing.
@@ -104,21 +118,27 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: cau-debian-trixie
+          name: cau-debian-trixie-${{ matrix.arch }}
           path: dist/
           if-no-files-found: error
 
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: dist/cau_*_amd64.deb
+          files: 'dist/cau_*_${{ matrix.arch }}.deb'
           # A release tag must publish every distro leg: a silent pattern miss
           # is a published release missing its package.
           fail_on_unmatched_files: true
 
   kali:
-    name: Kali Linux (.deb)
-    runs-on: ubuntu-latest
+    name: Kali Linux (.deb, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: amd64, runner: ubuntu-latest}
+          - {arch: arm64, runner: ubuntu-24.04-arm}
     timeout-minutes: 30
     # The release step attaches the built package to a tag ref, which needs
     # contents: write; the workflow-wide contents: read meant a tag build could
@@ -173,21 +193,27 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: cau-kali-rolling
+          name: cau-kali-rolling-${{ matrix.arch }}
           path: dist/
           if-no-files-found: error
 
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/v')
         with:
-          files: dist/cau_*_amd64.deb
+          files: 'dist/cau_*_${{ matrix.arch }}.deb'
           # A release tag must publish every distro leg: a silent pattern miss
           # is a published release missing its package.
           fail_on_unmatched_files: true
 
   arch:
-    name: Arch Linux (.pkg.tar.zst)
-    runs-on: ubuntu-latest
+    name: Arch Linux (.pkg.tar.zst, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {arch: amd64, runner: ubuntu-latest}
+          - {arch: arm64, runner: ubuntu-24.04-arm}
     timeout-minutes: 30
     # The release step attaches the built package to a tag ref, which needs
     # contents: write; the workflow-wide contents: read meant a tag build could
@@ -229,7 +255,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: cau-archlinux
+          name: cau-archlinux-${{ matrix.arch }}
           path: dist/
           if-no-files-found: error
 

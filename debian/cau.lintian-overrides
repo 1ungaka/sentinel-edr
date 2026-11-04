@@ -6,3 +6,10 @@
 # (docs/architecture.md, "cau installed"). Reading it is the feature, so the
 # dpkg database warning is overridden rather than the capability removed.
 cau: uses-dpkg-database-directly
+
+# Debian's archive wants an initial upload to close its ITP bug. This package is
+# not filed there yet — it ships from its own releases and a maintainer-hosted
+# repository (docs/packaging.md) — so there is no bug number to close. When it
+# is filed, delete this override and add the "Closes: #nnnnnn" line to
+# debian/changelog instead.
+cau: initial-upload-closes-no-bugs

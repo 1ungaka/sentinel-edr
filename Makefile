@@ -14,7 +14,12 @@ GOFLAGS  ?=
 # the same bytes.
 VERSION  ?= $(shell command git describe --tags --always --dirty 2>/dev/null || git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -X main.version=$(VERSION)
-BUILDFLAGS ?= -trimpath
+# -trimpath strips the build directory from recorded file paths, which makes the
+# binary reproducible; -buildmode=pie makes it position-independent, which is
+# what Debian's hardening flags ask for and what lintian checks (without it both
+# binaries are flagged hardening-no-pie). Go passes CGO_ENABLED builds through
+# the C compiler's PIE mode, so the libyara cgo binding keeps working.
+BUILDFLAGS ?= -trimpath -buildmode=pie
 
 CORPUS   ?= corpus/smoke/manifest.json
 CORPUS_DB ?= corpus/smoke/hashes.txt

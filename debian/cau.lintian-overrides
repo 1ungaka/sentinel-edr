@@ -1,0 +1,8 @@
+# Lintian overrides for cau, with the reason each one is deliberate.
+#
+# cau installed audits the maintainer and install-time scripts of installed
+# packages in place, offline and read-only, and dpkg's own metadata under
+# /var/lib/dpkg/info is where those scripts live
+# (docs/architecture.md, "cau installed"). Reading it is the feature, so the
+# dpkg database warning is overridden rather than the capability removed.
+cau: uses-dpkg-database-directly

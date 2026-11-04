@@ -173,13 +173,22 @@ are Debian-based, without a second one.
 
 ### The source tarball is a release asset, on purpose
 
-The release job builds it with `git archive`, which is byte-deterministic (two
-runs produce the same sha256), and the `PKGBUILD` source URL points at that
-asset. GitHub's `/archive/<ref>/...tar.gz` URLs are regenerated per request and
-are **not** byte-stable: the checksum recorded from one fetch is not the bytes
-the next fetcher downloads, which is exactly how the Arch build broke while the
-tree was unchanged. A fixed asset gives the `PKGBUILD`, the Debian `.orig`
-tarball and `uscan` something they can pin.
+The release job builds it with `git archive` (pathspec-excluding the distro
+packaging, a fixed mtime, sorted names, zeroed owner/group, `gzip -n`), and the
+`PKGBUILD` source URL points at that asset. GitHub's `/archive/<ref>/...tar.gz`
+URLs are regenerated per request and are **not** byte-stable: the checksum
+recorded from one fetch is not the bytes the next fetcher downloads, which is
+exactly how the Arch build broke while the tree was unchanged. A fixed asset
+gives the `PKGBUILD`, the Debian `.orig` tarball and `uscan` something they can
+pin.
+
+The packaging is excluded from the archive so that the checksum is a function of
+the tagged *source* alone: editing `packaging/arch/PKGBUILD` or `debian/`
+neither changes the tarball nor invalidates the recorded hash. The exclusion is
+done with a pathspec, never with `.gitattributes` `export-ignore`, because
+GitHub's codeload archive respects that attribute and `actions/checkout`
+downloads the archive rather than cloning — marking `debian/` export-ignore
+removes `debian/` from every CI checkout.
 
 ## What is not automated yet
 

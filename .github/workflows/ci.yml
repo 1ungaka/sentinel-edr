@@ -231,10 +231,13 @@ jobs:
           # orig tarball and `uscan` can all pin it.
           #
           # Determinism is built in three steps, and all three are load-bearing:
-          #   1. .gitattributes export-ignores the distro packaging (packaging/,
-          #      debian/, .github/) so the hash does not move when packaging is
-          #      edited — and so the PKGBUILD does not hash a tarball that
-          #      contains itself.
+          #   1. The distro packaging is excluded by pathspec, not by
+          #      .gitattributes export-ignore. export-ignore looks right and is
+          #      the wrong tool: GitHub's codeload archive — which
+          #      actions/checkout downloads instead of cloning — applies it, so
+          #      marking debian/ export-ignore silently deleted debian/,
+          #      packaging/ and .github/ from every CI checkout and three jobs
+          #      died on a missing debian/changelog.
           #   2. tar restamps every member to a FIXED epoch. Using the tag's
           #      commit date here would look natural and would be wrong: it
           #      makes the bytes change on every new commit, and the recorded
@@ -246,11 +249,14 @@ jobs:
           # Verified locally: two runs produce one checksum, and the checksum is
           # unchanged by a commit that only touches packaging/.
           SOURCE_DATE_EPOCH=1735689600
+          v=${tag#v}
           stage=$(mktemp -d)
-          git archive --format=tar --prefix="cau-${tag#v}/" "$tag" | tar -x -C "$stage"
+          git archive --format=tar --prefix="cau-${v}/" "$tag" -- . \
+            ':(exclude)packaging' ':(exclude)debian' ':(exclude).github' |
+            tar -x -C "$stage"
           tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 \
-            --numeric-owner --format=gnu -C "$stage" -cf - "cau-${tag#v}" |
-            gzip -9n > "dist/cau-${tag#v}.tar.gz"
+            --numeric-owner --format=gnu -C "$stage" -cf - "cau-${v}" |
+            gzip -9n > "dist/cau-${v}.tar.gz"
           rm -rf "$stage"
           ls -l dist
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cau-edr/cau/scanner"
+	"github.com/s-b-repo/cau/scanner"
 )
 
 // Tests for the scanner fields that carry per-result context: the threshold a

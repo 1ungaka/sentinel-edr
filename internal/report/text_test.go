@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cau-edr/cau/scanner"
+	"github.com/s-b-repo/cau/scanner"
 )
 
 const textGolden = ` [!] DETECTED (Hash) — samples/wannacry.exe

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cau-edr/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/report"
 )
 
 func TestCLISelftestRecordVerifyTamper(t *testing.T) {

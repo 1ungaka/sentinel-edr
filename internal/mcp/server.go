@@ -21,7 +21,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/cau-edr/cau/scanner"
+	"github.com/s-b-repo/cau/scanner"
 )
 
 // ProtocolVersion is the MCP revision this server implements. When a client

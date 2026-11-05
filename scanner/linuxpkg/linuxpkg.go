@@ -33,7 +33,7 @@ package linuxpkg
 import (
 	"os"
 
-	"github.com/cau-edr/cau/internal/intel"
+	"github.com/s-b-repo/cau/internal/intel"
 )
 
 // DefaultThreshold is the shipped score at which a package is reported

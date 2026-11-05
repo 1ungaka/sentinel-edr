@@ -33,7 +33,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cau-edr/cau/scanner"
+	"github.com/s-b-repo/cau/scanner"
 )
 
 // maxFetchBytes caps a fetched feed so a hostile or runaway endpoint cannot

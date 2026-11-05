@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/cau-edr/cau/internal/procscan"
-	"github.com/cau-edr/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/procscan"
+	"github.com/s-b-repo/cau/internal/report"
 )
 
 func psUsage(w io.Writer) {

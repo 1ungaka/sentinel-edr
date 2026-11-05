@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cau-edr/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/report"
 )
 
 func TestCLIScanWithSignerBlocklist(t *testing.T) {

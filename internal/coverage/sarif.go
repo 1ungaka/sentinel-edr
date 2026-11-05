@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cau-edr/cau/internal/attack"
+	"github.com/s-b-repo/cau/internal/attack"
 )
 
 // SARIF coverage rendering. Each ATT&CK technique the matrix knows about —

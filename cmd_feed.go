@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cau-edr/cau/internal/intel"
-	"github.com/cau-edr/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/intel"
+	"github.com/s-b-repo/cau/internal/report"
 )
 
 // feedEnv is the environment variable that overrides the abuse-feed path.

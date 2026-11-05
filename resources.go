@@ -1,6 +1,6 @@
 package main
 
-import "github.com/cau-edr/cau/internal/resources"
+import "github.com/s-b-repo/cau/internal/resources"
 
 // Resource discovery is implemented in internal/resources so the `cau-mcp`
 // server resolves resources identically. These aliases keep the CLI's call

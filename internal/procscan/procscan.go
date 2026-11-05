@@ -36,8 +36,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cau-edr/cau/internal/intel"
-	"github.com/cau-edr/cau/scanner/linuxpkg"
+	"github.com/s-b-repo/cau/internal/intel"
+	"github.com/s-b-repo/cau/scanner/linuxpkg"
 )
 
 // DefaultThreshold is the per-process score at which a process is reported.

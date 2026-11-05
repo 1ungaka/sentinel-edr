@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cau-edr/cau/internal/intel"
+	"github.com/s-b-repo/cau/internal/intel"
 )
 
 // ── ATT&CK technique ids ───────────────────────────────────────────────────────

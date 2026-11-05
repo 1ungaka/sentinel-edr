@@ -1,4 +1,4 @@
-module github.com/cau-edr/cau
+module github.com/s-b-repo/cau
 
 go 1.24.1
 

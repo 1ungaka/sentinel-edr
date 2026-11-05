@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"text/tabwriter"
 
-	"github.com/cau-edr/cau/internal/heldout"
-	"github.com/cau-edr/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/heldout"
+	"github.com/s-b-repo/cau/internal/report"
 )
 
 const defaultHeldoutDB = "corpus/heldout/hashes.db"

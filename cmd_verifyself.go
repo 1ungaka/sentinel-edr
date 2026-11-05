@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cau-edr/cau/internal/intake"
-	"github.com/cau-edr/cau/internal/release"
-	"github.com/cau-edr/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/intake"
+	"github.com/s-b-repo/cau/internal/release"
+	"github.com/s-b-repo/cau/internal/report"
 )
 
 func verifySelfUsage(w io.Writer) {

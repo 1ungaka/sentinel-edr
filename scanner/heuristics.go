@@ -5,7 +5,7 @@ import (
 	"debug/pe"
 	"encoding/binary"
 	"fmt"
-	"github.com/cau-edr/cau/scanner/static"
+	"github.com/s-b-repo/cau/scanner/static"
 	"os"
 	"sort"
 	"strings"

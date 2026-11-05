@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cau-edr/cau/internal/coverage"
-	"github.com/cau-edr/cau/scanner"
+	"github.com/s-b-repo/cau/internal/coverage"
+	"github.com/s-b-repo/cau/scanner"
 )
 
 // maxListItems bounds every list a tool returns so a scan of a large tree or a

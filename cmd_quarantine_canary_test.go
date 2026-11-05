@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cau-edr/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/report"
 )
 
 func TestCLIQuarantineLifecycle(t *testing.T) {

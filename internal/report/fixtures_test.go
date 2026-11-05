@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cau-edr/cau/scanner"
+	"github.com/s-b-repo/cau/scanner"
 )
 
 // Shared hermetic fixtures. No test in this package touches the filesystem:

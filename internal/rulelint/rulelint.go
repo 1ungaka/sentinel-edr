@@ -29,8 +29,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/cau-edr/cau/internal/attack"
-	"github.com/cau-edr/cau/scanner"
+	"github.com/s-b-repo/cau/internal/attack"
+	"github.com/s-b-repo/cau/scanner"
 )
 
 // Severities.

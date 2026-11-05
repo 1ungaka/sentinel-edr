@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cau-edr/cau/scanner/static"
+	"github.com/s-b-repo/cau/scanner/static"
 )
 
 func TestEngineStaticPass(t *testing.T) {

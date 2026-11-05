@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cau-edr/cau/internal/report"
-	"github.com/cau-edr/cau/scanner/static"
+	"github.com/s-b-repo/cau/internal/report"
+	"github.com/s-b-repo/cau/scanner/static"
 )
 
 // ── hash ─────────────────────────────────────────────────────────────────────

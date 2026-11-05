@@ -7,15 +7,15 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cau-edr/cau/internal/peeler"
-	"github.com/cau-edr/cau/scanner"
-	"github.com/cau-edr/cau/scanner/encchain"
-	"github.com/cau-edr/cau/scanner/fusion"
-	"github.com/cau-edr/cau/scanner/iso"
-	"github.com/cau-edr/cau/scanner/lnk"
-	"github.com/cau-edr/cau/scanner/ole"
-	"github.com/cau-edr/cau/scanner/pdf"
-	"github.com/cau-edr/cau/scanner/stego"
+	"github.com/s-b-repo/cau/internal/peeler"
+	"github.com/s-b-repo/cau/scanner"
+	"github.com/s-b-repo/cau/scanner/encchain"
+	"github.com/s-b-repo/cau/scanner/fusion"
+	"github.com/s-b-repo/cau/scanner/iso"
+	"github.com/s-b-repo/cau/scanner/lnk"
+	"github.com/s-b-repo/cau/scanner/ole"
+	"github.com/s-b-repo/cau/scanner/pdf"
+	"github.com/s-b-repo/cau/scanner/stego"
 )
 
 // SARIF 2.1.0 constants.

@@ -11,10 +11,10 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/cau-edr/cau/internal/quarantine"
-	"github.com/cau-edr/cau/internal/report"
-	"github.com/cau-edr/cau/scanner"
-	"github.com/cau-edr/cau/scanner/fusion"
+	"github.com/s-b-repo/cau/internal/quarantine"
+	"github.com/s-b-repo/cau/internal/report"
+	"github.com/s-b-repo/cau/scanner"
+	"github.com/s-b-repo/cau/scanner/fusion"
 )
 
 // envQuarantine overrides the default vault location.

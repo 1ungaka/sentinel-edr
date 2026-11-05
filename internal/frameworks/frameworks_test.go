@@ -3,7 +3,7 @@ package frameworks
 import (
 	"testing"
 
-	"github.com/cau-edr/cau/internal/attack"
+	"github.com/s-b-repo/cau/internal/attack"
 )
 
 func TestForTechniqueSingleTactic(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cau-edr/cau/scanner"
+	"github.com/s-b-repo/cau/scanner"
 )
 
 // scenario is one shape of scan run the exit policy must classify.

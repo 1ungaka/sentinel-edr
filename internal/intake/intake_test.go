@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cau-edr/cau/scanner"
+	"github.com/s-b-repo/cau/scanner"
 )
 
 const (

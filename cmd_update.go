@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cau-edr/cau/internal/intake"
-	"github.com/cau-edr/cau/internal/report"
-	"github.com/cau-edr/cau/internal/updater"
+	"github.com/s-b-repo/cau/internal/intake"
+	"github.com/s-b-repo/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/updater"
 )
 
 // pinnedUpdateKey is the release signing key the engine trusts, as hex. It is

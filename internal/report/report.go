@@ -41,19 +41,19 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cau-edr/cau/internal/peeler"
-	"github.com/cau-edr/cau/scanner"
-	"github.com/cau-edr/cau/scanner/archive"
-	"github.com/cau-edr/cau/scanner/chm"
-	"github.com/cau-edr/cau/scanner/encchain"
-	"github.com/cau-edr/cau/scanner/fusion"
-	"github.com/cau-edr/cau/scanner/iso"
-	"github.com/cau-edr/cau/scanner/linuxpkg"
-	"github.com/cau-edr/cau/scanner/lnk"
-	"github.com/cau-edr/cau/scanner/ole"
-	"github.com/cau-edr/cau/scanner/pdf"
-	"github.com/cau-edr/cau/scanner/static"
-	"github.com/cau-edr/cau/scanner/stego"
+	"github.com/s-b-repo/cau/internal/peeler"
+	"github.com/s-b-repo/cau/scanner"
+	"github.com/s-b-repo/cau/scanner/archive"
+	"github.com/s-b-repo/cau/scanner/chm"
+	"github.com/s-b-repo/cau/scanner/encchain"
+	"github.com/s-b-repo/cau/scanner/fusion"
+	"github.com/s-b-repo/cau/scanner/iso"
+	"github.com/s-b-repo/cau/scanner/linuxpkg"
+	"github.com/s-b-repo/cau/scanner/lnk"
+	"github.com/s-b-repo/cau/scanner/ole"
+	"github.com/s-b-repo/cau/scanner/pdf"
+	"github.com/s-b-repo/cau/scanner/static"
+	"github.com/s-b-repo/cau/scanner/stego"
 )
 
 // Branding defaults. main.go owns the canonical version string; these are the
@@ -62,7 +62,7 @@ const (
 	DefaultToolName       = "CAU EDR"
 	DefaultToolTagline    = "Certs Are Useless"
 	DefaultToolVersion    = "unknown"
-	DefaultInformationURI = "https://github.com/cau-edr/cau"
+	DefaultInformationURI = "https://github.com/s-b-repo/cau"
 )
 
 // Truncation defaults. These are deliberately small: a report is uploaded to

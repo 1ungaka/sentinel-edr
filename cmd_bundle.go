@@ -9,9 +9,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cau-edr/cau/internal/release"
-	"github.com/cau-edr/cau/internal/report"
-	"github.com/cau-edr/cau/internal/updater"
+	"github.com/s-b-repo/cau/internal/release"
+	"github.com/s-b-repo/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/updater"
 )
 
 func bundleUsage(w io.Writer) {

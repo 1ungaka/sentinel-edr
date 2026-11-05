@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cau-edr/cau/scanner"
+	"github.com/s-b-repo/cau/scanner"
 )
 
 func renderSARIF(t *testing.T, in Input, opts ...Option) map[string]any {

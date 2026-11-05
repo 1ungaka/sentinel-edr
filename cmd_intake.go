@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cau-edr/cau/internal/intake"
-	"github.com/cau-edr/cau/internal/report"
-	"github.com/cau-edr/cau/scanner"
+	"github.com/s-b-repo/cau/internal/intake"
+	"github.com/s-b-repo/cau/internal/report"
+	"github.com/s-b-repo/cau/scanner"
 )
 
 func intakeUsage(w io.Writer) {

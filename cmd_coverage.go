@@ -7,11 +7,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cau-edr/cau/internal/coverage"
-	"github.com/cau-edr/cau/internal/frameworks"
-	"github.com/cau-edr/cau/internal/report"
-	"github.com/cau-edr/cau/scanner"
-	"github.com/cau-edr/cau/scanner/static"
+	"github.com/s-b-repo/cau/internal/coverage"
+	"github.com/s-b-repo/cau/internal/frameworks"
+	"github.com/s-b-repo/cau/internal/report"
+	"github.com/s-b-repo/cau/scanner"
+	"github.com/s-b-repo/cau/scanner/static"
 )
 
 // ── coverage ─────────────────────────────────────────────────────────────────

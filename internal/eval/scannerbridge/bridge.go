@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cau-edr/cau/internal/eval"
-	"github.com/cau-edr/cau/scanner"
-	"github.com/cau-edr/cau/scanner/encchain"
-	"github.com/cau-edr/cau/scanner/static"
-	"github.com/cau-edr/cau/scanner/stego"
+	"github.com/s-b-repo/cau/internal/eval"
+	"github.com/s-b-repo/cau/scanner"
+	"github.com/s-b-repo/cau/scanner/encchain"
+	"github.com/s-b-repo/cau/scanner/static"
+	"github.com/s-b-repo/cau/scanner/stego"
 )
 
 // HashDetector wraps the signature database. It is not configured when db is

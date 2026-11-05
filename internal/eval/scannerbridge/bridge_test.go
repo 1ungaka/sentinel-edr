@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cau-edr/cau/internal/eval"
-	"github.com/cau-edr/cau/scanner"
-	"github.com/cau-edr/cau/scanner/static"
+	"github.com/s-b-repo/cau/internal/eval"
+	"github.com/s-b-repo/cau/scanner"
+	"github.com/s-b-repo/cau/scanner/static"
 )
 
 const (

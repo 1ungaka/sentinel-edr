@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cau-edr/cau/internal/intel"
+	"github.com/s-b-repo/cau/internal/intel"
 )
 
 // ── test builders ────────────────────────────────────────────────────────────

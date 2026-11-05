@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cau-edr/cau/scanner"
+	"github.com/s-b-repo/cau/scanner"
 )
 
 // drive feeds newline-delimited requests through Serve and returns the decoded

@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cau-edr/cau/internal/intel"
-	"github.com/cau-edr/cau/internal/report"
-	"github.com/cau-edr/cau/scanner/linuxpkg"
+	"github.com/s-b-repo/cau/internal/intel"
+	"github.com/s-b-repo/cau/internal/report"
+	"github.com/s-b-repo/cau/scanner/linuxpkg"
 )
 
 // cau installed audits the maintainer/install scripts of ALREADY-installed

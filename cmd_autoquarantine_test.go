@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cau-edr/cau/internal/report"
-	"github.com/cau-edr/cau/scanner"
-	"github.com/cau-edr/cau/scanner/fusion"
+	"github.com/s-b-repo/cau/internal/report"
+	"github.com/s-b-repo/cau/scanner"
+	"github.com/s-b-repo/cau/scanner/fusion"
 )
 
 // TestCLIScanAutoQuarantine confirms the free-prevention path: a scan with

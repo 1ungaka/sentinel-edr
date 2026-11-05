@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/cau-edr/cau/internal/attack"
+	"github.com/s-b-repo/cau/internal/attack"
 )
 
 // OCSF (Open Cybersecurity Schema Framework) output: one Detection Finding

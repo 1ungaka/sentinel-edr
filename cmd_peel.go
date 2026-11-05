@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/cau-edr/cau/internal/peeler"
-	"github.com/cau-edr/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/peeler"
+	"github.com/s-b-repo/cau/internal/report"
 )
 
 // maxInputBytes caps how much a command reads from an arbitrary input file or

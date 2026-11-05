@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/cau-edr/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/report"
 )
 
 // completions holds the shell-completion scripts shipped with the binary. They

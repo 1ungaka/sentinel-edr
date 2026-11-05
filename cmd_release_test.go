@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cau-edr/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/report"
 )
 
 // keypairFiles writes a hex ed25519 keypair and returns the file paths.

@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cau-edr/cau/internal/eval"
-	"github.com/cau-edr/cau/scanner"
+	"github.com/s-b-repo/cau/internal/eval"
+	"github.com/s-b-repo/cau/scanner"
 )
 
 func TestStegoDetector(t *testing.T) {

@@ -14,14 +14,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cau-edr/cau/internal/mcp"
-	"github.com/cau-edr/cau/internal/resources"
-	"github.com/cau-edr/cau/scanner"
-	"github.com/cau-edr/cau/scanner/static"
+	"github.com/s-b-repo/cau/internal/mcp"
+	"github.com/s-b-repo/cau/internal/resources"
+	"github.com/s-b-repo/cau/scanner"
+	"github.com/s-b-repo/cau/scanner/static"
 )
 
 // version is overridden at build time: -ldflags "-X main.version=v1.2.3".
-var version = "0.4.0-dev"
+var version = "0.1.0-dev"
 
 const (
 	serverName = "cau-mcp"

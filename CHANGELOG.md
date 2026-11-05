@@ -21,10 +21,35 @@ All notable changes to CAU EDR. The format follows
   `GOPROXY=off`.
 - **CI now proves the Debian source package builds.** `dpkg-buildpackage
   -us -uc -S` runs from a copy of the tree, so the "source + binary `.deb`"
-  claim in `docs/packaging.md` is measured rather than aspirational.
+  claim in `docs/packaging.md` is measured rather than aspirational. It is
+  bounded (10 minutes, `set -eu`, so a broken source package fails the job
+  rather than looking like a pass) and scoped to non-PR, non-tag runs: a tag
+  build already proves it by building the real source package, and a PR is a
+  preview of a merge. The copy carries only what a packager would publish —
+  the tree's own build products, the nested `cau-kernel` repository and the
+  local WIP paths (`scripts/lintworkflows/`, `docs/p.p`, `cau.sarif`,
+  `cau.ocsf.json`) are excluded by the step and now by `.gitignore` too, so
+  the proof is not spent on artifacts this repository refuses to publish.
   `.github/dependabot.yml` is new (weekly, grouped updates for the actions the
   workflows pin); the Go module ecosystem is deliberately absent because the
   `vendor/` tree is committed.
+- **A security policy, a support policy and a machine-readable price list.**
+  `SECURITY.md` states what is in scope (including the anti-tamper claims:
+  anything that silently disables detection or makes `cau selftest` pass on
+  tampered content), what is not (false positives and missed detections are
+  issues, not vulnerabilities — report the sample's SHA-256, never the
+  sample), the private reporting channels, the triage clock and 90-day
+  coordinated disclosure. `SUPPORT.md` says which artifact is supported how:
+  the engine and agents are MIT software supported publicly by issue at every
+  scale, the console carries contractual tiers, and the tier tables are
+  generated from `pricing.toml` rather than typed twice. `pricing.toml` is the
+  checked-in source of truth for the commercial surface — per-managed-agent
+  volume bands, tiers, term, the air-gapped renewal path, and a TCO model in
+  which every row is labelled FACT or ASSUMPTION so no invented number reads
+  as a measurement. `docs/pricing.md` renders it and states in its own header
+  that the numbers are a draft under owner review. Both files record the split
+  the licensing mechanics already enforce: detection and on-host prevention
+  are free and unmetered; only the multi-agent management plane is billed.
 
 ### Changed
 - **The CI pipeline is six parallel, named, time-bounded lanes** rather than one
@@ -45,6 +70,21 @@ All notable changes to CAU EDR. The format follows
   job never built), and the signed `SHA256SUMS` is generated after the integrity
   manifest and the pinned public key are staged, so both are covered by the
   signature instead of shipped unsigned.
+- **The module path is `github.com/s-b-repo/cau`.** `go.mod` and all 74
+  non-vendor `.go` files carried `github.com/cau-edr/cau`, which is not this
+  repository: the published module, every `go get` recipe, every import block
+  and the docs that quote them disagreed with the remote in `git remote -v`.
+  The default build stamp is `0.1.0-dev`, not `0.4.0-dev` — the first tagged
+  release is `v0.1.0` and a default that outranks it is a version lie, so
+  `main.go` and `cmd/cau-mcp/main.go` now report the pre-release stamp and let
+  the ldflags override supply the real version.
+- **The docs match the repository.** `docs/installation.md` no longer says no
+  tag has been cut: it names `v0.1.0` (2026-11-02), where its artifacts are
+  attached and where the maintainer checklist lives. `docs/README.md` and
+  `README.md` cite the JSON schema as 1.10.0, and the README's table links
+  `docs/mcp.md` and `docs/packaging.md`, which existed but were unreachable
+  from the index. `docs/library.md`, `docs/output-formats.md` and `PLAN.md`
+  drop the old module path and the stale `v0.4.0` example version.
 
 ### Fixed
 - **`package.yml` could never attach anything to a release.** The workflow set
@@ -58,6 +98,14 @@ All notable changes to CAU EDR. The format follows
   The full-depth checkout (`fetch-depth: 0`) lets `git describe` stamp the tag
   version into a package instead of a commit sha, and `workflow_dispatch` plus a
   bounded runtime per job make the three container legs re-runnable by hand.
+- **`package.yml`'s install step smoke-tested nothing on arm64.** Both legs
+  installed `./dist/cau_*_amd64.deb` by name, so on an arm64 runner the glob
+  matched no file and `apt-get install` installed nothing — the smoke test then
+  passed against whatever `cau` was already on the image, which is a green
+  packaging gate over an untested package. The architecture is now read from
+  `dpkg --print-architecture`, which is the one the builder produced (the cgo
+  binding to libyara is built, not cross-compiled), so the file installed is
+  the file that was built.
 
 ## 0.1.0 - 2026-11-02
 

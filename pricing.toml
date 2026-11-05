@@ -1,0 +1,237 @@
+# CAU EDR pricing — v1 DRAFT
+#
+# STATUS: DRAFT — every monetary value in this file is a v1 draft number
+# invented for structure review. The owner must review and confirm each
+# number (and the currency, and the TCO baseline) before this file drives
+# anything public. The public page (docs/pricing.md) is rendered from this
+# file and must not publish numbers this file does not carry.
+#
+# Drafted 2026-11-05. Owner review required before publication.
+
+[meta]
+status = "draft"
+version = "1"
+currency = "USD"
+drafted_on = "2026-11-05"
+review_required = true
+owner_review_note = "All monetary values are v1 DRAFT placeholders; confirm before publishing."
+source_of_truth = "pricing.toml"
+public_page = "docs/pricing.md"
+licensing_model = "per-managed-agent, console only; engine and agents are free and unmetered"
+pricing_authority = "PLAN.md — Licensing mechanics"
+
+# ── the free line ────────────────────────────────────────────────────────────
+# Not a marketing position; the licensing mechanics it enforces: the engine
+# and every agent carry no license check at all. A metering or license check
+# in the engine, CLI, MCP server or agent is a bug and will be stripped.
+
+[free_engine]
+license = "MIT"
+per_host_charge = 0.0
+metered = false
+license_check = "none — there is no license boundary in the engine or the agent"
+permanently_free = [
+  "all detection: hash, YARA, heuristics, static structure, stego, encchain, peel, lnk, ole, pdf, iso, linuxpkg, archive, chm, fusion",
+  "all on-host prevention/response: quarantine, restore, block, kill, canaries",
+  "cau-mcp (the MCP server), the evaluation harness, JSON/SARIF/OCSF reports, CI exit codes",
+  "detection-content updates through the signed update channel (air-gapped bundle included)",
+]
+
+# ── tiers ────────────────────────────────────────────────────────────────────
+# The console is licensed per managed agent. A managed agent is one enrolled
+# agent the console manages: a sensor agent, a scan node, or a registered
+# AI/MCP analysis agent. Autonomous CAU-run detection agents are not billed
+# to the customer.
+#
+# Tier membership follows the fleet-size volume bands below: the tier is
+# named by the band the fleet's managed-agent count falls in. The per-agent
+# price always comes from the volume-band table (bands are the single
+# source of per-agent rates); the tier determines what is included and the
+# service level.
+
+[[volume_bands]]
+band = "starter"
+min_agents = 1
+max_agents = 25
+per_agent_per_year = 18
+
+[[volume_bands]]
+band = "growth-low"
+min_agents = 26
+max_agents = 100
+per_agent_per_year = 15
+
+[[volume_bands]]
+band = "growth-high"
+min_agents = 101
+max_agents = 250
+per_agent_per_year = 12
+
+[[volume_bands]]
+band = "scale-low"
+min_agents = 251
+max_agents = 1000
+per_agent_per_year = 10
+
+[[volume_bands]]
+band = "scale-high"
+min_agents = 1001
+max_agents = 2500
+per_agent_per_year = 7
+
+[[volume_bands]]
+band = "scale-enterprise"
+min_agents = 2501
+max_agents = 0            # 0 = open-ended
+per_agent_per_year = 5
+pricing_note = "from $5/agent/year; fleets above 2,500 agents are quoted per agreement"
+
+[[tiers]]
+name = "Starter"
+fleet_band = "1-25 managed agents"
+per_agent_per_year = 18
+annual_floor = 0
+console_deployments = 1       # one production deployment + staging included
+includes = [
+  "fleet inventory, health and version pinning across sensor, scan-node and MCP agents",
+  "central policy distribution (policy-as-code, signed, audit-logged)",
+  "incident timelines and response actions over the free agents",
+  "detection-content lifecycle with test-before-promote and one-click revert",
+  "1 included tenant",
+]
+service_level = "starter"
+
+[[tiers]]
+name = "Growth"
+fleet_band = "26-250 managed agents"
+per_agent_per_year = 12      # at the top of its band; the band table governs
+annual_floor = 0
+console_deployments = 1
+includes = [
+  "everything in Starter",
+  "RBAC/SSO, agent governance and the immutable audit trail",
+  "fleet-scale detection-content lifecycle and ATT&CK coverage reporting",
+  "SARIF/JSON/OCSF export for the SOC's existing sinks",
+  "3 included tenants",
+]
+service_level = "growth"
+
+[[tiers]]
+name = "Scale"
+fleet_band = "251-2,500+ managed agents"
+per_agent_per_year = 7       # at the top of its band; the band table governs
+annual_floor = 0
+console_deployments = 1
+includes = [
+  "everything in Growth",
+  "Threat Graph: cross-host lineage and pivot queries",
+  "evasion-distance telemetry and fleet prevalence scoring",
+  "named contact and quarterly service review",
+  "10 included tenants",
+]
+service_level = "scale"
+
+# ── term and billing ─────────────────────────────────────────────────────────
+
+[term]
+length_years = 1
+billing = "annually in advance"
+currency_default = "USD"
+mid_term_growth = "managed agents added mid-term are billed pro-rata at the volume-band rate for the new fleet size"
+true_up = "a fleet that crosses a band mid-term is trued-up at the new band's rate at renewal"
+renewal_notice_days = 30
+
+# ── multi-tenancy add-on ─────────────────────────────────────────────────────
+
+[multi_tenancy]
+priced_per = "tenant"
+included_tenants = { starter = 1, growth = 3, scale = 10 }
+additional_tenant_per_month = 40.0
+billing = "billed with the console term, annually in advance"
+notes = "tenant isolation, quota, org -> group -> host hierarchy and cross-tenant pivoting are console-licensed; the agent has no tenant concept by design"
+
+# ── air-gapped / offline renewal ─────────────────────────────────────────────
+
+[air_gapped_renewal]
+available = true
+mechanism = "signed offline license file delivered on the same terms as the online path"
+channels = ["portal download of the signed license bundle", "email delivery", "physical media on request for regulated buyers"]
+grace_days = 30
+notes = "an air-gapped console keeps running for 30 days past expiry while renewal is in transit; renewal requires no network connection from the console at any point"
+
+# ── service levels ───────────────────────────────────────────────────────────
+
+[service_levels.starter]
+hours = "business hours: 09:00-17:00 SAST (UTC+2), Mon-Fri"
+response = "next business day for defects"
+availability_target = "none"
+severity_p1_response = "none — no uptime commitment at Starter"
+
+[service_levels.growth]
+hours = "business hours: 09:00-17:00 SAST (UTC+2), Mon-Fri"
+response = "P1 within 8 business hours; other defects next business day"
+availability_target = "99.5% monthly, measured on the console control plane"
+
+[service_levels.scale]
+hours = "24x7 for P1; business hours for P2-P4"
+response = "P1 within 4 hours; P2 within 1 business day"
+availability_target = "99.9% monthly, measured on the console control plane"
+
+# ── TCO model ────────────────────────────────────────────────────────────────
+# An honest TCO row is a labelled assumption, never a claim. Every row below
+# says whether it is a FACT (measured, or structural in this repo's licensing
+# mechanics) or an ASSUMPTION (a number the owner must validate before the
+# public calculator leans on it). The comparison baseline is per-host list
+# pricing of a mainstream commercial EDR — an observation, not a negotiated
+# price, and procurement outcomes vary widely.
+
+[tco_assumptions]
+currency = "USD"
+
+[tco_assumptions.rows]
+engine_per_host_cost = { value = 0.0, kind = "FACT", label = "CAU engine + agent license", note = "MIT, free and unmetered; all detection and prevention included, no per-host charge and no metering" }
+agent_prevention_included = { value = 0.0, kind = "FACT", label = "on-host response", note = "quarantine, restore, block, kill and canaries ship in the free agent; the console manages them, it does not unlock them" }
+console_per_agent = { value = "from volume_bands", kind = "FACT", label = "console license", note = "the only metered surface; price comes from the volume-band table above" }
+comparison_baseline_per_host = { value = 150.0, kind = "ASSUMPTION", label = "mainstream EDR per-host list price", note = "ASSUMPTION: per-host list pricing of a mainstream commercial EDR; validate against current public list prices before publishing" }
+baseline_management_included = { value = true, kind = "ASSUMPTION", label = "baseline management plane", note = "ASSUMPTION: the baseline price is assumed to cover endpoint protection plus its management plane; the comparison is whole-product, not detection-only" }
+refresh_cycle_years = { value = 4, kind = "ASSUMPTION", label = "host refresh cycle", note = "ASSUMPTION: hosts are re-purchased on a 4-year cycle; licences move with them" }
+rollout_operator_days_per_100_agents = { value = 1.0, kind = "ASSUMPTION", label = "deployment labour", note = "ASSUMPTION: one operator-day per 100 agents to enroll, group and baseline the fleet" }
+no_scan_metering = { value = 0.0, kind = "FACT", label = "scan metering", note = "no per-scan, per-endpoint or telemetry-egress charge for the free engine" }
+multi_tenant_addon = { value = 40.0, kind = "ASSUMPTION", label = "per additional tenant per month", note = "ASSUMPTION: draft add-on rate; confirm with the owner" }
+
+[[tco_examples]]
+name = "10-agent fleet, 3 years"
+agents = 10
+tier = "Starter"
+cau_console_per_year = 180.0        # 10 x $18
+cau_three_year = 540.0
+baseline_per_year = 1500.0          # 10 x $150 (assumption)
+baseline_three_year = 4500.0
+note = "illustrative draft; baseline rate is an assumption row"
+
+[[tco_examples]]
+name = "100-agent fleet, 3 years"
+agents = 100
+tier = "Growth"
+cau_console_per_year = 1500.0       # 100 x $15 (growth-low band)
+cau_three_year = 4500.0
+baseline_per_year = 15000.0         # 100 x $150 (assumption)
+baseline_three_year = 45000.0
+
+[[tco_examples]]
+name = "500-agent fleet, 3 years"
+agents = 500
+tier = "Scale"
+cau_console_per_year = 5000.0       # 500 x $10 (scale-low band)
+cau_three_year = 15000.0
+baseline_per_year = 75000.0         # 500 x $150 (assumption)
+baseline_three_year = 225000.0
+
+[[tco_examples]]
+name = "2000-agent fleet, 3 years"
+agents = 2000
+tier = "Scale"
+cau_console_per_year = 14000.0      # 2000 x $7 (scale-high band)
+cau_three_year = 42000.0
+baseline_per_year = 300000.0        # 2000 x $150 (assumption)
+baseline_three_year = 900000.0

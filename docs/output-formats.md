@@ -48,7 +48,7 @@ should ignore unknown fields.
 ```jsonc
 {
   "schema_version": "1.10.0",
-  "tool": { "name": "CAU EDR", "version": "v0.4.0", "tagline": "..." },
+  "tool": { "name": "CAU EDR", "version": "0.1.0-dev", "tagline": "..." },
   "generated_at": "2026-10-25T09:47:00Z",
   "root": "./dist",                      // present when --dir was the only target
   "summary": {

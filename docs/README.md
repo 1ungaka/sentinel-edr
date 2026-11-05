@@ -10,7 +10,7 @@ written in Go. These pages are the reference; the repository
 | [Command-line reference](cli.md) | every command and flag (`scan`, `coverage`, `rules`, `eval`, ...), exit codes, CI recipes |
 | [MCP server](mcp.md) | `cau-mcp`: the engine over the Model Context Protocol, its tools/resources/prompts and the scan-root sandbox |
 | [Detectors](detectors.md) | hash signatures, YARA, heuristics, static structure, invisible codepoints, encoded executables, the fusion lattice |
-| [Output formats](output-formats.md) | the text report, the JSON document (schema 1.4.0), SARIF 2.1.0, OCSF Detection Findings, the `--fail-on` policy |
+| [Output formats](output-formats.md) | the text report, the JSON document (schema 1.10.0), SARIF 2.1.0, OCSF Detection Findings, the `--fail-on` policy |
 | [Detection content](detection-content.md) | signature databases, YARA rule conventions and the linter, the fuzzy-hash database, external rule sets |
 | [Detection engineering](detection-engineering.md) | ADS documents per detector, the ATT&CK coverage matrix and its gate, Pyramid of Pain levels, OCSF |
 | [ADS](ads/README.md) | one Alerting and Detection Strategy per detector |

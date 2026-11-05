@@ -33,7 +33,7 @@ make build          # -> ./cau
 ```
 
 `make build` stamps the version from `git describe`. The plain `go build .`
-also works and produces a binary that reports `0.4.0-dev`.
+also works and produces a binary that reports `0.1.0-dev`.
 
 ### User-local toolchain
 
@@ -146,11 +146,16 @@ release is the one `cau selftest` verifies against.
 
 ## Release tarballs
 
-CI builds `cau-<tag>-linux-amd64.tar.gz` with the rules and signatures for every
-`v*` tag and attaches it to the GitHub release together with `SHA256SUMS`, the
-`cau_<version>-1_amd64.deb`, the Kali `.deb` and the
-`cau-<version>-1-x86_64.pkg.tar.zst`. No tag has been cut yet; until then, build
-from source.
+The first tag, `v0.1.0`, was cut on 2026-11-02. Every `v*` tag triggers the CI
+release job, which builds `cau-<tag>-linux-amd64.tar.gz` with the rules and
+signatures and attaches it to the GitHub release together with `SHA256SUMS`,
+the `cau_<version>-1_amd64.deb`, the Kali `.deb` and the
+`cau-<version>-1-x86_64.pkg.tar.zst` — the packaging jobs attach their artifacts
+to the release on a `v*` tag, so a release carries them next to the source
+tarball and the signed update bundle (the maintainer checklist is in
+[packaging.md](packaging.md)). Download them from
+[the v0.1.0 release](https://github.com/s-b-repo/cau/releases/tag/v0.1.0), or
+build from source.
 
 ## Resource discovery
 

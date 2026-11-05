@@ -90,6 +90,7 @@ failed, 4 usage.
 |---|---|
 | [Installation](docs/installation.md) | requirements, build, install, release tarballs, resource discovery |
 | [Command-line reference](docs/cli.md) | every command and flag, exit codes, CI recipes |
+| [MCP server](docs/mcp.md) | `cau-mcp`: the engine over the Model Context Protocol, its tools/resources/prompts and the scan-root sandbox |
 | [Detectors](docs/detectors.md) | how each detector scores, its classes and techniques, and the numbers it was tuned on |
 | [Output formats](docs/output-formats.md) | the text report, JSON schema 1.10.0, SARIF 2.1.0 rule ids, OCSF Detection Findings, the exit policy |
 | [Detection content](docs/detection-content.md) | signature databases, YARA conventions and the rule linter, the fuzzy-hash database |
@@ -97,6 +98,7 @@ failed, 4 usage.
 | [Evaluation harness](docs/evaluation.md) | corpora, baselines, regression gates, every measurement behind the docs |
 | [Library usage](docs/library.md) | using the engine and the fusion lattice from Go |
 | [Architecture](docs/architecture.md) | the single-read pipeline, verdict tiers, design rules, layout |
+| [Packaging](docs/packaging.md) | the maintainer guide: what CI builds on push and tag, the release checklist, the signed apt repository |
 | [Limitations](docs/limitations.md) | what each detector cannot do, documented false-positive classes |
 | [Contributing](docs/contributing.md) | development, tests, the measure-or-don't-ship rule |
 | [PLAN.md](PLAN.md) · [CHANGELOG.md](CHANGELOG.md) | roadmap and design reasoning · release notes |

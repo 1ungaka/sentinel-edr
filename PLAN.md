@@ -2052,7 +2052,7 @@ become implants, and the exclusion list outlives every review that approved it.
 ## Repo layout
 
 ```
-cau/                         # MIT — the engine (module github.com/cau-edr/cau, binary `cau`)
+cau/                         # MIT — the engine (module github.com/s-b-repo/cau, binary `cau`)
   main.go, cmd_*.go          # CLI: scan, hash, cluster, add-hash, add-fuzzy, eval
   scanner/                   # engine (single-pass), hash DB, YARA, heuristics
   scanner/static/            # structural pass: PE parser, entropy, fuzzy hashes, anomalies

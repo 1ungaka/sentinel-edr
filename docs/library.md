@@ -1,13 +1,13 @@
 # Library usage
 
-The module is `github.com/cau-edr/cau`. The public engine lives under
+The module is `github.com/s-b-repo/cau`. The public engine lives under
 `scanner/`; `internal/report` and `internal/eval` are internal to the module
 (Go forbids importing them from elsewhere), so a program that needs the
 reporters or the harness either drives the `cau` binary or vendors the
 module.
 
 ```sh
-go get github.com/cau-edr/cau@latest
+go get github.com/s-b-repo/cau@latest
 ```
 
 cgo and libyara are required to build anything that imports `scanner`,
@@ -23,8 +23,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/cau-edr/cau/scanner"
-	"github.com/cau-edr/cau/scanner/static"
+	"github.com/s-b-repo/cau/scanner"
+	"github.com/s-b-repo/cau/scanner/static"
 )
 
 func main() {
@@ -132,7 +132,7 @@ express itself as a score against a threshold, or as a definitive hit, can
 join:
 
 ```go
-import "github.com/cau-edr/cau/scanner/fusion"
+import "github.com/s-b-repo/cau/scanner/fusion"
 
 v := fusion.Fuse([]fusion.Source{
 	{Name: "hash", Definitive: true, Hit: false},

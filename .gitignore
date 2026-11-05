@@ -59,3 +59,16 @@
 /corpus/heldout/manifest.json
 /corpus/heldout/.heldout-download.zip
 /corpus/heldout/*.tmp
+
+# Self-scan output: the workflow ci.yml (selfscan lane) writes both reports at
+# the repository root and uploads them to code scanning and the run artifacts;
+# they are run output, never source.
+/cau.sarif
+/cau.ocsf.json
+
+# Nested and local-only trees that are not this repository: cau-kernel is a
+# separate repo living inside the checkout, and the rest is untracked work in
+# progress (a workflow-linting tool, a draft document).
+/cau-kernel/
+/scripts/lintworkflows/
+/docs/p.p

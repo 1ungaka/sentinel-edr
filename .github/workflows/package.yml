@@ -54,12 +54,6 @@ jobs:
     permissions:
       contents: write
     container: debian:trixie
-    # The release step attaches the built package to a tag ref, which needs
-    # contents: write; the workflow-wide contents: read meant a tag build could
-    # only fail that upload with a 403 and publish nothing.
-    permissions:
-      contents: write
-    container: debian:trixie
     steps:
       - uses: actions/checkout@v4
         # The Makefile derives the version from `git describe`, so a shallow checkout
@@ -77,6 +71,49 @@ jobs:
             curl ca-certificates
           echo "golang: $(go version)"
           echo "libyara: $(pkg-config --modversion yara)"
+
+      # The CHANGELOG claim, made true: the Debian source package is proven to
+      # build on every non-tag, non-PR run. A tag build proves it below (it
+      # runs the full source+binary build), and a PR is a preview of a merge,
+      # so the proof is spent where the claim would otherwise be unexercised.
+      #
+      # It runs from a copy: the proof must not dirty the tree the binary build
+      # reads, and dpkg-source -b folds anything loose (a stray binary, a scan
+      # report, a nested repo's .git) into the generated orig tarball or aborts
+      # on it, so the copy carries only what a packager would publish.
+      - name: Prove the Debian source package builds (from a copy of the tree)
+        if: ${{ github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/v') }}
+        # Bounded, and failing the job: without a cap a wedged dpkg-source holds
+        # the whole packaging gate, and without set -eu a broken source package
+        # would look like a pass.
+        timeout-minutes: 10
+        run: |
+          set -eu
+          stage=$(mktemp -d)
+          trap 'rm -rf "$stage"' EXIT
+          mkdir -p "$stage/cau"
+          # dpkg-source generates the orig tarball itself (there is no upstream
+          # release for a branch tip), so the exclusions below are about what
+          # belongs in that tarball, not about fetching one: the tree's own
+          # .gitignore build products, the nested cau-kernel repo, and the
+          # untracked local WIP paths.
+          tar -C "$GITHUB_WORKSPACE" \
+            --exclude=./.git \
+            --exclude=./dist \
+            --exclude=./eval-out \
+            --exclude=./cau --exclude=./cau-mcp \
+            --exclude=./cau-kernel \
+            --exclude=./scripts/lintworkflows \
+            --exclude=./docs/p.p \
+            --exclude=./cau.sarif --exclude=./cau.ocsf.json \
+            --exclude=./aptrepo \
+            --exclude='*.deb' --exclude='*.udeb' \
+            --exclude='*.dsc' --exclude='*.debian.tar.*' \
+            --exclude='*.build' --exclude='*.buildinfo' --exclude='*.changes' \
+            -cf - . | tar -xf - -C "$stage/cau"
+          cd "$stage/cau"
+          dpkg-buildpackage -us -uc -S
+          ls -l "$stage"
 
       - name: Build the source and binary packages
         run: |
@@ -111,7 +148,12 @@ jobs:
 
       - name: Install the package
         run: |
-          apt-get install -y --no-install-recommends ./dist/cau_*_amd64.deb
+          # The .deb filename carries the architecture the builder produced,
+          # which is the runner's own (the cgo binding to libyara is built, not
+          # cross-compiled). Ask dpkg instead of assuming amd64: an arm64 leg
+          # that globbed the amd64 name installed nothing and smoke-tested air.
+          arch=$(dpkg --print-architecture)
+          apt-get install -y --no-install-recommends "./dist/cau_*_${arch}.deb"
 
       - name: Smoke test the installed package
         run: scripts/package-smoke.sh
@@ -186,7 +228,11 @@ jobs:
           ls -l dist/
 
       - name: Install the package
-        run: apt-get install -y --no-install-recommends ./dist/cau_*_amd64.deb
+        run: |
+          # Same derivation as the Debian leg: the arch in the .deb filename is
+          # the runner's, so read it from dpkg rather than assuming amd64.
+          arch=$(dpkg --print-architecture)
+          apt-get install -y --no-install-recommends "./dist/cau_*_${arch}.deb"
 
       - name: Smoke test the installed package
         run: scripts/package-smoke.sh

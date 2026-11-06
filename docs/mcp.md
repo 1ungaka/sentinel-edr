@@ -7,6 +7,16 @@ same engine as the `cau` CLI — the same detectors, the same signature database
 the same YARA ruleset and the same ATT&CK coverage matrix — presented as an MCP
 server rather than a command line.
 
+The MCP server's detector set matches `cau scan`: hashes, YARA, heuristics, the
+static-structure pass, invisible codepoints, the encoded-executable pass, the
+Shell Link (`lnk`), OLE macro (`ole`), PDF (`pdf`) and ISO container (`iso`)
+detectors, the obfuscation-chain peeler, the Linux software-package pass, the
+**archive** and **CHM** detectors, and the **tradecraft** pass (web shells,
+network shells, in-memory loaders, LOLBAS and GTFOBins abuse, the lolol.farm
+trusted-SaaS catalogue and the ArcticFox detection-bypass primitives). Each
+can be turned off with the corresponding `--no-*` flag, exactly as `cau scan`
+takes them.
+
 Two transports are supported, both JSON-RPC 2.0:
 
 - **stdio** (default): one JSON message per line on stdin/stdout.
@@ -27,7 +37,9 @@ goes to stderr, so the stdout stream stays a clean JSON-RPC channel.
 
 To serve the HTTP transport instead, bind an address (loopback is strongly
 recommended — anyone who can reach the socket can drive the scanner within the
-`--root` sandbox):
+`--root` sandbox). Requests carrying a browser `Origin` other than loopback are
+refused with 403, so a web page cannot reach the server through the analyst's
+browser; clients that send no `Origin`, as agents and SDKs do, are unaffected:
 
 ```
 cau-mcp --root /path/to/scan --http 127.0.0.1:8923
@@ -70,6 +82,9 @@ allowlist** given with one or more `--root` flags:
   symlink in the window between resolution and open is a residual TOCTOU; the
   confinement holds against static layouts and resolve-time symlinks, not an
   attacker racing component swaps inside a granted root.)
+- Rule text given to `yara_test_rule` cannot use `include`: compiling it would
+  otherwise read any file the server can, past these roots. Rule files in the
+  operator's own rules directory keep theirs.
 - Files larger than `--max-bytes` (default 256 MiB) are refused before being
   read.
 - A directory with more than `--max-files` (default 10000) regular files is

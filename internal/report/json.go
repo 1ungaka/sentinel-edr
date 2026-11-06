@@ -21,6 +21,7 @@ import (
 	"github.com/s-b-repo/cau/scanner/pdf"
 	"github.com/s-b-repo/cau/scanner/static"
 	"github.com/s-b-repo/cau/scanner/stego"
+	"github.com/s-b-repo/cau/scanner/tradecraft"
 )
 
 // JSONSchemaVersion is the version of the native JSON document. See the
@@ -66,7 +67,11 @@ import (
 // object: per-technique bindings to complementary models (Unified Kill Chain
 // phase/stage derived here; MISP cluster / Malpedia family left for an intel
 // feed to populate) so consumers can pick their scheme (additive: minor bump).
-const JSONSchemaVersion = "1.10.0"
+//
+// 1.11.0 added the optional per-file "tradecraft" object (behavioural analysis
+// of scripts and payload bytes) and the summary fields "tradecraft_detections" /
+// "tradecraft_threshold" (additive: minor bump).
+const JSONSchemaVersion = "1.11.0"
 
 // Overall and per-file verdict strings carried by the JSON document. They are
 // lower-case on purpose: they are enum values for machines, not banners.
@@ -97,42 +102,44 @@ type ToolInfo struct {
 
 // Summary is the run-level roll-up.
 type Summary struct {
-	FilesScanned        int `json:"files_scanned"`
-	HashDetections      int `json:"hash_detections"`
-	YaraDetections      int `json:"yara_detections"`
-	HeuristicDetections int `json:"heuristic_detections"`
-	StaticDetections    int `json:"static_detections"`
-	StegoDetections     int `json:"stego_detections"`
-	EncChainDetections  int `json:"encchain_detections"`
-	LNKDetections       int `json:"lnk_detections"`
-	OLEDetections       int `json:"ole_detections"`
-	PDFDetections       int `json:"pdf_detections"`
-	ISODetections       int `json:"iso_detections"`
-	LinuxPkgDetections  int `json:"linuxpkg_detections"`
-	PeelDetections      int `json:"peel_detections"`
-	ArchiveDetections   int `json:"archive_detections"`
-	CHMDetections       int `json:"chm_detections"`
+	FilesScanned         int `json:"files_scanned"`
+	HashDetections       int `json:"hash_detections"`
+	YaraDetections       int `json:"yara_detections"`
+	HeuristicDetections  int `json:"heuristic_detections"`
+	StaticDetections     int `json:"static_detections"`
+	StegoDetections      int `json:"stego_detections"`
+	EncChainDetections   int `json:"encchain_detections"`
+	LNKDetections        int `json:"lnk_detections"`
+	OLEDetections        int `json:"ole_detections"`
+	PDFDetections        int `json:"pdf_detections"`
+	ISODetections        int `json:"iso_detections"`
+	LinuxPkgDetections   int `json:"linuxpkg_detections"`
+	PeelDetections       int `json:"peel_detections"`
+	ArchiveDetections    int `json:"archive_detections"`
+	CHMDetections        int `json:"chm_detections"`
+	TradecraftDetections int `json:"tradecraft_detections"`
 	// FusionDetections counts files the fusion lattice reports as suspicious
 	// although no single detector crossed its own threshold.
-	FusionDetections   int    `json:"fusion_detections"`
-	Errors             int    `json:"errors"`
-	ElapsedMS          int64  `json:"elapsed_ms"`
-	HeuristicThreshold int    `json:"heuristic_threshold"`
-	StaticThreshold    int    `json:"static_threshold"`
-	StegoThreshold     int    `json:"stego_threshold"`
-	EncChainThreshold  int    `json:"encchain_threshold"`
-	LNKThreshold       int    `json:"lnk_threshold"`
-	OLEThreshold       int    `json:"ole_threshold"`
-	PDFThreshold       int    `json:"pdf_threshold"`
-	ISOThreshold       int    `json:"iso_threshold"`
-	LinuxPkgThreshold  int    `json:"linuxpkg_threshold"`
-	PeelThreshold      int    `json:"peel_threshold"`
-	ArchiveThreshold   int    `json:"archive_threshold"`
-	CHMThreshold       int    `json:"chm_threshold"`
-	Verdict            string `json:"verdict"`
-	FailOn             string `json:"fail_on"`
-	ExitCode           int    `json:"exit_code"`
-	ExitReason         string `json:"exit_reason"`
+	FusionDetections    int    `json:"fusion_detections"`
+	Errors              int    `json:"errors"`
+	ElapsedMS           int64  `json:"elapsed_ms"`
+	HeuristicThreshold  int    `json:"heuristic_threshold"`
+	StaticThreshold     int    `json:"static_threshold"`
+	StegoThreshold      int    `json:"stego_threshold"`
+	EncChainThreshold   int    `json:"encchain_threshold"`
+	LNKThreshold        int    `json:"lnk_threshold"`
+	OLEThreshold        int    `json:"ole_threshold"`
+	PDFThreshold        int    `json:"pdf_threshold"`
+	ISOThreshold        int    `json:"iso_threshold"`
+	LinuxPkgThreshold   int    `json:"linuxpkg_threshold"`
+	PeelThreshold       int    `json:"peel_threshold"`
+	ArchiveThreshold    int    `json:"archive_threshold"`
+	CHMThreshold        int    `json:"chm_threshold"`
+	TradecraftThreshold int    `json:"tradecraft_threshold"`
+	Verdict             string `json:"verdict"`
+	FailOn              string `json:"fail_on"`
+	ExitCode            int    `json:"exit_code"`
+	ExitReason          string `json:"exit_reason"`
 }
 
 // File is one scanned path.
@@ -155,6 +162,7 @@ type File struct {
 	Peel       *Peel       `json:"peel,omitempty"`
 	Archive    *Archive    `json:"archive,omitempty"`
 	CHM        *CHM        `json:"chm,omitempty"`
+	Tradecraft *Tradecraft `json:"tradecraft,omitempty"`
 	Fusion     *Fusion     `json:"fusion,omitempty"`
 	Warnings   []string    `json:"warnings,omitempty"`
 	Error      string      `json:"error,omitempty"`
@@ -656,6 +664,16 @@ type ArchiveFinding struct {
 	Evidence  string `json:"evidence,omitempty"`
 }
 
+// Tradecraft is the per-file behavioural analysis of scripts and payload bytes.
+type Tradecraft struct {
+	Score     int          `json:"score"`
+	Threshold int          `json:"threshold"`
+	Detected  bool         `json:"detected"`
+	Skipped   string       `json:"skipped,omitempty"`
+	Decoded   int          `json:"decoded,omitempty"`
+	Findings  []CHMFinding `json:"findings,omitempty"`
+}
+
 // CHM is the per-file Compiled HTML Help analysis.
 type CHM struct {
 	Score        int          `json:"score"`
@@ -823,40 +841,42 @@ func (c config) buildDocument(in Input) Document {
 		GeneratedAt: c.timestamp(),
 		Root:        c.root,
 		Summary: Summary{
-			FilesScanned:        len(in.AllPaths()),
-			HashDetections:      in.HashDetectionCount(),
-			YaraDetections:      in.YaraDetectionCount(),
-			HeuristicDetections: len(in.HeuristicBreach(c.heuristicThreshold)),
-			StaticDetections:    len(in.StaticBreach(c.staticThreshold)),
-			StegoDetections:     len(in.StegoBreach(c.stegoThreshold)),
-			EncChainDetections:  len(in.EncChainBreach(c.encChainThreshold)),
-			LNKDetections:       len(in.LNKBreach(c.lnkThreshold)),
-			OLEDetections:       len(in.OLEBreach(c.oleThreshold)),
-			PDFDetections:       len(in.PDFBreach(c.pdfThreshold)),
-			ISODetections:       len(in.ISOBreach(c.isoThreshold)),
-			ArchiveDetections:   len(in.ArchiveBreach(c.archiveThreshold)),
-			CHMDetections:       len(in.CHMBreach(c.chmThreshold)),
-			LinuxPkgDetections:  len(in.LinuxPkgBreach(c.linuxPkgThreshold)),
-			PeelDetections:      len(in.PeelBreach(c.peelThreshold)),
-			FusionDetections:    len(in.FusionCorroborated()),
-			Errors:              in.ErrorCount(),
-			ElapsedMS:           in.Elapsed.Milliseconds(),
-			HeuristicThreshold:  c.heuristicThreshold,
-			StaticThreshold:     c.staticThreshold,
-			StegoThreshold:      c.stegoThreshold,
-			EncChainThreshold:   c.encChainThreshold,
-			LNKThreshold:        c.lnkThreshold,
-			OLEThreshold:        c.oleThreshold,
-			PDFThreshold:        c.pdfThreshold,
-			ISOThreshold:        c.isoThreshold,
-			ArchiveThreshold:    c.archiveThreshold,
-			CHMThreshold:        c.chmThreshold,
-			LinuxPkgThreshold:   c.linuxPkgThreshold,
-			PeelThreshold:       c.peelThreshold,
-			Verdict:             c.overallVerdict(in),
-			FailOn:              c.failOn.String(),
-			ExitCode:            code,
-			ExitReason:          reason,
+			FilesScanned:         len(in.AllPaths()),
+			HashDetections:       in.HashDetectionCount(),
+			YaraDetections:       in.YaraDetectionCount(),
+			HeuristicDetections:  len(in.HeuristicBreach(c.heuristicThreshold)),
+			StaticDetections:     len(in.StaticBreach(c.staticThreshold)),
+			StegoDetections:      len(in.StegoBreach(c.stegoThreshold)),
+			EncChainDetections:   len(in.EncChainBreach(c.encChainThreshold)),
+			LNKDetections:        len(in.LNKBreach(c.lnkThreshold)),
+			OLEDetections:        len(in.OLEBreach(c.oleThreshold)),
+			PDFDetections:        len(in.PDFBreach(c.pdfThreshold)),
+			ISODetections:        len(in.ISOBreach(c.isoThreshold)),
+			ArchiveDetections:    len(in.ArchiveBreach(c.archiveThreshold)),
+			CHMDetections:        len(in.CHMBreach(c.chmThreshold)),
+			TradecraftDetections: len(in.TradecraftBreach(c.tradecraftThreshold)),
+			LinuxPkgDetections:   len(in.LinuxPkgBreach(c.linuxPkgThreshold)),
+			PeelDetections:       len(in.PeelBreach(c.peelThreshold)),
+			FusionDetections:     len(in.FusionCorroborated()),
+			Errors:               in.ErrorCount(),
+			ElapsedMS:            in.Elapsed.Milliseconds(),
+			HeuristicThreshold:   c.heuristicThreshold,
+			StaticThreshold:      c.staticThreshold,
+			StegoThreshold:       c.stegoThreshold,
+			EncChainThreshold:    c.encChainThreshold,
+			LNKThreshold:         c.lnkThreshold,
+			OLEThreshold:         c.oleThreshold,
+			PDFThreshold:         c.pdfThreshold,
+			ISOThreshold:         c.isoThreshold,
+			ArchiveThreshold:     c.archiveThreshold,
+			CHMThreshold:         c.chmThreshold,
+			TradecraftThreshold:  c.tradecraftThreshold,
+			LinuxPkgThreshold:    c.linuxPkgThreshold,
+			PeelThreshold:        c.peelThreshold,
+			Verdict:              c.overallVerdict(in),
+			FailOn:               c.failOn.String(),
+			ExitCode:             code,
+			ExitReason:           reason,
 		},
 		RunError: c.errorString(in.RunError),
 		Files:    []File{},
@@ -1022,6 +1042,12 @@ func (c config) buildFile(p string, res *scanner.ScanResult, h *scanner.Heuristi
 		if res.CHM != nil {
 			f.CHM = c.buildCHM(res.CHM)
 			if f.CHM.Detected && f.Verdict == JSONVerdictClean {
+				f.Verdict = JSONVerdictSuspicious
+			}
+		}
+		if res.Tradecraft != nil {
+			f.Tradecraft = c.buildTradecraft(res.Tradecraft)
+			if f.Tradecraft.Detected && f.Verdict == JSONVerdictClean {
 				f.Verdict = JSONVerdictSuspicious
 			}
 		}
@@ -1495,6 +1521,24 @@ func (c config) buildCHM(h *chm.Result) *CHM {
 		out.NotInspected = c.boundedMessage(h.Parsed.NotInspected)
 	}
 	for _, f := range h.Findings {
+		out.Findings = append(out.Findings, CHMFinding{
+			Class: c.boundedMessage(f.Class), Score: f.Score,
+			Technique: c.boundedMessage(f.Technique),
+			Detail:    c.boundedMessage(f.Detail), Evidence: c.boundedMessage(f.Evidence),
+		})
+	}
+	return out
+}
+
+func (c config) buildTradecraft(t *tradecraft.Result) *Tradecraft {
+	out := &Tradecraft{
+		Score:     t.Score,
+		Threshold: tradecraftThresholdFor(t, c.tradecraftThreshold),
+		Detected:  tradecraftBreached(t, c.tradecraftThreshold),
+		Skipped:   c.boundedMessage(t.Skipped),
+		Decoded:   t.Decoded,
+	}
+	for _, f := range t.Findings {
 		out.Findings = append(out.Findings, CHMFinding{
 			Class: c.boundedMessage(f.Class), Score: f.Score,
 			Technique: c.boundedMessage(f.Technique),

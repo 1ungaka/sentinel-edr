@@ -37,7 +37,7 @@ override_dh_auto_test:
 # systemd units all come from one file list — the same list the Arch PKGBUILD
 # installs, so the two packages cannot drift apart.
 override_dh_auto_install:
-	$(MAKE) install install-systemd DESTDIR=$(CURDIR)/debian/cau PREFIX=/usr \
+	$(MAKE) install install-systemd install-logrotate install-config DESTDIR=$(CURDIR)/debian/cau PREFIX=/usr \
 		VERSION=$(UPSTREAM_VERSION)
 
 # Install the units but do not enable or start them: this is a security tool,

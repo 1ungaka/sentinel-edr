@@ -12,6 +12,7 @@ import (
 
 	"github.com/s-b-repo/cau/internal/intel"
 	"github.com/s-b-repo/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/selftest"
 )
 
 // feedEnv is the environment variable that overrides the abuse-feed path.
@@ -112,7 +113,7 @@ func cmdFeedList(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("feed list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	feedPath := fs.String("feed", "", "feed file (default: search path)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	path := resolveFeedPath(*feedPath)
@@ -140,7 +141,7 @@ func cmdFeedCheck(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("feed check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	feedPath := fs.String("feed", "", "feed file (default: search path)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if fs.NArg() == 0 {
@@ -155,17 +156,17 @@ func cmdFeedCheck(args []string, stdout, stderr io.Writer) int {
 	for _, ind := range fs.Args() {
 		if lbl, ok := f.MatchHash(ind); ok {
 			anyHit = true
-			fmt.Fprintf(stdout, " [HIT] %s  hash  %s\n", ind, lbl)
+			fmt.Fprintf(stdout, " [HIT] %s  hash  %s\n", report.TermSafe(ind), report.TermSafe(lbl))
 			continue
 		}
 		hits := f.MatchText(ind)
 		if len(hits) == 0 {
-			fmt.Fprintf(stdout, " [ -- ] %s  (not in feed)\n", ind)
+			fmt.Fprintf(stdout, " [ -- ] %s  (not in feed)\n", report.TermSafe(ind))
 			continue
 		}
 		anyHit = true
 		for _, h := range hits {
-			fmt.Fprintf(stdout, " [HIT] %s  %s  %s\n", ind, h.Kind, h.Label)
+			fmt.Fprintf(stdout, " [HIT] %s  %s  %s\n", report.TermSafe(ind), h.Kind, report.TermSafe(h.Label))
 		}
 	}
 	if anyHit {
@@ -181,7 +182,10 @@ func cmdFeedUpdate(args []string, stdout, stderr io.Writer) int {
 	url := fs.String("url", "", "fetch indicators from an http(s) feed (opt-in network)")
 	feedPath := fs.String("feed", "", "cache file to write")
 	replace := fs.Bool("replace", false, "replace the cache instead of merging")
-	if err := fs.Parse(args); err != nil {
+	manifestPath := fs.String("manifest", "", "integrity baseline to keep in step (default: integrity.json next to the signature DB)")
+	signKey := fs.String("sign-key", "", "Ed25519 private key (hex) to re-sign the baseline after the update")
+	noRebaseline := fs.Bool("no-rebaseline", false, "leave the integrity baseline alone (the daemon will treat the new feed as tampered)")
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *from == "" && *url == "" {
@@ -232,7 +236,92 @@ func cmdFeedUpdate(args []string, stdout, stderr io.Writer) int {
 	if incoming.Skipped() > 0 {
 		fmt.Fprintf(stdout, "  skipped   : %d unparseable line(s) in the source\n", incoming.Skipped())
 	}
+	if !*noRebaseline {
+		rebaselineFeed(dest, *manifestPath, *signKey, stdout, stderr)
+	}
 	return report.ExitOK
+}
+
+// rebaselineFeed records the updated feed's digest in the integrity baseline.
+//
+// Without this a routine `cau feed update` is indistinguishable from an attack:
+// `cau defend` verifies the feed against the baseline, so the new file is
+// refused, and because the refusal happens on the load path there is no
+// previous feed to fall back to after a restart — one ordinary update would
+// leave the host with no threat intel at all. Keeping the baseline in step is
+// what makes the integrity check something an operator can live with rather
+// than something they switch off.
+//
+// A signed baseline is never rewritten without a key. Saving it with a
+// signature that no longer matches would be worse than leaving it: the daemon
+// refuses to start on a baseline whose signature does not verify, so the fix
+// for a stale feed digest would become an outage. In that case the operator is
+// told exactly what to run.
+func rebaselineFeed(dest, manifestPath, signKeyFile string, stdout, stderr io.Writer) {
+	mpath := manifestPath
+	if mpath == "" {
+		dbPath, _ := findResource("", envSignatures, relSignatures)
+		if dbPath == "" {
+			return
+		}
+		mpath = filepath.Join(filepath.Dir(dbPath), "integrity.json")
+	}
+	if _, err := os.Stat(mpath); err != nil {
+		return // no baseline on this host: nothing to keep in step
+	}
+	m, err := selftest.ReadManifest(mpath)
+	if err != nil {
+		fmt.Fprintf(stderr, "[WARN] integrity baseline %s could not be read, so it still describes the old feed: %v\n", mpath, err)
+		return
+	}
+	if m.Signature != "" && signKeyFile == "" {
+		fmt.Fprintf(stderr, "[WARN] the integrity baseline %s is signed, so it still describes the old feed.\n", mpath)
+		fmt.Fprintf(stderr, "       Until it is re-recorded, `cau defend` will refuse this feed as tampered with. Run:\n")
+		fmt.Fprintf(stderr, "         cau selftest --record --sign-key <key> --feed %s\n", dest)
+		fmt.Fprintf(stderr, "       or re-run this update with --sign-key to do it here.\n")
+		return
+	}
+	sum, isDir, files, err := selftest.Digest(dest)
+	if err != nil {
+		fmt.Fprintf(stderr, "[WARN] could not digest the new feed: %v\n", err)
+		return
+	}
+	entry := selftest.Entry{Name: selftestResFeed, Path: dest, SHA256: sum, IsDir: isDir}
+	if isDir {
+		entry.Files = files
+	}
+	replaced := false
+	for i := range m.Entries {
+		if m.Entries[i].Name == selftestResFeed {
+			m.Entries[i], replaced = entry, true
+			break
+		}
+	}
+	if !replaced {
+		m.Entries = append(m.Entries, entry)
+	}
+	if signKeyFile != "" {
+		keyData, rerr := os.ReadFile(signKeyFile)
+		if rerr != nil {
+			fmt.Fprintf(stderr, "[WARN] the baseline was not updated: reading the signing key: %v\n", rerr)
+			return
+		}
+		priv, perr := selftest.ParsePrivateKey(keyData)
+		if perr != nil {
+			fmt.Fprintf(stderr, "[WARN] the baseline was not updated: %v\n", perr)
+			return
+		}
+		m.Sign(priv)
+	}
+	if err := selftest.WriteManifest(mpath, m); err != nil {
+		fmt.Fprintf(stderr, "[WARN] the baseline was not updated: %v\n", err)
+		return
+	}
+	signed := ""
+	if m.Signature != "" {
+		signed = ", re-signed"
+	}
+	fmt.Fprintf(stdout, "  baseline  : %s updated for the new feed%s\n", mpath, signed)
 }
 
 const maxFeedFetchBytes = 128 << 20

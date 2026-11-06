@@ -54,6 +54,7 @@ import (
 	"github.com/s-b-repo/cau/scanner/pdf"
 	"github.com/s-b-repo/cau/scanner/static"
 	"github.com/s-b-repo/cau/scanner/stego"
+	"github.com/s-b-repo/cau/scanner/tradecraft"
 )
 
 // Branding defaults. main.go owns the canonical version string; these are the
@@ -109,6 +110,8 @@ const (
 	DefaultArchiveThreshold = archive.DefaultThreshold
 	// DefaultCHMThreshold mirrors chm.DefaultThreshold.
 	DefaultCHMThreshold = chm.DefaultThreshold
+	// DefaultTradecraftThreshold mirrors tradecraft.DefaultThreshold.
+	DefaultTradecraftThreshold = tradecraft.DefaultThreshold
 )
 
 // TruncationMarker is appended to any string that was cut short. Blob-shaped
@@ -601,6 +604,30 @@ func chmBreached(c *chm.Result, fallback int) bool {
 	return c != nil && c.Skipped == "" && c.Score >= chmThresholdFor(c, fallback)
 }
 
+// TradecraftBreach returns the scan results whose tradecraft score reached the
+// threshold.
+func (in Input) TradecraftBreach(threshold int) []scanner.ScanResult {
+	var out []scanner.ScanResult
+	for _, r := range in.Results {
+		if tradecraftBreached(r.Tradecraft, threshold) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func tradecraftThresholdFor(t *tradecraft.Result, fallback int) int {
+	if t != nil && t.Threshold > 0 {
+		return t.Threshold
+	}
+	return fallback
+}
+
+// tradecraftBreached is the single definition of "the tradecraft detector fired".
+func tradecraftBreached(t *tradecraft.Result, fallback int) bool {
+	return t != nil && t.Skipped == "" && t.Score >= tradecraftThresholdFor(t, fallback)
+}
+
 func stegoThresholdFor(s *stego.Result, fallback int) int {
 	if s != nil && s.Threshold > 0 {
 		return s.Threshold
@@ -654,20 +681,25 @@ type config struct {
 	maxMessageRunes     int
 	maxPreviewBytes     int
 
-	heuristicThreshold int
-	staticThreshold    int
-	stegoThreshold     int
-	encChainThreshold  int
-	lnkThreshold       int
-	oleThreshold       int
-	pdfThreshold       int
-	isoThreshold       int
-	linuxPkgThreshold  int
-	peelThreshold      int
-	archiveThreshold   int
-	chmThreshold       int
-	stat               StatFunc
-	now                func() time.Time
+	heuristicThreshold  int
+	staticThreshold     int
+	stegoThreshold      int
+	encChainThreshold   int
+	lnkThreshold        int
+	oleThreshold        int
+	pdfThreshold        int
+	isoThreshold        int
+	linuxPkgThreshold   int
+	peelThreshold       int
+	archiveThreshold    int
+	chmThreshold        int
+	tradecraftThreshold int
+	stat                StatFunc
+	now                 func() time.Time
+	// hostname names the reporting host in the SIEM sink formats (ECS
+	// host.name, GELF host, the RFC 5424 HOSTNAME field). Empty resolves to
+	// os.Hostname at build time.
+	hostname string
 
 	// SARIF knobs.
 	sarifIncludeHeuristics bool
@@ -772,12 +804,19 @@ func WithArchiveThreshold(n int) Option { return func(c *config) { c.archiveThre
 // WithCHMThreshold records which threshold the CHM detector ran at.
 func WithCHMThreshold(n int) Option { return func(c *config) { c.chmThreshold = n } }
 
+// WithTradecraftThreshold records which threshold the tradecraft detector ran at.
+func WithTradecraftThreshold(n int) Option { return func(c *config) { c.tradecraftThreshold = n } }
+
 // WithStatFunc overrides how file sizes are resolved (os.Stat by default).
 func WithStatFunc(f StatFunc) Option { return func(c *config) { c.stat = f } }
 
 // WithClock overrides the timestamp source, for deterministic tests and for
 // embedding a run id that predates the scan.
 func WithClock(now func() time.Time) Option { return func(c *config) { c.now = now } }
+
+// WithHostname sets the host name the SIEM sink formats record (ECS host.name,
+// GELF host, the RFC 5424 HOSTNAME field). The default is os.Hostname.
+func WithHostname(h string) Option { return func(c *config) { c.hostname = h } }
 
 // WithSARIFHeuristics controls whether heuristic breaches become SARIF results.
 // On by default, at "note" level: hiding evidence by default is worse than
@@ -840,6 +879,7 @@ func defaultConfig() config {
 		peelThreshold:       DefaultPeelThreshold,
 		archiveThreshold:    DefaultArchiveThreshold,
 		chmThreshold:        DefaultCHMThreshold,
+		tradecraftThreshold: DefaultTradecraftThreshold,
 		stat:                osFileSize,
 		now:                 time.Now,
 
@@ -914,6 +954,9 @@ func (c *config) normalize() {
 	}
 	if c.chmThreshold <= 0 {
 		c.chmThreshold = DefaultCHMThreshold
+	}
+	if c.tradecraftThreshold <= 0 {
+		c.tradecraftThreshold = DefaultTradecraftThreshold
 	}
 	if c.stat == nil {
 		c.stat = osFileSize

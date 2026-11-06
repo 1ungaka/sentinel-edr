@@ -19,6 +19,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // Parsing and safety limits.
@@ -49,6 +51,9 @@ var ffsTypeNames = map[uint8]string{
 const (
 	scoreChecksum = 3
 	scoreImplant  = 8
+	// scoreRuleMatch: a detection rule firing on a module body is the same
+	// tier as a rule firing on a file, so it crosses the threshold alone.
+	scoreRuleMatch = 8
 )
 
 const (
@@ -93,6 +98,10 @@ type Module struct {
 	Name  string `json:"name,omitempty"` // UI name section, when present
 	Size  int    `json:"size"`
 	HasPE bool   `json:"has_pe,omitempty"` // carries a PE32/TE executable section
+	// Depth is how deeply the module is nested: 0 for a module in a top-level
+	// volume, 1 for one inside a volume that was itself a section of another
+	// (the usual home of the DXE drivers, behind an LZMA-compressed section).
+	Depth int `json:"depth,omitempty"`
 }
 
 // Summary is the enumerated shape of the image, for the report.
@@ -102,7 +111,19 @@ type Summary struct {
 	IntelFlash    bool     `json:"intel_flash,omitempty"`
 	ChecksumValid bool     `json:"fv_checksum_valid"`
 	Inventory     []Module `json:"inventory,omitempty"`
-	NotInspected  string   `json:"not_inspected,omitempty"`
+	// Decompressed counts the LZMA-compressed sections that were opened;
+	// DecompressFailed those that could not be (corrupt, over the size
+	// budget, or nested too deeply). A failure is reported, never skipped
+	// silently: what is behind it was not inventoried.
+	Decompressed     int    `json:"decompressed_sections,omitempty"`
+	DecompressFailed int    `json:"decompress_failed,omitempty"`
+	NotInspected     string `json:"not_inspected,omitempty"`
+
+	// exec holds the executable sections found, for a caller that wants to
+	// run content rules over them. Not serialised.
+	exec      []ExecSection
+	execBytes int
+	execCut   bool
 }
 
 // Result is the analysis of one firmware image.
@@ -177,21 +198,13 @@ func Analyze(data []byte, opts Options) *Result {
 		s.IntelFlash = true
 	}
 	var checksumBad []string
-	off := findFV(data, 0)
-	for off >= 0 && s.Volumes < maxFVs {
-		fvLen, ok := parseFV(data, off, s, opts, &checksumBad)
-		s.Volumes++
-		next := off + 8
-		if ok && fvLen >= 8 {
-			next = off + int(fvLen)
-		}
-		if next <= off {
-			next = off + 8
-		}
-		off = findFV(data, next)
-	}
+	w := &walker{s: s, opts: opts, checksumBad: &checksumBad, budget: maxDecompressTotal}
+	w.volumes(data, 0)
 	s.Modules = len(s.Inventory)
-	s.NotInspected = "module bodies (PE/TE drivers) are inventoried, not disassembled; GUIDed/compressed sections are not decompressed"
+	s.NotInspected = "module bodies (PE/TE drivers) are inventoried, not disassembled; LZMA-compressed sections are opened, sections in the EFI/Tiano compression or another GUID-defined encoding are not"
+	if s.DecompressFailed > 0 {
+		s.NotInspected += fmt.Sprintf("; %d LZMA section(s) could not be opened (corrupt, over the %d MiB budget, or nested deeper than %d), so their contents are not in the inventory", s.DecompressFailed, maxDecompressTotal>>20, maxNestDepth)
+	}
 	r.Parsed = s
 
 	add := func(class string, score int, tech, detail, evidence string) {
@@ -239,7 +252,7 @@ func ScanFile(path string, opts Options) *Result {
 	if fi.Size() > max {
 		return &Result{FilePath: path, Threshold: opts.threshold(), Size: int(fi.Size()), Skipped: "file over the in-memory size limit"}
 	}
-	data, err := os.ReadFile(path)
+	data, err := safefs.ReadFile(path, max)
 	if err != nil {
 		return &Result{FilePath: path, Threshold: opts.threshold(), Skipped: "read: " + err.Error()}
 	}
@@ -253,7 +266,8 @@ func ScanFile(path string, opts Options) *Result {
 // parseFV parses one firmware volume at off, appends its modules to the
 // summary, and records a checksum failure. It returns the volume length and
 // whether the header parsed.
-func parseFV(data []byte, off int, s *Summary, opts Options, checksumBad *[]string) (uint64, bool) {
+func (w *walker) parseFV(data []byte, off int) (uint64, bool) {
+	s, checksumBad := w.s, w.checksumBad
 	if off+0x38 > len(data) {
 		return 0, false
 	}
@@ -282,8 +296,11 @@ func parseFV(data []byte, off int, s *Summary, opts Options, checksumBad *[]stri
 	for p+24 <= fvEnd && len(s.Inventory) < maxFFSFiles {
 		size := int(data[p+0x14]) | int(data[p+0x15])<<8 | int(data[p+0x16])<<16
 		state := data[p+0x17]
-		// An erased/free region: Name and most fields are 0xFF. Stop the walk.
-		if size < 24 || allFF(data[p:p+16]) {
+		// An erased/free region: the whole 24-byte file header is 0xFF. Stop
+		// the walk. The name alone is not the test: a pad file (type 0xF0),
+		// which edk2 places first in every volume that has an extended header,
+		// has an all-0xFF name and is a real file with files after it.
+		if size < 24 || allFF(data[p:p+24]) {
 			break
 		}
 		if p+size > fvEnd {
@@ -296,34 +313,255 @@ func parseFV(data []byte, off int, s *Summary, opts Options, checksumBad *[]stri
 			Size: size,
 		}
 		_ = state
-		m.Name, m.HasPE = walkSections(data, p+24, p+size)
+		secs := walkSections(data, p+24, p+size)
+		m.Name, m.HasPE, m.Depth = secs.name, secs.hasPE, w.depth
 		if typ != 0xF0 { // skip pad files in the inventory
 			s.Inventory = append(s.Inventory, m)
+		}
+		w.collect(m, secs.exec)
+		for _, nested := range secs.volumes {
+			w.descend(nested)
+		}
+		for _, stream := range secs.lzma {
+			w.expand(stream)
 		}
 		p = align8(p + size)
 	}
 	return fvLen, true
 }
 
-// walkSections scans an FFS file's sections for the UI name and a PE32/TE
-// executable section.
-func walkSections(data []byte, start, end int) (name string, hasPE bool) {
+// sectionInfo is what one FFS file's sections hold.
+type sectionInfo struct {
+	name    string
+	hasPE   bool
+	exec    []execRef // PE32 / TE bodies
+	volumes [][]byte  // bodies of FIRMWARE_VOLUME_IMAGE sections
+	lzma    [][]byte  // payloads of LZMA GUID-defined sections
+}
+
+type execRef struct {
+	kind string
+	data []byte
+}
+
+// lzmaSectionGUID is the EDK II "LZMA custom decompress" section GUID, the
+// encoding nearly every modern image keeps its main volume in.
+const lzmaSectionGUID = "ee4e5898-3914-4259-9d6e-dc7bd79403cf"
+
+// walkSections scans an FFS file's sections for the UI name, the PE32/TE
+// executable sections, nested firmware volumes and LZMA-compressed payloads.
+// Every slice it returns is a sub-slice of data, bounded by the section's own
+// length, which is checked against the file's end.
+func walkSections(data []byte, start, end int) sectionInfo {
+	var info sectionInfo
 	p := start
 	for n := 0; n < maxSections && p+4 <= end; n++ {
 		size := int(data[p]) | int(data[p+1])<<8 | int(data[p+2])<<16
 		typ := data[p+3]
-		if size < 4 || p+size > end {
+		hdr := 4
+		if size == 0xFFFFFF { // extended size: a 32-bit length follows
+			if p+8 > end {
+				break
+			}
+			ext := le32(data, p+4)
+			if ext > uint32(end-p) {
+				break
+			}
+			size, hdr = int(ext), 8
+		}
+		if size < hdr || p+size > end {
 			break
 		}
+		body := data[p+hdr : p+size]
 		switch typ {
-		case 0x10, 0x12: // PE32, TE
-			hasPE = true
+		case 0x10: // PE32
+			info.hasPE = true
+			info.exec = append(info.exec, execRef{"PE32", body})
+		case 0x12: // TE
+			info.hasPE = true
+			info.exec = append(info.exec, execRef{"TE", body})
 		case 0x15: // USER_INTERFACE: UCS-2 name
-			name = ucs2(data[p+4 : p+size])
+			info.name = ucs2(body)
+		case 0x17: // FIRMWARE_VOLUME_IMAGE
+			info.volumes = append(info.volumes, body)
+		case 0x02: // GUID_DEFINED: GUID, data offset, attributes
+			if len(body) >= 20 && formatGUID(body[:16]) == lzmaSectionGUID {
+				dataOff := int(le16(data, p+hdr+16))
+				if dataOff >= hdr+20 && dataOff <= size {
+					info.lzma = append(info.lzma, data[p+dataOff:p+size])
+				}
+			}
 		}
 		p = align4(p + size)
 	}
-	return name, hasPE
+	return info
+}
+
+// ── nested volumes ───────────────────────────────────────────────────────────
+
+const (
+	// maxNestDepth bounds volume-inside-volume recursion. Real images nest
+	// two or three deep; a crafted one could nest without end.
+	maxNestDepth = 4
+	// maxDecompressSection and maxDecompressTotal bound decompression: no
+	// single section may expand past the first, and one image may not expand
+	// past the second in total, however many sections it has.
+	maxDecompressSection = 64 << 20
+	maxDecompressTotal   = 256 << 20
+	// maxExecBytes bounds the executable-section bytes kept for rule scanning.
+	maxExecBytes = 256 << 20
+)
+
+// walker carries the state of one image's walk through nested volumes.
+type walker struct {
+	s           *Summary
+	opts        Options
+	checksumBad *[]string
+	depth       int
+	budget      int // decompressed bytes still allowed
+}
+
+// volumes parses every firmware volume found in data from offset from.
+func (w *walker) volumes(data []byte, from int) {
+	off := findFV(data, from)
+	for off >= 0 && w.s.Volumes < maxFVs {
+		fvLen, ok := w.parseFV(data, off)
+		w.s.Volumes++
+		next := off + 8
+		if ok && fvLen >= 8 && fvLen <= uint64(len(data)-off) {
+			next = off + int(fvLen)
+		}
+		off = findFV(data, next)
+	}
+}
+
+// descend walks a buffer that holds nested volumes, one level deeper.
+func (w *walker) descend(data []byte) {
+	if w.depth >= maxNestDepth {
+		w.s.DecompressFailed++
+		return
+	}
+	w.depth++
+	w.volumes(data, 0)
+	w.depth--
+}
+
+// expand opens an LZMA-compressed section and walks what is inside.
+func (w *walker) expand(stream []byte) {
+	limit := maxDecompressSection
+	if w.budget < limit {
+		limit = w.budget
+	}
+	if limit <= 0 || w.depth >= maxNestDepth {
+		w.s.DecompressFailed++
+		return
+	}
+	plain, err := lzmaDecode(stream, limit)
+	if err != nil {
+		w.s.DecompressFailed++
+		return
+	}
+	w.budget -= len(plain)
+	w.s.Decompressed++
+	// The decompressed payload is a section stream: usually alignment
+	// padding and one or more FIRMWARE_VOLUME_IMAGE sections. Walk it as
+	// sections, so a volume is found where its section says it is rather
+	// than by scanning for a signature at an assumed alignment.
+	secs := walkSections(plain, 0, len(plain))
+	if len(secs.volumes) == 0 && len(secs.lzma) == 0 {
+		w.descend(plain) // not a section stream: a bare volume, or nothing
+		return
+	}
+	for _, nested := range secs.volumes {
+		w.descend(nested)
+	}
+	if len(secs.lzma) > 0 {
+		w.depth++
+		for _, stream := range secs.lzma {
+			w.expand(stream)
+		}
+		w.depth--
+	}
+}
+
+// collect keeps a module's executable sections for rule scanning.
+func (w *walker) collect(m Module, refs []execRef) {
+	for _, r := range refs {
+		if w.s.execBytes+len(r.data) > maxExecBytes {
+			w.s.execCut = true
+			return
+		}
+		w.s.execBytes += len(r.data)
+		w.s.exec = append(w.s.exec, ExecSection{ModuleGUID: m.GUID, ModuleName: m.Name, ModuleType: m.Type, Kind: r.kind, Depth: m.Depth, Data: r.data})
+	}
+}
+
+// ExecSection is one executable section (a PE32 or TE image) of a firmware
+// module: the bytes a content rule can be run over.
+type ExecSection struct {
+	ModuleGUID string
+	ModuleName string
+	ModuleType string
+	Kind       string // "PE32" or "TE"
+	Depth      int
+	Data       []byte
+}
+
+// ExecutableSections returns the executable sections found by Analyze, and
+// whether the list was cut short by the size bound. The data aliases the
+// analysed buffer (or a decompressed copy); callers must not modify it.
+func (r *Result) ExecutableSections() (sections []ExecSection, truncated bool) {
+	if r == nil || r.Parsed == nil {
+		return nil, false
+	}
+	return r.Parsed.exec, r.Parsed.execCut
+}
+
+// RuleMatch is a content-rule hit on one executable section.
+type RuleMatch struct {
+	Rule    string
+	Section ExecSection
+}
+
+// AddRuleMatches records content-rule hits on module bodies as findings and
+// adds their score. One finding per module, naming the rules that fired.
+func (r *Result) AddRuleMatches(matches []RuleMatch) {
+	if r == nil || len(matches) == 0 {
+		return
+	}
+	byModule := map[string][]string{}
+	var order []string
+	for _, m := range matches {
+		label := m.Section.ModuleGUID
+		if m.Section.ModuleName != "" {
+			label += " (" + m.Section.ModuleName + ")"
+		}
+		if _, seen := byModule[label]; !seen {
+			order = append(order, label)
+		}
+		byModule[label] = append(byModule[label], m.Rule)
+	}
+	for _, label := range order {
+		rules := byModule[label]
+		sort.Strings(rules)
+		r.Findings = append(r.Findings, Finding{
+			Class: "uefi.module-rule-match", Score: scoreRuleMatch, Technique: techPreOSBoot,
+			Detail:   "a firmware module's executable body matches a detection rule",
+			Evidence: label + ": " + strings.Join(dedupeSorted(rules), ", "),
+		})
+		r.Score += scoreRuleMatch
+	}
+	sort.SliceStable(r.Findings, func(i, j int) bool { return r.Findings[i].Class < r.Findings[j].Class })
+}
+
+func dedupeSorted(s []string) []string {
+	out := s[:0:0]
+	for i, v := range s {
+		if i == 0 || v != s[i-1] {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

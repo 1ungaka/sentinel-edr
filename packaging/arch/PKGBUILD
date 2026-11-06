@@ -9,10 +9,14 @@ license=('MIT')
 depends=('glibc' 'yara')
 makedepends=('go' 'pkgconf')
 optdepends=('systemd: scheduled and resident scanning units'
+            'logrotate: rotate what the resident defend daemon appends to /var/log/cau'
             'bash-completion: bash completion for cau'
             'zsh: zsh completion for cau'
             'fish: fish completion for cau')
 provides=('cau-edr')
+# The rotation config is the one installed file an operator is expected to tune
+# (retention, size, compression), so pacman must not overwrite their edits.
+backup=('etc/logrotate.d/cau' 'etc/cau/cau.conf')
 source=("https://github.com/s-b-repo/cau/releases/download/v${pkgver}/${pkgname}-${pkgver}.tar.gz")
 # The release asset, not the per-request /archive/ URL: GitHub regenerates the
 # archive for every request and the bytes are not stable, so a checksum taken
@@ -53,5 +57,5 @@ package() {
     # VERSION is passed explicitly because a release tarball carries no .git:
     # without it, `make install` re-stamps the binary as "dev" and overwrites
     # the one built above with an unversioned build.
-    make install install-systemd PREFIX=/usr DESTDIR="${pkgdir}" VERSION="${pkgver}"
+    make install install-systemd install-logrotate install-config PREFIX=/usr DESTDIR="${pkgdir}" VERSION="${pkgver}"
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/s-b-repo/cau/internal/report"
+	"github.com/s-b-repo/cau/scanner"
 	"github.com/s-b-repo/cau/scanner/uefi"
 )
 
@@ -16,8 +17,10 @@ func firmwareUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage: cau firmware [flags] <image>
 
 Parses a UEFI firmware image — its Firmware Volumes and the FFS files and
-sections inside them — and reports a module inventory, the FV header integrity,
-and any module GUID on an operator-supplied implant blocklist.
+sections inside them, including volumes nested inside LZMA-compressed sections —
+and reports a module inventory, the FV header integrity, any module GUID on an
+operator-supplied implant blocklist, and any module whose executable body
+matches a detection rule.
 
 This is the Phase-8 firmware wedge and it is honest about its boundary: the
 engine ships NO implant truth set, because firmware is overwhelmingly
@@ -25,13 +28,20 @@ legitimate PEI/DXE/SMM drivers and scoring module shapes would be a
 false-positive machine. What it reports is the structural parse, a genuine
 tamper signal (an FV header whose 16-bit checksum does not validate), and any
 match against a blocklist you load with --implants. Module bodies are
-inventoried, not disassembled; compressed/GUIDed sections are not decompressed.
+inventoried and run through the YARA rules, not disassembled. LZMA-compressed
+sections are opened; sections in the EFI/Tiano compression or another
+GUID-defined encoding are not, and the report says how many could not be
+opened. The bundled rules were written for operating-system malware: a hit on
+a firmware module is strong evidence, and no hit says little.
 
 Flags:
   --format <fmt>   text or json (default text)
   --threshold <n>  score at which the image is reported suspicious (default 8)
   --implants <f>   implant-GUID blocklist file: one "guid" or "guid|name" per
                    line, '#' comments (empty/omitted = structural only)
+  --rules <dir>    YARA rules to run over module bodies (default: the bundled
+                   rules, found the way 'cau scan' finds them)
+  --no-yara        do not run rules over module bodies
 
 Exit codes: 0 clean, 1 suspicious, 3 the run failed, 4 usage.
 `)
@@ -43,7 +53,9 @@ func cmdFirmware(args []string, stdout, stderr io.Writer) int {
 	format := fs.String("format", "text", "output format: text or json")
 	threshold := fs.Int("threshold", 0, "score at which the image is reported suspicious (0 = default)")
 	implants := fs.String("implants", "", "implant-GUID blocklist file (optional)")
-	if err := fs.Parse(args); err != nil {
+	rules := fs.String("rules", "", "YARA rules directory (default: auto-discovered)")
+	noYara := fs.Bool("no-yara", false, "do not run YARA rules over module bodies")
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *format != "text" && *format != "json" {
@@ -68,6 +80,14 @@ func cmdFirmware(args []string, stdout, stderr io.Writer) int {
 	r := uefi.Analyze(data, opts)
 	r.FilePath = fs.Arg(0)
 
+	ruleNote, code := firmwareRules(r, *rules, *noYara, stderr)
+	if code != report.ExitOK {
+		return code
+	}
+	if r.Parsed != nil && ruleNote != "" {
+		r.Parsed.NotInspected += "; " + ruleNote
+	}
+
 	if *format == "json" {
 		if err := writeJSON(stdout, r); err != nil {
 			return fail(stderr, report.ExitRunFailed, "%v", err)
@@ -81,14 +101,71 @@ func cmdFirmware(args []string, stdout, stderr io.Writer) int {
 	return report.ExitOK
 }
 
+// firmwareRules runs the YARA rules over every executable section the parse
+// found and records the hits on the result. It returns a note for the report
+// when rules were not run or did not cover everything, so the absence of a
+// rule finding is never read as "the rules found nothing" when they did not
+// look. An explicitly named rules path that cannot be loaded fails the run;
+// rules that are merely not installed do not.
+func firmwareRules(r *uefi.Result, rulesFlag string, noYara bool, stderr io.Writer) (note string, code int) {
+	sections, truncated := r.ExecutableSections()
+	if noYara {
+		return "detection rules were not run over module bodies (--no-yara)", report.ExitOK
+	}
+	if len(sections) == 0 {
+		return "", report.ExitOK
+	}
+	rulesPath, _ := findResource(rulesFlag, envRules, relRules)
+	if rulesPath == "" {
+		if rulesFlag != "" {
+			return "", fail(stderr, report.ExitRunFailed, "YARA rules not found at %s", rulesFlag)
+		}
+		return "detection rules were not run over module bodies: no rules found (pass --rules)", report.ExitOK
+	}
+	ys, _, err := scanner.LoadYaraRules(rulesPath, scanner.WithWarnFunc(func(string, ...interface{}) {}))
+	if err != nil {
+		return "", fail(stderr, report.ExitRunFailed, "YARA: %v", err)
+	}
+	defer ys.Close()
+
+	var matches []uefi.RuleMatch
+	failed := 0
+	for _, sec := range sections {
+		hits, err := ys.ScanMemYara(sec.Data)
+		if err != nil {
+			failed++
+			continue
+		}
+		for _, h := range hits {
+			matches = append(matches, uefi.RuleMatch{Rule: h.RuleName, Section: sec})
+		}
+	}
+	r.AddRuleMatches(matches)
+
+	var notes []string
+	if truncated {
+		notes = append(notes, "the image holds more executable-section bytes than are kept for rule scanning, so some module bodies were not scanned")
+	}
+	if failed > 0 {
+		notes = append(notes, fmt.Sprintf("the rule scan failed on %d of %d module bodies", failed, len(sections)))
+	}
+	return strings.Join(notes, "; "), report.ExitOK
+}
+
 func writeFirmwareText(w io.Writer, r *uefi.Result) {
-	fmt.Fprintf(w, "File        : %s\n", r.FilePath)
+	fmt.Fprintf(w, "File        : %s\n", report.TermSafe(r.FilePath))
 	if r.Parsed == nil {
 		fmt.Fprintln(w, "Firmware    : not a UEFI firmware image")
 		return
 	}
 	fmt.Fprintf(w, "Volumes     : %d\n", r.Parsed.Volumes)
 	fmt.Fprintf(w, "Modules     : %d\n", r.Parsed.Modules)
+	if r.Parsed.Decompressed > 0 || r.Parsed.DecompressFailed > 0 {
+		fmt.Fprintf(w, "Compressed  : %d LZMA section(s) opened, %d could not be\n", r.Parsed.Decompressed, r.Parsed.DecompressFailed)
+	}
+	if secs, _ := r.ExecutableSections(); len(secs) > 0 {
+		fmt.Fprintf(w, "Executables : %d module bodies (PE32/TE)\n", len(secs))
+	}
 	fmt.Fprintf(w, "FV checksum : %s\n", map[bool]string{true: "valid", false: "INVALID"}[r.Parsed.ChecksumValid])
 	fmt.Fprintf(w, "Score       : %d / %d threshold\n", r.Score, r.EffectiveThreshold())
 	if r.Detected() {
@@ -102,7 +179,7 @@ func writeFirmwareText(w io.Writer, r *uefi.Result) {
 		fmt.Fprintf(w, "  [%s] %d%s\n", f.Class, f.Score, tag)
 		detail := f.Detail
 		if f.Evidence != "" {
-			detail += ": " + f.Evidence
+			detail += ": " + report.TermSafe(f.Evidence)
 		}
 		fmt.Fprintf(w, "    %s\n", detail)
 	}
@@ -117,7 +194,7 @@ func writeFirmwareText(w io.Writer, r *uefi.Result) {
 		if name == "" {
 			name = "-"
 		}
-		fmt.Fprintf(w, "  %s  %-20s  %s\n", m.GUID, m.Type, name)
+		fmt.Fprintf(w, "  %s  %-20s  %s\n", m.GUID, m.Type, report.TermSafe(name))
 	}
 	if r.Parsed.NotInspected != "" {
 		fmt.Fprintf(w, "Note        : %s\n", r.Parsed.NotInspected)

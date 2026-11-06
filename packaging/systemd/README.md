@@ -3,9 +3,14 @@
 CAU's engine is a one-shot scanner by design. There are two supported ways to
 run it automatically in the background; pick one.
 
-Either way, this is a **scheduled** scanner — it rescans on an interval or a
-timer. Real-time, kernel-level monitoring (fanotify/eBPF file events, memory) is
-the job of the resident sensor, a separate component, not this engine binary.
+Both of these are **scheduled** scanners, rescanning on an interval or a timer. For
+real-time protection use `cau-defend.service` instead: it runs every detection
+layer at once, scans new files as they land, correlates what the layers see
+into incidents, and can respond. See [Command-line reference](../../docs/cli.md#cau-defend).
+
+`cau scan --interval` could not scan anything before 0.1.0-dev+2026-11-06: process
+concealment overwrote its own arguments, so `--dir` became NUL bytes. Check the
+report rather than the service state on an older build.
 
 ## 1. Timer-driven scheduled scan (recommended)
 

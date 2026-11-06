@@ -29,7 +29,7 @@ func TestMeasureRealPeel(t *testing.T) {
 	p := New()
 	scanned := 0
 	byOutcome := map[Outcome]int{}
-	var hardFP []string
+	var hardFP, softFP []string
 	for _, root := range roots {
 		if _, err := os.Stat(root); err != nil {
 			continue
@@ -49,6 +49,9 @@ func TestMeasureRealPeel(t *testing.T) {
 				if (r.Outcome == OutcomeRevealedExecutable || r.Outcome == OutcomeRevealedScript) && len(hardFP) < 50 {
 					hardFP = append(hardFP, path+"  sig="+r.PrimarySignature)
 				}
+				if r.Outcome == OutcomePeelExhausted && len(softFP) < 50 {
+					softFP = append(softFP, path+"  reason="+r.ExhaustReason)
+				}
 			}
 			return nil
 		})
@@ -64,5 +67,8 @@ func TestMeasureRealPeel(t *testing.T) {
 	t.Logf("hard FP (revealed payload on benign): %d / %d (%.4f%%)", hard, scanned, 100*float64(hard)/float64(scanned))
 	for _, o := range hardFP {
 		t.Logf("  hard-FP: %s", o)
+	}
+	for _, o := range softFP {
+		t.Logf("  soft-FP: %s", o)
 	}
 }

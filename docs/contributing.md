@@ -18,6 +18,31 @@ lanes (`lint`, `test`, `gates`, `selfscan`, `fuzz`, `release`) instead of one
 serial `make ci` job, and the packaging proof
 (`.github/workflows/package.yml`) is a separate workflow.
 
+- **`lint` (15 min)** runs `gofmt` + `go vet`, plus a `vendor/` consistency
+  gate (`go mod vendor && git diff --exit-code -- vendor`), so a stale
+  committed tree fails here where it costs seconds instead of in the Debian
+  and Arch builds that carry `GOPROXY=off`.
+- **`test` (45 min)** runs `make test-race` over every package.
+- **`gates` (20 min)** runs `make build build-mcp`, `make lint-rules`,
+  `make coverage` (the ATT&CK-coverage gate against `baselines/attack-coverage.txt`),
+  `make eval` (the smoke-corpus recall + FP regression gate) and, on `main`,
+  proves `dpkg-buildpackage -us -uc -S` builds the Debian source package from
+  a sanitised copy of the tree.
+- **`selfscan` (20 min)** runs `cau scan --dir .` in SARIF and OCSF and
+  uploads `cau.sarif` to GitHub code scanning via `github/codeql-action/upload-sarif`.
+- **`fuzz` (30 min)** runs `make fuzz FUZZTIME=30s`, a coverage-guided hunt
+  over every `Fuzz*` target. Seeds already run as unit tests, so this lane
+  buys mutation coverage, not re-runs.
+- **`release` (30 min, on a `v*` tag)** builds and signs `cau`, `cau-mcp`,
+  the integrity manifest and `SHA256SUMS`, and `needs` the other five lanes.
+
+A per-ref `concurrency` group cancels a superseded pull-request run; a nightly
+`schedule` is the drift canary for CGO against a moving Go / libyara / glibc
+runner image; pull requests that touch only Markdown, wiki, docs, completions,
+packaging, scripts or `debian/` get no runner time. The five non-release lanes
+share the `.github/actions/cau-env` composite action (Go pinned by `go.mod`,
+libyara 4.3+, pkg-config).
+
 Go 1.24, libyara 4.3 with headers and pkg-config are required; see
 [Installation](installation.md).
 

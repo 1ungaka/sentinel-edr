@@ -71,33 +71,47 @@ func setComm(name string) error {
 	return nil
 }
 
-// overwriteArgv0 rewrites the process command line (argv), which is what
-// `ps aux` and /proc/<pid>/cmdline show, so the arguments ("scan --interval …")
-// that would reveal the scanner are blanked along with the name. It overwrites
-// ONLY the contiguous argv region — never the environment block that follows
-// it, because Go's os.Getenv aliases that same memory and corrupting it would
-// break the running program. Best-effort: on a runtime that does not alias the
-// original argv memory it simply has no visible effect, which the caller
-// verifies by re-reading /proc/self/cmdline.
-func overwriteArgv0(name string) {
+// argvRegion is the block of memory the kernel handed the process its arguments
+// in, recorded before os.Args stops pointing at it.
+var argvRegion []byte
+
+// init separates the program's arguments from the memory overwriteArgv0 blanks.
+// Go's os.Args strings alias that block, and so does every value the flag package
+// parses out of them, so blanking it without this turned a daemon's --dir into
+// NUL bytes: `cau scan --interval` scanned nothing, on every cycle, while
+// reporting that it had run. It has to happen in init, before anything parses.
+func init() {
 	if len(os.Args) == 0 || len(os.Args[0]) == 0 {
 		return
 	}
 	first := unsafe.StringData(os.Args[0])
 	last := os.Args[len(os.Args)-1]
-	lastData := unsafe.StringData(last)
 	start := uintptr(unsafe.Pointer(first))
-	end := uintptr(unsafe.Pointer(lastData)) + uintptr(len(last)) + 1 // include NUL
-	span := int(end - start)
-	if span <= 1 || span > 1<<16 {
-		return // implausible layout (non-contiguous argv); do nothing
+	end := uintptr(unsafe.Pointer(unsafe.StringData(last))) + uintptr(len(last)) + 1 // include NUL
+	if span := int(end - start); span > 1 && span <= 1<<16 {
+		argvRegion = unsafe.Slice(first, span)
 	}
-	buf := unsafe.Slice(first, span)
-	for i := range buf {
-		buf[i] = 0
+	for i, a := range os.Args {
+		os.Args[i] = strings.Clone(a)
 	}
-	n := copy(buf[:span-1], name) // leave a trailing NUL
-	_ = n
+}
+
+// overwriteArgv0 rewrites the process command line (argv), which is what
+// `ps aux` and /proc/<pid>/cmdline show, so the arguments ("scan --interval …")
+// that would reveal the scanner are blanked along with the name. It overwrites
+// ONLY the contiguous argv region — never the environment block that follows
+// it, because Go's os.Getenv aliases that same memory and corrupting it would
+// break the running program. Best-effort: when the layout was implausible at
+// init it does nothing, which the caller verifies by re-reading
+// /proc/self/cmdline.
+func overwriteArgv0(name string) {
+	if len(argvRegion) <= 1 {
+		return
+	}
+	for i := range argvRegion {
+		argvRegion[i] = 0
+	}
+	copy(argvRegion[:len(argvRegion)-1], name) // leave a trailing NUL
 }
 
 // cmdlineMasked reports whether /proc/self/cmdline now begins with name, i.e.

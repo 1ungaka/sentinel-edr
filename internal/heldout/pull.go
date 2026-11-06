@@ -332,5 +332,5 @@ func downloadOnce(ctx context.Context, url, dest string, client *http.Client) (i
 	if err != nil {
 		return have + written, resumed, err // partial; a retry resumes from here
 	}
-	return have + written, resumed, nil
+	return have + written, resumed, f.Close() // the deferred one is then a no-op
 }

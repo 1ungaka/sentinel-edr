@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // DefaultThreshold is the shipped score at which a text artifact is reported
@@ -159,7 +161,7 @@ func ScanFile(path string, opts Options) *Result {
 		r.Skipped = fmt.Sprintf("file is %d bytes, over the %d byte size limit", fi.Size(), max)
 		return r
 	}
-	data, err := os.ReadFile(path)
+	data, err := safefs.ReadFile(path, max)
 	if err != nil {
 		r.Error = fmt.Errorf("could not read file: %w", err)
 		return r

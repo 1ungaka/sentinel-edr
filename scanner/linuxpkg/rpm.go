@@ -155,7 +155,7 @@ func rpmString(store []byte, e rpmEntry) string {
 	if e.typ != rpmTypeString && e.typ != rpmTypeI18NString && e.typ != rpmTypeStringArray {
 		return ""
 	}
-	if int(e.offset) >= len(store) {
+	if uint64(e.offset) >= uint64(len(store)) {
 		return ""
 	}
 	seg := store[e.offset:]

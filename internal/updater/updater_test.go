@@ -98,7 +98,7 @@ func TestApplyAtomicWithRollback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rollback, err := Apply(db, v)
+	rollback, err := Apply(db, v, false)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestApplyToFreshPathNoRollback(t *testing.T) {
 	pub, priv := keypair(t)
 	b := signedBundle(t, priv, []byte("x"), "")
 	v, _ := Verify(b, pub, "0.4.0")
-	rollback, err := Apply(db, v)
+	rollback, err := Apply(db, v, false)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}

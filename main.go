@@ -6,17 +6,25 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	jsonpkg "encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/s-b-repo/cau/internal/forward/collector"
+	"github.com/s-b-repo/cau/internal/forward/wazuh"
 	"github.com/s-b-repo/cau/internal/harden"
 	"github.com/s-b-repo/cau/internal/peeler"
 	"github.com/s-b-repo/cau/internal/release"
@@ -33,6 +41,7 @@ import (
 	"github.com/s-b-repo/cau/scanner/pdf"
 	"github.com/s-b-repo/cau/scanner/static"
 	"github.com/s-b-repo/cau/scanner/stego"
+	"github.com/s-b-repo/cau/scanner/tradecraft"
 )
 
 // version is overridden at build time: -ldflags "-X main.version=v1.2.3".
@@ -62,11 +71,22 @@ Usage:
   cau rules     lint|list [flags]      lint the YARA rules, or list them with their meta
   cau coverage  [flags]                ATT&CK coverage matrix of the shipped content
                                        (text, JSON or ATT&CK Navigator layer; gate with --expect)
+  cau honesty   [flags]                one document of what is covered, what was measured and whether the
+                                       detection content is intact, with gaps shown and no overall score
   cau quarantine <subcommand>          vault flagged files (add/list/restore/verify/delete)
   cau canary    plant|check [flags]    plant decoy files and detect tampering
   cau peel      [flags] <file>         walk an obfuscation chain, depth as signal
   cau firmware  [flags] <image>        parse a UEFI firmware image (FV/FFS inventory, integrity, implant blocklist)
-  cau ps        [flags]                scan the live process table (/proc) for fileless/masquerade/injection
+  cau boot-scan [flags]                read the boot chain, read-only: MBR/GPT/boot sectors, the EFI System Partition,
+                                       Secure Boot state and boot entries, WPBT, option ROMs
+  cau hwid      [flags]                snapshot the hardware identity (DMI, NIC addresses, TPM PCRs) and compare it
+                                       with a recorded baseline; what cannot be verified is listed, never assumed
+  cau ps        [flags]                scan the live process table (/proc) for fileless/masquerade/injection/network shells; --respond stops or kills confirmed ones
+  cau net       [flags] | block|unblock|blocks|clear
+                                       scan the network plane (/proc sockets attributed to processes, resolver, neighbours) for
+                                       fileless egress, bind shells, known-bad peers, DNS escape, sweeps, beaconing; --respond blocks
+  cau defend    [flags]                chain every layer: correlate incidents, watch files in real time, respond to confirmed attacks
+  cau persist   [flags]                audit the host for persistence (preload, cron, systemd, rc files, keys, accounts, PAM, SUID)
   cau installed [flags]                audit installed-package maintainer scripts (dpkg/pacman) for tradecraft
   cau feed      <subcommand>           manage the abuse-intel feed (list/check/update; offline cache + opt-in fetch)
   cau intake    --format <fmt> [flags] ingest a threat-intel feed into the signature DB
@@ -128,6 +148,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdRules(args[1:], stdout, stderr)
 	case "coverage":
 		return cmdCoverage(args[1:], stdout, stderr)
+	case "honesty":
+		return cmdHonesty(args[1:], stdout, stderr)
 	case "quarantine":
 		return cmdQuarantine(args[1:], stdout, stderr)
 	case "canary":
@@ -136,8 +158,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdPeel(args[1:], stdout, stderr)
 	case "firmware":
 		return cmdFirmware(args[1:], stdout, stderr)
+	case "boot-scan":
+		return cmdBootScan(args[1:], stdout, stderr)
+	case "hwid":
+		return cmdHwid(args[1:], stdout, stderr)
+	case "persist":
+		return cmdPersist(args[1:], stdout, stderr)
+	case "defend":
+		return cmdDefend(args[1:], stdout, stderr)
 	case "ps":
 		return cmdPs(args[1:], stdout, stderr)
+	case "net":
+		return cmdNet(args[1:], stdout, stderr)
 	case "feed":
 		return cmdFeed(args[1:], stdout, stderr)
 	case "installed":
@@ -170,48 +202,66 @@ func run(args []string, stdout, stderr io.Writer) int {
 // ── scan ─────────────────────────────────────────────────────────────────────
 
 type scanFlags struct {
-	file, dir         string
-	db, rules         string
-	noYara, noHeur    bool
-	noStatic, noFuzzy bool
-	noStego, noFusion bool
-	noEncChain        bool
-	noLNK             bool
-	noOLE             bool
-	noPDF             bool
-	noISO             bool
-	noPkg             bool
-	noPeel            bool
-	noArchive         bool
-	noCHM             bool
-	quarantine        bool
-	quarantineStore   string
-	quarantineLevel   string
-	interval          time.Duration
-	fuzzyDB           string
-	signers           string
-	heurThreshold     int
-	staticThreshold   int
-	stegoThreshold    int
-	encChainThreshold int
-	lnkThreshold      int
-	oleThreshold      int
-	pdfThreshold      int
-	isoThreshold      int
-	pkgThreshold      int
-	feed              string
-	peelThreshold     int
-	archiveThreshold  int
-	chmThreshold      int
-	format, output    string
-	pretty            bool
-	failOn            string
-	noFailOnScanError bool
-	jobs              int
-	followSymlinks    bool
-	maxInMemoryMiB    int64
-	yaraTimeout       time.Duration
-	quiet             bool
+	file, dir           string
+	db, rules           string
+	noYara, noHeur      bool
+	noStatic, noFuzzy   bool
+	noStego, noFusion   bool
+	noEncChain          bool
+	noLNK               bool
+	noOLE               bool
+	noPDF               bool
+	noISO               bool
+	noPkg               bool
+	noPeel              bool
+	noArchive           bool
+	noCHM               bool
+	noTradecraft        bool
+	quarantine          bool
+	quarantineStore     string
+	quarantineLevel     string
+	interval            time.Duration
+	fuzzyDB             string
+	signers             string
+	heurThreshold       int
+	staticThreshold     int
+	stegoThreshold      int
+	encChainThreshold   int
+	lnkThreshold        int
+	oleThreshold        int
+	pdfThreshold        int
+	isoThreshold        int
+	pkgThreshold        int
+	feed                string
+	peelThreshold       int
+	archiveThreshold    int
+	chmThreshold        int
+	tradecraftThreshold int
+	format, output      string
+	pretty              bool
+	failOn              string
+	noFailOnScanError   bool
+	jobs                int
+	followSymlinks      bool
+	maxInMemoryMiB      int64
+	yaraTimeout         time.Duration
+	quiet               bool
+
+	// Wazuh forwarder: free SIEM sink. See internal/forward/wazuh.
+	wazuhURL         string
+	wazuhUser        string
+	wazuhPasswordEnv string
+	wazuhCA          string
+	wazuhInsecure    bool
+	wazuhTimeout     time.Duration
+	// Generic SIEM sink forwarder. See internal/forward/collector.
+	sinkURL      string
+	sinkFormat   string
+	sinkIndex    string
+	sinkAuthEnv  string
+	sinkCA       string
+	sinkInsecure bool
+	sinkTimeout  time.Duration
 }
 
 func cmdScan(args []string, stdout, stderr io.Writer) int {
@@ -251,6 +301,8 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	fs.IntVar(&f.archiveThreshold, "archive-threshold", archive.Threshold, "score at which a compressed container is reported suspicious")
 	fs.BoolVar(&f.noCHM, "no-chm", false, "disable the Compiled HTML Help (CHM) pass (embedded executables, shortcuts, dangerous scripts)")
 	fs.IntVar(&f.chmThreshold, "chm-threshold", chm.Threshold, "score at which a CHM file is reported suspicious")
+	fs.BoolVar(&f.noTradecraft, "no-tradecraft", false, "disable the behavioural pass over scripts and payload bytes (web shells, network shells, in-memory loaders, shellcode)")
+	fs.IntVar(&f.tradecraftThreshold, "tradecraft-threshold", tradecraft.Threshold, "score at which a tradecraft match is reported suspicious")
 	fs.BoolVar(&f.quarantine, "quarantine", false, "after scanning, move files with a MALICIOUS verdict into the quarantine vault (free prevention; default off)")
 	fs.StringVar(&f.quarantineStore, "quarantine-store", "", "vault directory for --quarantine (default: the cau quarantine default)")
 	fs.StringVar(&f.quarantineLevel, "quarantine-level", "malicious", "what --quarantine blocks: 'malicious' (hash/YARA only) or 'suspicious' (also the fused multi-indicator score)")
@@ -266,7 +318,25 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	fs.Int64Var(&f.maxInMemoryMiB, "max-in-memory", scanner.DefaultMaxInMemory>>20, "largest file (MiB) read into memory; bigger files are streamed and skip heuristics")
 	fs.DurationVar(&f.yaraTimeout, "yara-timeout", scanner.DefaultScanTimeout, "per-file YARA scan budget")
 	fs.BoolVar(&f.quiet, "quiet", false, "suppress the banner and progress lines on stderr")
-	if err := fs.Parse(args); err != nil {
+
+	// ── Free SIEM forwarder: Wazuh Manager API (see docs/pricing.md). ──
+	fs.StringVar(&f.wazuhURL, "wazuh-url", "", "Wazuh Manager API base (e.g. https://wazuh.example.com:55000); forwards OCSF findings over /events")
+	fs.StringVar(&f.wazuhUser, "wazuh-user", "", "Wazuh API user for --wazuh-url")
+	fs.StringVar(&f.wazuhPasswordEnv, "wazuh-password-env", "WAZUH_PASSWORD", "environment variable holding the Wazuh API password (never on argv)")
+	fs.StringVar(&f.wazuhCA, "wazuh-ca", "", "PEM CA bundle to trust the Wazuh manager's TLS certificate")
+	fs.BoolVar(&f.wazuhInsecure, "wazuh-insecure", false, "skip Wazuh TLS verification (explicit opt-in; also allows http://)")
+	fs.DurationVar(&f.wazuhTimeout, "wazuh-timeout", wazuh.DefaultTimeout, "per-request timeout for the Wazuh forwarder")
+
+	// ── Free SIEM forwarder: any collector that takes a sink format. ──
+	fs.StringVar(&f.sinkURL, "sink-url", "", "forward findings to a collector: udp://, tcp://, tls://host:port (syslog, CEF, LEEF, GELF, ECS) or https://host/path (OTLP /v1/logs, OpenSearch _bulk, GELF HTTP)")
+	fs.StringVar(&f.sinkFormat, "sink-format", "", "sink format for --sink-url: "+strings.Join(report.SinkFormats(), ", ")+" (default: --format when it is one of these)")
+	fs.StringVar(&f.sinkIndex, "sink-index", "", "with an https:// --sink-url and the ecs format: send an OpenSearch/Elasticsearch _bulk body creating into this index or data stream")
+	fs.StringVar(&f.sinkAuthEnv, "sink-auth-env", "CAU_SINK_AUTH", "environment variable holding the HTTP Authorization header value for --sink-url (never on argv)")
+	fs.StringVar(&f.sinkCA, "sink-ca", "", "PEM CA bundle to trust the collector's TLS certificate")
+	fs.BoolVar(&f.sinkInsecure, "sink-insecure", false, "skip collector TLS verification (explicit opt-in; also allows http://)")
+	fs.DurationVar(&f.sinkTimeout, "sink-timeout", collector.DefaultTimeout, "per-connection and per-request timeout for --sink-url")
+
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 
@@ -349,6 +419,7 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		report.WithISOThreshold(f.isoThreshold),
 		report.WithLinuxPkgThreshold(f.pkgThreshold),
 		report.WithPeelThreshold(f.peelThreshold),
+		report.WithTradecraftThreshold(f.tradecraftThreshold),
 		report.WithIndent(f.pretty),
 	}
 	if f.dir != "" && len(targets) == 1 {
@@ -360,6 +431,13 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		return report.ExitUsage
 	}
 	policy := report.NewExitPolicy(opts...)
+	// A mistyped collector is a usage error before the scan starts, not a
+	// warning after it: only a transport failure at send time is best-effort.
+	sinkFwd, err := newSinkForwarder(f, opts)
+	if err != nil {
+		fmt.Fprintf(stderr, "[ERROR] %v\n", err)
+		return report.ExitUsage
+	}
 
 	status := func(format string, a ...interface{}) {
 		if !f.quiet {
@@ -390,6 +468,8 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 			if in.RunError != nil {
 				fmt.Fprintf(stderr, "[ERROR] %v\n", in.RunError)
 			}
+			forwardWazuh(f, in, status, stderr)
+			sinkFwd.forward(in, status, stderr)
 			status("[*] %s", policy.Explain(in))
 			return policy.Code(in)
 		}
@@ -400,6 +480,8 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		if in.RunError != nil {
 			fmt.Fprintf(stderr, "[ERROR] %v\n", in.RunError)
 		}
+		forwardWazuh(f, in, status, stderr)
+		sinkFwd.forward(in, status, stderr)
 		status("[*] %s", policy.Explain(in))
 		return policy.Code(in)
 	}
@@ -543,40 +625,42 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	}
 
 	engine := &scanner.Engine{
-		DB:                 db,
-		Yara:               ys,
-		Heuristics:         !f.noHeur,
-		HeuristicThreshold: f.heurThreshold,
-		Static:             !f.noStatic,
-		StaticThreshold:    f.staticThreshold,
-		FuzzyDB:            fuzzy,
-		StaticNoFuzzy:      f.noFuzzy,
-		SignerBlocklist:    signerBL,
-		Stego:              !f.noStego,
-		StegoThreshold:     f.stegoThreshold,
-		EncChain:           !f.noEncChain,
-		EncChainThreshold:  f.encChainThreshold,
-		LNK:                !f.noLNK,
-		LNKThreshold:       f.lnkThreshold,
-		OLE:                !f.noOLE,
-		OLEThreshold:       f.oleThreshold,
-		PDF:                !f.noPDF,
-		PDFThreshold:       f.pdfThreshold,
-		ISO:                !f.noISO,
-		ISOThreshold:       f.isoThreshold,
-		LinuxPkg:           !f.noPkg,
-		LinuxPkgThreshold:  f.pkgThreshold,
-		Intel:              feed,
-		Peel:               !f.noPeel,
-		PeelThreshold:      f.peelThreshold,
-		Archive:            !f.noArchive,
-		ArchiveThreshold:   f.archiveThreshold,
-		CHM:                !f.noCHM,
-		CHMThreshold:       f.chmThreshold,
-		NoFusion:           f.noFusion,
-		MaxInMemory:        f.maxInMemoryMiB << 20,
-		Jobs:               f.jobs,
-		FollowSymlinks:     f.followSymlinks,
+		DB:                  db,
+		Yara:                ys,
+		Heuristics:          !f.noHeur,
+		HeuristicThreshold:  f.heurThreshold,
+		Static:              !f.noStatic,
+		StaticThreshold:     f.staticThreshold,
+		FuzzyDB:             fuzzy,
+		StaticNoFuzzy:       f.noFuzzy,
+		SignerBlocklist:     signerBL,
+		Stego:               !f.noStego,
+		StegoThreshold:      f.stegoThreshold,
+		EncChain:            !f.noEncChain,
+		EncChainThreshold:   f.encChainThreshold,
+		LNK:                 !f.noLNK,
+		LNKThreshold:        f.lnkThreshold,
+		OLE:                 !f.noOLE,
+		OLEThreshold:        f.oleThreshold,
+		PDF:                 !f.noPDF,
+		PDFThreshold:        f.pdfThreshold,
+		ISO:                 !f.noISO,
+		ISOThreshold:        f.isoThreshold,
+		LinuxPkg:            !f.noPkg,
+		LinuxPkgThreshold:   f.pkgThreshold,
+		Intel:               feed,
+		Peel:                !f.noPeel,
+		PeelThreshold:       f.peelThreshold,
+		Archive:             !f.noArchive,
+		ArchiveThreshold:    f.archiveThreshold,
+		CHM:                 !f.noCHM,
+		CHMThreshold:        f.chmThreshold,
+		Tradecraft:          !f.noTradecraft,
+		TradecraftThreshold: f.tradecraftThreshold,
+		NoFusion:            f.noFusion,
+		MaxInMemory:         f.maxInMemoryMiB << 20,
+		Jobs:                f.jobs,
+		FollowSymlinks:      f.followSymlinks,
 	}
 
 	// scanOnce runs every target through the engine once and returns the report
@@ -780,7 +864,7 @@ func cmdAddHash(args []string, stdout, stderr io.Writer) int {
 	typ := fs.String("type", "", "hash type: MD5, SHA1 or SHA256 (default: inferred from the length)")
 	name := fs.String("name", "", "threat name (e.g. \"WannaCry Ransomware\")")
 	db := fs.String("db", "", "signature database (default: auto-discovered)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *hash == "" || *name == "" {
@@ -810,3 +894,145 @@ func cmdAddHash(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "[+] Added to %s: %s|%s|%s\n", filepath.Clean(dbPath), t, h, strings.TrimSpace(*name))
 	return report.ExitOK
 }
+
+// ── Wazuh forwarder (free: see docs/pricing.md) ──────────────────────────────
+
+// forwardWazuh posts the OCSF findings of the finished scan to a Wazuh
+// Manager through its REST API, when --wazuh-url is set. It is called after
+// the local report has been written and runs on a best-effort basis: a
+// transport error is logged and dropped, never promoted to an exit code,
+// because a SIEM outage must not break a CI gate.
+func forwardWazuh(f scanFlags, in report.Input, status func(string, ...interface{}), stderr io.Writer) {
+	if strings.TrimSpace(f.wazuhURL) == "" {
+		return
+	}
+	// Dont attempt a forward on a run that produced no scan output at all;
+	// the Wazuh side would just see a 400 on an empty events array.
+	if in.Empty() && in.RunError == nil {
+		return
+	}
+	password := os.Getenv(f.wazuhPasswordEnv)
+	if password == "" {
+		fmt.Fprintf(stderr, "[WARN] wazuh forward skipped: $%s is empty (set --wazuh-password-env to the variable holding the API password)\n", f.wazuhPasswordEnv)
+		return
+	}
+	client, err := wazuh.New(wazuh.Options{
+		URL: f.wazuhURL, User: f.wazuhUser, Password: password,
+		CAFile: f.wazuhCA, Insecure: f.wazuhInsecure, Timeout: f.wazuhTimeout,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "[WARN] wazuh forward skipped: %v\n", err)
+		return
+	}
+	// Reuse the OCSF reporter so what Wazuh sees is byte-identical to
+	// `cau scan --format ocsf`. The double-encode here is one-per-scan, not
+	// per-finding, so the cost is negligible.
+	ocsfRep, err := report.NewReporter("ocsf")
+	if err != nil {
+		fmt.Fprintf(stderr, "[WARN] wazuh forward skipped: %v\n", err)
+		return
+	}
+	var buf strings.Builder
+	if err := ocsfRep.Write(&buf, in); err != nil {
+		fmt.Fprintf(stderr, "[WARN] wazuh forward skipped: build ocsf: %v\n", err)
+		return
+	}
+	var findings []map[string]any
+	if err := jsonUnmarshal(buf.String(), &findings); err != nil {
+		fmt.Fprintf(stderr, "[WARN] wazuh forward skipped: decode ocsf: %v\n", err)
+		return
+	}
+	if len(findings) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*f.wazuhTimeout+10*time.Second)
+	defer cancel()
+	res := client.Send(ctx, findings)
+	if res.Err != nil {
+		fmt.Fprintf(stderr, "[WARN] wazuh forward: %d/%d delivered: %v\n", res.Delivered, res.Attempted, res.Err)
+		return
+	}
+	status("[*] wazuh forward: %d/%d findings delivered", res.Delivered, res.Attempted)
+}
+
+// ── Generic SIEM sink forwarder (free: see docs/pricing.md) ──────────────────
+
+// sinkForwarder delivers the finished scan's findings to a collector in one of
+// the SIEM sink formats, when --sink-url is set. The zero value (no URL) does
+// nothing.
+type sinkForwarder struct {
+	client   *collector.Client
+	reporter report.Reporter
+	format   string
+	dest     string
+}
+
+// newSinkForwarder validates the --sink-* flags and builds the client and the
+// reporter whose bytes it will send. It opens no connection.
+func newSinkForwarder(f scanFlags, opts []report.Option) (*sinkForwarder, error) {
+	if strings.TrimSpace(f.sinkURL) == "" {
+		if f.sinkFormat != "" || f.sinkIndex != "" {
+			return nil, errors.New("--sink-format and --sink-index need --sink-url")
+		}
+		return &sinkForwarder{}, nil
+	}
+	format := strings.ToLower(strings.TrimSpace(f.sinkFormat))
+	if format == "" {
+		format = strings.ToLower(strings.TrimSpace(f.format))
+	}
+	if !slices.Contains(report.SinkFormats(), format) {
+		return nil, fmt.Errorf("--sink-url needs a sink format: set --sink-format to one of %s", strings.Join(report.SinkFormats(), ", "))
+	}
+	// The forwarded bytes are never indented: one event per line is the
+	// framing every transport relies on.
+	rep, err := report.NewSinkReporter(format, append(append([]report.Option(nil), opts...), report.WithIndent(false))...)
+	if err != nil {
+		return nil, err
+	}
+	client, err := collector.New(collector.Options{
+		URL: f.sinkURL, Format: format, BulkIndex: f.sinkIndex,
+		Authorization: os.Getenv(f.sinkAuthEnv),
+		CAFile:        f.sinkCA, Insecure: f.sinkInsecure, Timeout: f.sinkTimeout,
+	})
+	if err != nil {
+		return nil, err
+	}
+	dest := f.sinkURL
+	if u, perr := url.Parse(f.sinkURL); perr == nil {
+		dest = u.Redacted()
+	}
+	return &sinkForwarder{client: client, reporter: rep, format: format, dest: dest}, nil
+}
+
+// forward sends the findings. Like the Wazuh forwarder it is best-effort: a
+// collector outage is logged and dropped, never promoted to an exit code.
+func (s *sinkForwarder) forward(in report.Input, status func(string, ...interface{}), stderr io.Writer) {
+	if s == nil || s.client == nil {
+		return
+	}
+	var buf bytes.Buffer
+	if err := s.reporter.Write(&buf, in); err != nil {
+		fmt.Fprintf(stderr, "[WARN] sink forward skipped: build %s: %v\n", s.format, err)
+		return
+	}
+	timeout := s.client.Budget()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	res := s.client.Send(ctx, buf.Bytes())
+	if res.Attempted == 0 {
+		return
+	}
+	if res.Err != nil {
+		fmt.Fprintf(stderr, "[WARN] sink forward (%s): %d/%d delivered: %s\n", s.format, res.Delivered, res.Attempted, report.TermSafe(res.Err.Error()))
+		return
+	}
+	note := ""
+	if s.client.Cleartext() {
+		note = " (cleartext transport)"
+	}
+	status("[*] sink forward (%s): %d/%d findings delivered to %s%s", s.format, res.Delivered, res.Attempted, report.TermSafe(s.dest), note)
+}
+
+// jsonUnmarshal decodes a JSON string into v. Kept as a one-liner so main.go
+// does not grow a `json.*` surface outside the Wazuh forwarder.
+func jsonUnmarshal(s string, v any) error { return jsonpkg.Unmarshal([]byte(s), v) }

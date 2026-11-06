@@ -147,6 +147,7 @@ func (p *ExitPolicy) decide(in Input) (int, string) {
 	peelHits := len(in.PeelBreach(c.peelThreshold))
 	archiveHits := len(in.ArchiveBreach(c.archiveThreshold))
 	chmHits := len(in.CHMBreach(c.chmThreshold))
+	tradecraftHits := len(in.TradecraftBreach(c.tradecraftThreshold))
 	fused := len(in.FusionCorroborated())
 
 	// suspicious is the shared tail of the heuristic and clean levels: the
@@ -178,6 +179,8 @@ func (p *ExitPolicy) decide(in Input) (int, string) {
 			return ExitThreat, fmt.Sprintf("exit %d: %d file(s) reached the archive-container threshold %d", ExitThreat, archiveHits, c.archiveThreshold)
 		case chmHits > 0:
 			return ExitThreat, fmt.Sprintf("exit %d: %d file(s) reached the CHM help-file threshold %d", ExitThreat, chmHits, c.chmThreshold)
+		case tradecraftHits > 0:
+			return ExitThreat, fmt.Sprintf("exit %d: %d file(s) reached the tradecraft threshold %d", ExitThreat, tradecraftHits, c.tradecraftThreshold)
 		case fused > 0:
 			return ExitThreat, fmt.Sprintf("exit %d: %d file(s) were corroborated suspicious by the fusion of sub-threshold detectors", ExitThreat, fused)
 		}
@@ -186,7 +189,7 @@ func (p *ExitPolicy) decide(in Input) (int, string) {
 
 	switch c.failOn {
 	case FailOnNone:
-		return ExitOK, fmt.Sprintf("exit %d: fail-on=none never fails on findings (%d malicious, %d heuristic breach(es), %d static breach(es), %d stego breach(es), %d encoded-executable breach(es), %d shell-link breach(es), %d ole-macro breach(es), %d pdf breach(es), %d iso breach(es), %d linux-pkg breach(es), %d obfuscation-chain breach(es), %d fused)", ExitOK, malicious, breaches, static, stego, encchain, lnkHits, oleHits, pdfHits, isoHits, pkgHits, peelHits, fused)
+		return ExitOK, fmt.Sprintf("exit %d: fail-on=none never fails on findings (%d malicious, %d heuristic breach(es), %d static breach(es), %d stego breach(es), %d encoded-executable breach(es), %d shell-link breach(es), %d ole-macro breach(es), %d pdf breach(es), %d iso breach(es), %d linux-pkg breach(es), %d obfuscation-chain breach(es), %d tradecraft breach(es), %d fused)", ExitOK, malicious, breaches, static, stego, encchain, lnkHits, oleHits, pdfHits, isoHits, pkgHits, peelHits, tradecraftHits, fused)
 
 	case FailOnMalicious:
 		if malicious > 0 {

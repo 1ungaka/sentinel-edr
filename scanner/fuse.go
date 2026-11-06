@@ -193,6 +193,14 @@ func (e *Engine) fuse(res *ScanResult, h *HeuristicResult) *fusion.Verdict {
 		sources = append(sources, src)
 	}
 
+	if tc := res.Tradecraft; tc != nil {
+		src := fusion.Source{Name: fusion.SourceTradecraft, Score: tc.Score, Threshold: tc.EffectiveThreshold(), Skipped: tc.Skipped}
+		for _, f := range tc.Findings {
+			src.Evidence = append(src.Evidence, fusion.Evidence{Label: f.Class, Detail: f.Detail, Technique: f.Technique, Weight: f.Score})
+		}
+		sources = append(sources, src)
+	}
+
 	if len(sources) == 0 {
 		return nil
 	}

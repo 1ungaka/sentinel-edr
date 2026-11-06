@@ -13,6 +13,7 @@ import (
 	"github.com/s-b-repo/cau/internal/eval"
 	"github.com/s-b-repo/cau/scanner"
 	"github.com/s-b-repo/cau/scanner/encchain"
+	"github.com/s-b-repo/cau/scanner/fusion"
 	"github.com/s-b-repo/cau/scanner/static"
 	"github.com/s-b-repo/cau/scanner/stego"
 )
@@ -436,6 +437,87 @@ func (d fusionDetector) ScanFile(path string) (eval.Finding, error) {
 			Rule:     "fusion/agreed/" + s.Name,
 			Detail:   fmt.Sprintf("%d/%d ratio %.2f (%s)", s.Score, s.Threshold, s.Ratio, s.Role),
 		})
+	}
+	return f, nil
+}
+
+// formatPasses is every pass `cau scan` runs beyond the ones with their own
+// adapter above. A pass missing here is a pass the published recall and
+// false-positive numbers silently do not cover.
+var formatPasses = []struct {
+	source string // the fusion.Source the engine reports it as
+	enable func(*scanner.Engine)
+}{
+	{fusion.SourceLNK, func(e *scanner.Engine) { e.LNK = true }},
+	{fusion.SourceOLE, func(e *scanner.Engine) { e.OLE = true }},
+	{fusion.SourcePDF, func(e *scanner.Engine) { e.PDF = true }},
+	{fusion.SourceISO, func(e *scanner.Engine) { e.ISO = true }},
+	{fusion.SourceLinuxPkg, func(e *scanner.Engine) { e.LinuxPkg = true }},
+	{fusion.SourcePeeler, func(e *scanner.Engine) { e.Peel = true }},
+	{fusion.SourceArchive, func(e *scanner.Engine) { e.Archive = true }},
+	{fusion.SourceCHM, func(e *scanner.Engine) { e.CHM = true }},
+	{fusion.SourceTradecraft, func(e *scanner.Engine) { e.Tradecraft = true }},
+}
+
+// EnableFormatPasses switches on every pass PassDetectors reports, plus the
+// encoded-executable pass: the set the CLI enables by default.
+func EnableFormatPasses(e *scanner.Engine) {
+	e.EncChain = true
+	for _, p := range formatPasses {
+		p.enable(e)
+	}
+}
+
+// PassDetectors returns one detector per format pass. Each runs that pass on
+// the real engine and reads it back through the fusion source the engine
+// normalised it into, so the harness decides nothing the scanner did not.
+func PassDetectors() []eval.Detector {
+	out := make([]eval.Detector, 0, len(formatPasses))
+	for _, p := range formatPasses {
+		e := &scanner.Engine{}
+		p.enable(e)
+		out = append(out, passDetector{source: p.source, e: e})
+	}
+	return out
+}
+
+type passDetector struct {
+	source string
+	e      *scanner.Engine
+}
+
+func (d passDetector) Name() string { return d.source }
+
+func (d passDetector) ScanFile(path string) (eval.Finding, error) {
+	start := time.Now()
+	r, _ := d.e.ScanFile(path)
+	f := eval.Finding{Path: path, Verdict: eval.VerdictClean, Duration: time.Since(start)}
+	if r.Error != nil {
+		f.Verdict = eval.VerdictError
+		f.Err = r.Error
+		return f, r.Error
+	}
+	if r.Fusion == nil {
+		return f, nil
+	}
+	for _, s := range r.Fusion.Sources {
+		if s.Name != d.source || s.Skipped != "" {
+			continue
+		}
+		f.Scores = []eval.DetectorScore{{Detector: d.source, Score: s.Score, Threshold: s.Threshold}}
+		if s.Threshold <= 0 || s.Score < s.Threshold {
+			return f, nil
+		}
+		f.Verdict = eval.VerdictSuspicious
+		f.Signals = []eval.Signal{{
+			Detector: d.source,
+			Rule:     d.source + "/score",
+			Detail:   fmt.Sprintf("score %d/threshold %d", s.Score, s.Threshold),
+		}}
+		for _, ev := range s.Evidence {
+			f.Signals = append(f.Signals, eval.Signal{Detector: d.source, Rule: d.source + "/" + slug(ev.Label), Detail: ev.Detail})
+		}
+		return f, nil
 	}
 	return f, nil
 }

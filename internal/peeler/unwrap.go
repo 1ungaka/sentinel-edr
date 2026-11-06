@@ -41,7 +41,7 @@ const minLayerLen = 16
 // DefaultUnwrappers is the built-in registry, ordered most-structural first so
 // the estimator's frontier ranking has a sensible default. All are stdlib-only.
 func DefaultUnwrappers() []Unwrapper {
-	return []Unwrapper{
+	layers := []Unwrapper{
 		gzipLayer{},
 		zlibLayer{},
 		bzip2Layer{},
@@ -50,6 +50,7 @@ func DefaultUnwrappers() []Unwrapper {
 		base32Layer{},
 		hexLayer{},
 	}
+	return append(append(layers, baseLayers()...), cipherLayer{}, carveLayer{})
 }
 
 // ── bounded decode helpers ─────────────────────────────────────────────────
@@ -177,7 +178,7 @@ type base64Layer struct{}
 
 func (base64Layer) Name() string { return "base64" }
 func (base64Layer) Detect(b []byte) bool {
-	b = bytes.TrimSpace(b)
+	b = textBody(b)
 	if len(b) < minLayerLen {
 		return false
 	}
@@ -197,7 +198,7 @@ func (base64Layer) Detect(b []byte) bool {
 	return true
 }
 func (base64Layer) Unwrap(b []byte, limit int64) ([]byte, error) {
-	s := string(bytes.TrimSpace(b))
+	s := string(textBody(b))
 	for _, enc := range []*base64.Encoding{
 		base64.StdEncoding, base64.RawStdEncoding,
 		base64.URLEncoding, base64.RawURLEncoding,
@@ -216,7 +217,7 @@ type base32Layer struct{}
 
 func (base32Layer) Name() string { return "base32" }
 func (base32Layer) Detect(b []byte) bool {
-	b = bytes.TrimSpace(b)
+	b = textBody(b)
 	if len(b) < minLayerLen {
 		return false
 	}
@@ -231,7 +232,7 @@ func (base32Layer) Detect(b []byte) bool {
 	return true
 }
 func (base32Layer) Unwrap(b []byte, limit int64) ([]byte, error) {
-	s := string(bytes.TrimSpace(b))
+	s := string(textBody(b))
 	for _, enc := range []*base32.Encoding{base32.StdEncoding, base32.StdEncoding.WithPadding(base32.NoPadding)} {
 		if out, err := enc.DecodeString(s); err == nil && len(out) >= minLayerLen {
 			if int64(len(out)) > limit {
@@ -247,7 +248,7 @@ type hexLayer struct{}
 
 func (hexLayer) Name() string { return "hex" }
 func (hexLayer) Detect(b []byte) bool {
-	b = bytes.TrimSpace(b)
+	b = textBody(b)
 	if len(b) < minLayerLen || len(b)%2 != 0 {
 		return false
 	}
@@ -259,7 +260,7 @@ func (hexLayer) Detect(b []byte) bool {
 	return true
 }
 func (hexLayer) Unwrap(b []byte, limit int64) ([]byte, error) {
-	s := bytes.TrimSpace(b)
+	s := textBody(b)
 	if int64(len(s)/2) > limit {
 		return nil, errBombCap
 	}

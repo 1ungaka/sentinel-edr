@@ -3,11 +3,11 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/s-b-repo/cau/internal/safefs"
 	"github.com/s-b-repo/cau/scanner"
 )
 
@@ -61,7 +61,7 @@ func (s *Server) toolYaraTestRule(raw json.RawMessage) (interface{}, *rpcError) 
 				tested = append(tested, entry)
 				continue
 			}
-			data, derr := os.ReadFile(real)
+			data, _, derr := safefs.ReadFileNoFollow(real, s.deps.Sandbox.MaxBytes())
 			if derr != nil {
 				entry["error"] = derr.Error()
 				tested = append(tested, entry)

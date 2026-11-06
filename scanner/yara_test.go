@@ -77,8 +77,8 @@ func findString(t *testing.T, m YaraMatch, name string) YaraMatchString {
 func TestYaraLoadCompilesRepoRules(t *testing.T) {
 	ys := loadRepoYara(t)
 
-	if got := ys.RuleCount(); got != 6 {
-		t.Errorf("RuleCount() = %d, want 6", got)
+	if got := ys.RuleCount(); got != 8 {
+		t.Errorf("RuleCount() = %d, want 8", got)
 	}
 	if got := len(ys.RuleFiles()); got != 1 {
 		t.Errorf("RuleFiles() = %d entries, want 1", got)

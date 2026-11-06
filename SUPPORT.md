@@ -27,6 +27,7 @@ public holidays are not business days.
 | On-host prevention (quarantine, restore, block, kill, canaries) | Community, via issues | Commercial (managed centrally) |
 | `cau-mcp`, the MCP tools and sandbox | Community, via issues | Commercial (governance surfaces only) |
 | Signed updates, `cau update` / `cau verify-self` | Community, via issues | Commercial |
+| SIEM forwarding the agent speaks directly (Wazuh via `cau scan --wazuh-url …`; syslog / Splunk HEC / Elastic `_bulk` / OCSF Lake when added) | Community, via issues — **free** | Not a console surface |
 | Console installation, upgrades, backups | Not applicable | Commercial |
 | Fleet, policy, incidents, RBAC/SSO, multi-tenancy | Not applicable — nothing to install | Commercial |
 | Threat Graph, evasion telemetry, prevalence | Not applicable | Commercial (Scale tier) |

@@ -16,7 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/s-b-repo/cau/internal/parallel"
 	"github.com/s-b-repo/cau/internal/peeler"
+	"github.com/s-b-repo/cau/internal/safefs"
 	"github.com/s-b-repo/cau/scanner/archive"
 	"github.com/s-b-repo/cau/scanner/chm"
 	"github.com/s-b-repo/cau/scanner/encchain"
@@ -28,6 +30,7 @@ import (
 	"github.com/s-b-repo/cau/scanner/pdf"
 	"github.com/s-b-repo/cau/scanner/static"
 	"github.com/s-b-repo/cau/scanner/stego"
+	"github.com/s-b-repo/cau/scanner/tradecraft"
 )
 
 // Verdict represents the outcome of a file scan.
@@ -62,6 +65,9 @@ type ScanResult struct {
 	// Warnings records non-fatal problems (a YARA scan that timed out after
 	// collecting some matches, for example). They never change the verdict.
 	Warnings []string
+	// Panics lists detectors that panicked on this file. Each also has a warning,
+	// so reports show it; this is the form a caller can act on.
+	Panics []DetectorPanic
 
 	// Static is the structural analysis (entropy, fuzzy hashes, PE anatomy,
 	// anomalies), nil when the engine ran without it. Like heuristics it
@@ -118,6 +124,12 @@ type ScanResult struct {
 	// dangerous scripts). nil when the detector did not run. A breach is the
 	// SUSPICIOUS tier.
 	CHM *chm.Result
+
+	// Tradecraft is the behavioural analysis of scripts and payload bytes (web
+	// shells, network shells, in-memory loaders, shellcode, in the clear or in
+	// a decoded carrier). nil when the detector did not run. A breach is the
+	// SUSPICIOUS tier.
+	Tradecraft *tradecraft.Result
 
 	// Fusion is the lattice's view over every detector that ran: which
 	// sources agreed, how strongly, and what techniques the agreeing evidence
@@ -430,8 +442,10 @@ func AddSignature(dbPath, hashType, hashValue, threatName string) error {
 		}
 	}
 
-	_, err = fmt.Fprintf(f, "%s%s|%s|%s\n", prefix, t, h, name)
-	return err
+	if _, err = fmt.Fprintf(f, "%s%s|%s|%s\n", prefix, t, h, name); err != nil {
+		return err
+	}
+	return f.Close() // the deferred one is then a no-op; this one reports the flush
 }
 
 // ── Hashing ──────────────────────────────────────────────────────────────────
@@ -440,7 +454,7 @@ type digests struct{ md5, sha1, sha256 string }
 
 // hashFile computes MD5, SHA-1, and SHA-256 of a file in a single streaming pass.
 func hashFile(path string) (digests, error) {
-	f, err := os.Open(path)
+	f, _, err := safefs.Open(path)
 	if err != nil {
 		return digests{}, fmt.Errorf("could not open file: %w", err)
 	}
@@ -460,7 +474,14 @@ func hashReader(r io.Reader) (digests, error) {
 
 // hashBytes computes the three digests of an in-memory buffer.
 func hashBytes(data []byte) digests {
-	m, s1, s2 := md5.Sum(data), sha1.Sum(data), sha256.Sum256(data)
+	var m [md5.Size]byte
+	var s1 [sha1.Size]byte
+	var s2 [sha256.Size]byte
+	parallel.Do(
+		func() { m = md5.Sum(data) },
+		func() { s1 = sha1.Sum(data) },
+		func() { s2 = sha256.Sum256(data) },
+	)
 	return digests{hex.EncodeToString(m[:]), hex.EncodeToString(s1[:]), hex.EncodeToString(s2[:])}
 }
 

@@ -13,8 +13,8 @@
 _cau() {
     local -a top
     top=(
-        scan hash cluster add-hash add-fuzzy eval heldout rules coverage
-        quarantine canary peel firmware ps installed feed intake update
+        scan hash cluster add-hash add-fuzzy eval heldout rules coverage honesty
+        quarantine canary peel firmware boot-scan hwid ps net persist defend installed feed intake update
         selftest verify-self bundle version help
     )
 
@@ -44,6 +44,9 @@ _cau() {
                     ;;
                 feed)
                     sub=(list check update help)
+                    ;;
+                net)
+                    sub=(block unblock blocks clear)
                     ;;
                 bundle)
                     sub=(update checksums)

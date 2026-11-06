@@ -5,6 +5,7 @@ import (
 	"debug/pe"
 	"encoding/binary"
 	"fmt"
+	"github.com/s-b-repo/cau/internal/safefs"
 	"github.com/s-b-repo/cau/scanner/static"
 	"os"
 	"sort"
@@ -504,7 +505,9 @@ var suspiciousStrings = []stringPattern{
 	{"all your files", catRansomNote, 2},
 	{"decryption key", catRansomNote, 2},
 	{"bitcoin", catRansomNote, 1},
-	{".onion", catRansomNote, 2},
+	// Weak on purpose: Go's resolver carries ".onion" (RFC 7686), so every Go
+	// binary with a network stack has it (measured: buildah's copy helper).
+	{".onion", catRansomNote, 1},
 	{"CryptoLocker", catRansomFamily, 3},
 	{"WannaCry", catRansomFamily, 3},
 	{"WanaCrypt0r", catRansomFamily, 3},
@@ -556,7 +559,7 @@ func ScanHeuristicsFile(filePath string, opts HeuristicOptions) HeuristicResult 
 		return result
 	}
 
-	data, err := os.ReadFile(filePath)
+	data, err := safefs.ReadFile(filePath, maxSize)
 	if err != nil {
 		result.Error = fmt.Errorf("could not read file: %w", err)
 		return result

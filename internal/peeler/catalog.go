@@ -18,9 +18,9 @@ type Class struct {
 func Classes() []Class {
 	return []Class{
 		{"peel.revealed-executable", Technique, Novel, 60,
-			"a PE/ELF executable revealed at the bottom of a multi-layer (depth >= 2) encoding/compression chain"},
+			"a PE/ELF executable revealed at the bottom of a multi-layer (depth >= 2) chain, or behind a single substitution"},
 		{"peel.revealed-script", Technique, Novel, 40,
-			"a script (shebang) revealed at the bottom of a multi-layer (depth >= 2) encoding/compression chain"},
+			"a script revealed at the bottom of a multi-layer (depth >= 2) chain, or behind a single substitution"},
 		{"peel.exhausted", Technique, Novel, 30,
 			"a layer chain that outlived the per-sample budget wall — rendered first-class as peel-exhausted, never silent-clean"},
 	}

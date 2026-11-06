@@ -13,6 +13,7 @@ files, and how to prove it still works.
 | [Heuristics](heuristics.md) | capability named by imports and strings | SUSPICIOUS |
 | [Static structure](static-structure.md) | PE and ELF anatomy that hides something | SUSPICIOUS |
 | [Invisible codepoints](invisible-codepoints.md) | zero-width, bidi, TAG and variation-selector steganography | SUSPICIOUS |
+| [Tradecraft](tradecraft.md) | behaviour in scripts and payload bytes, through decoded carriers — web/net/in-memory shells, LOLBAS and GTFOBins abuse, the lolol.farm trusted-SaaS catalogue (LOLC2, LOLFSaaS, LOTTunnels, LOTWebhooks) and the ArcticFox EDR-bypass primitives | SUSPICIOUS |
 | [Fusion](fusion.md) | corroboration between sub-threshold detectors | raises CLEAN to SUSPICIOUS |
 
 Sections, in order: Goal, Categorization, Strategy Abstract, Technical

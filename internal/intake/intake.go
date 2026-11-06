@@ -79,6 +79,65 @@ type IOC struct {
 	ThreatName string
 	// Source is the feed the IOC came from, for provenance in the label.
 	Source string
+	// Confidence is what the source itself states about the indicator, never
+	// an engine guess: for STIX the indicator's confidence property on the
+	// specification's None/Low/Med/High scale ("none", "low", "medium",
+	// "high"); ConfidenceUnstated for a source that states nothing, which is
+	// every other format today.
+	Confidence string
+	// RetrievedAt is when the feed was read. The parsers leave it zero; the
+	// caller that read the bytes stamps it (see Stamp).
+	RetrievedAt time.Time
+	// Origin is where the bytes came from: a URL, a TAXII collection, a file
+	// path or "stdin". Set by Stamp.
+	Origin string
+}
+
+// ConfidenceUnstated marks an IOC whose source states no confidence.
+const ConfidenceUnstated = "unstated"
+
+// Stamp records when and from where a parsed feed was read on every IOC.
+func Stamp(iocs []IOC, origin string, retrieved time.Time) {
+	for i := range iocs {
+		iocs[i].Origin = origin
+		iocs[i].RetrievedAt = retrieved.UTC()
+	}
+}
+
+// ProvenanceRecord is the audit record of one consumed indicator: what it is,
+// which feed and origin it came from, when it was retrieved and how confident
+// the source said it was. One JSON object per line; the signature database
+// itself stays the three-field format it has always been.
+type ProvenanceRecord struct {
+	HashType    string `json:"hash_type"`
+	Hash        string `json:"hash"`
+	ThreatName  string `json:"threat_name"`
+	Source      string `json:"source"`
+	Origin      string `json:"origin,omitempty"`
+	RetrievedAt string `json:"retrieved_at,omitempty"`
+	Confidence  string `json:"confidence"`
+}
+
+// Provenance renders the provenance records of iocs as JSON lines.
+func Provenance(iocs []IOC) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	for _, i := range iocs {
+		rec := ProvenanceRecord{
+			HashType: i.HashType, Hash: i.Hash, ThreatName: i.ThreatName,
+			Source: i.Source, Origin: i.Origin, Confidence: i.Confidence,
+		}
+		if rec.Confidence == "" {
+			rec.Confidence = ConfidenceUnstated
+		}
+		if !i.RetrievedAt.IsZero() {
+			rec.RetrievedAt = i.RetrievedAt.UTC().Format(time.RFC3339)
+		}
+		if err := enc.Encode(rec); err != nil {
+			return nil, fmt.Errorf("intake: encode provenance: %w", err)
+		}
+	}
+	return b.Bytes(), nil
 }
 
 // Format identifiers accepted by Parse.
@@ -122,7 +181,30 @@ type stixObject struct {
 	Description string   `json:"description"`
 	Pattern     string   `json:"pattern"`
 	Labels      []string `json:"labels"`
+	Revoked     bool     `json:"revoked"`
+	ValidUntil  string   `json:"valid_until"`
+	Confidence  *int     `json:"confidence"`
 }
+
+// stixConfidence maps a STIX confidence value (0-100) onto the None/Low/Med/
+// High scale of STIX 2.1 Appendix A. An absent property is unstated.
+func stixConfidence(c *int) string {
+	switch {
+	case c == nil:
+		return ConfidenceUnstated
+	case *c <= 0:
+		return "none"
+	case *c < 30:
+		return "low"
+	case *c < 70:
+		return "medium"
+	default:
+		return "high"
+	}
+}
+
+// stixNow is the clock valid_until is compared against (a variable for tests).
+var stixNow = time.Now
 
 // stixHashPattern matches a file:hashes comparison in a STIX pattern, e.g.
 // [file:hashes.'SHA-256' = 'abc...'] or [file:hashes.MD5='...']. The hash name
@@ -130,7 +212,10 @@ type stixObject struct {
 var stixHashPattern = regexp.MustCompile(`(?i)file:hashes\.'?([a-z0-9\-]+)'?\s*=\s*'([0-9a-f]+)'`)
 
 // ParseSTIX extracts hash IOCs from a STIX 2.1 bundle. A bare list of SDOs (no
-// bundle wrapper) is also accepted.
+// bundle wrapper) is also accepted. An indicator its producer has withdrawn
+// (revoked) or that has expired (valid_until in the past) is not ingested:
+// the producer has said it no longer identifies a threat, and a signature
+// database that keeps it is a false-positive source.
 func ParseSTIX(data []byte) ([]IOC, error) {
 	var bundle stixBundle
 	if err := json.Unmarshal(data, &bundle); err != nil {
@@ -143,12 +228,18 @@ func ParseSTIX(data []byte) ([]IOC, error) {
 	}
 	var out []IOC
 	for _, o := range bundle.Objects {
-		if !strings.EqualFold(o.Type, "indicator") || o.Pattern == "" {
+		if !strings.EqualFold(o.Type, "indicator") || o.Pattern == "" || o.Revoked {
 			continue
+		}
+		if o.ValidUntil != "" {
+			if until, err := time.Parse(time.RFC3339Nano, o.ValidUntil); err == nil && until.Before(stixNow()) {
+				continue
+			}
 		}
 		name := firstNonEmpty(o.Name, o.Description, strings.Join(o.Labels, ","), "STIX indicator")
 		for _, m := range stixHashPattern.FindAllStringSubmatch(o.Pattern, -1) {
 			if ioc, ok := newIOC(m[1], m[2], name, "stix"); ok {
+				ioc.Confidence = stixConfidence(o.Confidence)
 				out = append(out, ioc)
 			}
 		}
@@ -178,6 +269,11 @@ type mispObj struct {
 type mispAttr struct {
 	Type  string `json:"type"`
 	Value string `json:"value"`
+	// ToIDS is MISP's "use this for detection" flag. An attribute exported
+	// with to_ids false is context (a legitimate file seen in the incident, a
+	// decoy), which its producer has said must not become a signature. A
+	// document that omits the flag is taken as before.
+	ToIDS *bool `json:"to_ids"`
 }
 
 // ParseMISP extracts hash attributes from a MISP event (or event list). Hash
@@ -215,6 +311,9 @@ func ParseMISP(data []byte) ([]IOC, error) {
 }
 
 func mispAttrToIOC(a mispAttr, label string) (IOC, bool) {
+	if a.ToIDS != nil && !*a.ToIDS {
+		return IOC{}, false
+	}
 	typ := strings.ToLower(strings.TrimSpace(a.Type))
 	val := strings.TrimSpace(a.Value)
 	// Composite types: "filename|sha256" with value "name|hash".
@@ -330,7 +429,7 @@ func newIOC(typ, val, name, source string) (IOC, bool) {
 	if err != nil {
 		return IOC{}, false
 	}
-	return IOC{HashType: nt, Hash: nh, ThreatName: sanitizeName(name), Source: source}, true
+	return IOC{HashType: nt, Hash: nh, ThreatName: sanitizeName(name), Source: source, Confidence: ConfidenceUnstated}, true
 }
 
 func canonicalType(typ string) string {
@@ -382,6 +481,9 @@ type ApplyResult struct {
 	Added      int
 	Skipped    int // already present with the same (or a conflicting) label
 	Signatures []scanner.Signature
+	// Accepted are the IOCs behind Signatures, index-aligned, with their
+	// provenance (source, origin, retrieved-at, confidence).
+	Accepted []IOC
 }
 
 // Apply filters iocs against an existing database: an IOC whose hash is already
@@ -399,6 +501,7 @@ func Apply(db *scanner.SignatureDB, iocs []IOC) ApplyResult {
 		}
 		res.Added++
 		res.Signatures = append(res.Signatures, scanner.Signature{HashType: i.HashType, Hash: i.Hash, ThreatName: i.ThreatName})
+		res.Accepted = append(res.Accepted, i)
 	}
 	return res
 }

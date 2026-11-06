@@ -115,7 +115,7 @@ func heldoutInit(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("heldout init", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	db, keyFile := heldoutFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	key, err := heldout.ReadKey(*keyFile)
@@ -145,7 +145,7 @@ func heldoutAdd(args []string, stdout, stderr io.Writer) int {
 	url := fs.String("url", "", "provenance URL")
 	license := fs.String("license", "", "provenance licence")
 	notes := fs.String("notes", "", "free-form note")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *sha == "" || *family == "" {
@@ -182,7 +182,7 @@ func heldoutPull(args []string, stdout, stderr io.Writer) int {
 	family := fs.String("family", "", "keep only rows whose signature matches")
 	batch := fs.Int("batch", 20000, "records between encrypted checkpoints")
 	retries := fs.Int("retries", 5, "download attempts before giving up")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	feedURL := *url
@@ -256,7 +256,7 @@ func heldoutRemove(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	db, keyFile := heldoutFlags(fs)
 	sha := fs.String("sha256", "", "sample SHA-256 to remove")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *sha == "" {
@@ -288,7 +288,7 @@ func heldoutList(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("heldout list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	db, keyFile := heldoutFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	key, err := heldout.ReadKey(*keyFile)
@@ -315,7 +315,7 @@ func heldoutManifest(args []string, stdout, stderr io.Writer) int {
 	db, keyFile := heldoutFlags(fs)
 	root := fs.String("root", "", "directory the fetched samples live in")
 	out := fs.String("out", "", "write here instead of stdout")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	key, err := heldout.ReadKey(*keyFile)

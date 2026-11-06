@@ -9,6 +9,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -57,6 +58,7 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 	noISO := fs.Bool("no-iso", false, "disable the ISO 9660 malicious-container pass")
 	noPkg := fs.Bool("no-pkg", false, "disable the Linux software-package pass (.deb/.rpm/Arch/Flatpak/AppImage/PKGBUILD)")
 	noPeel := fs.Bool("no-peel", false, "disable the obfuscation-chain peeler")
+	noTradecraft := fs.Bool("no-tradecraft", false, "disable the behavioural pass over scripts and payload bytes")
 	noHeur := fs.Bool("no-heuristics", false, "disable the string/API heuristics")
 	noFusion := fs.Bool("no-fusion", false, "disable the fusion lattice")
 	yaraTimeout := fs.Duration("yara-timeout", 10*time.Second, "per-file YARA scan budget")
@@ -140,6 +142,9 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 		ISO:        !*noISO,
 		LinuxPkg:   !*noPkg,
 		Peel:       !*noPeel,
+		Archive:    true,
+		CHM:        true,
+		Tradecraft: !*noTradecraft,
 		NoFusion:   *noFusion,
 	}
 
@@ -179,9 +184,12 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 			Addr:              *httpAddr,
 			Handler:           mux,
 			ReadHeaderTimeout: 10 * time.Second,
+			// No WriteTimeout: a scan_dir legitimately takes minutes.
+			ReadTimeout: 30 * time.Second,
+			IdleTimeout: 2 * time.Minute,
 		}
 		logf("serving MCP over HTTP on %s%s (protocol %s)", *httpAddr, httpPath, mcp.ProtocolVersion)
-		if strings.HasPrefix(*httpAddr, "0.0.0.0") || strings.HasPrefix(*httpAddr, ":") {
+		if host, _, err := net.SplitHostPort(*httpAddr); err != nil || !mcp.IsLoopbackHost(host) {
 			logf("[warn] bound to a non-loopback address: anyone who can reach it can drive the scanner within the --root sandbox")
 		}
 		if err := httpSrv.ListenAndServe(); err != nil {

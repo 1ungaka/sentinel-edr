@@ -1,18 +1,27 @@
 {
   "schema_version": "1",
   "run": {
-    "tool": "CAU EDR 0.4.0-dev",
-    "generated_at": "2026-11-02T16:12:43.111921642Z",
+    "tool": "CAU EDR 0.1.0-dev",
+    "generated_at": "2026-11-06T02:08:37.311817786Z",
     "corpus": "corpus/smoke/manifest.json",
     "corpus_name": "smoke",
     "corpus_root": "/home/kali/cau/corpus/smoke",
     "detectors": [
+      "archive",
+      "chm",
       "encchain",
       "fusion",
       "hash",
       "heuristic",
+      "iso",
+      "linuxpkg",
+      "lnk",
+      "ole",
+      "pdf",
+      "peeler",
       "static",
       "stego",
+      "tradecraft",
       "yara"
     ],
     "concurrency": 12,
@@ -48,10 +57,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 367831
+      "duration_ns": 68548066
     },
     {
       "id": "benign-bom_script",
@@ -82,10 +136,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 75305
+      "duration_ns": 16062666
     },
     {
       "id": "benign-config.ini",
@@ -116,10 +215,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 86452
+      "duration_ns": 46794922
     },
     {
       "id": "benign-emoji_notes",
@@ -150,10 +294,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 616180
+      "duration_ns": 18536670
     },
     {
       "id": "benign-empty.bin",
@@ -178,10 +367,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 147037
+      "duration_ns": 35695428
     },
     {
       "id": "benign-fetch.sh",
@@ -212,10 +446,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 136448
+      "duration_ns": 53726524
     },
     {
       "id": "benign-hello_elf",
@@ -241,10 +520,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 1540160
+      "duration_ns": 30746999
     },
     {
       "id": "benign-hindi_notes",
@@ -275,10 +599,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 86431
+      "duration_ns": 65119930
     },
     {
       "id": "benign-persian_readme",
@@ -309,10 +678,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 311444
+      "duration_ns": 8845865
     },
     {
       "id": "benign-utf16_notes",
@@ -343,10 +757,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 129501
+      "duration_ns": 1734909
     },
     {
       "id": "mal-elf_dropper_profile",
@@ -402,10 +861,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 1404743
+      "duration_ns": 37891007
     },
     {
       "id": "mal-encoded_elf",
@@ -451,10 +955,55 @@
           "detector": "encchain",
           "score": 8,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 223324
+      "duration_ns": 40859106
     },
     {
       "id": "mal-hash_only",
@@ -496,10 +1045,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 203553
+      "duration_ns": 72289049
     },
     {
       "id": "mal-lokibot_strings",
@@ -541,10 +1135,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 348466
+      "duration_ns": 47601233
     },
     {
       "id": "mal-mimikatz_strings",
@@ -597,10 +1236,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 241106
+      "duration_ns": 60354002
     },
     {
       "id": "mal-ransom_extensions",
@@ -642,10 +1326,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 414107
+      "duration_ns": 68620353
     },
     {
       "id": "mal-wannacry_strings",
@@ -682,10 +1411,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 296068
+      "duration_ns": 6144902
     },
     {
       "id": "mal-zero_width_prose",
@@ -736,10 +1510,55 @@
           "detector": "encchain",
           "score": 0,
           "threshold": 8
+        },
+        {
+          "detector": "lnk",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "ole",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "pdf",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "iso",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "linuxpkg",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "peeler",
+          "score": 0,
+          "threshold": 50
+        },
+        {
+          "detector": "archive",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "chm",
+          "score": 0,
+          "threshold": 8
+        },
+        {
+          "detector": "tradecraft",
+          "score": 0,
+          "threshold": 8
         }
       ],
       "scored": true,
-      "duration_ns": 437705
+      "duration_ns": 66268342
     }
   ],
   "totals": {
@@ -757,6 +1576,44 @@
     "accuracy": 1
   },
   "by_detector": [
+    {
+      "detector": "archive",
+      "counts": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 10,
+        "fn": 8
+      },
+      "metrics": {
+        "precision": null,
+        "recall": 0,
+        "f1": null,
+        "specificity": 1,
+        "fpr": 0,
+        "accuracy": 0.5555555555555556
+      },
+      "fires": 0,
+      "exclusive_hits": 0
+    },
+    {
+      "detector": "chm",
+      "counts": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 10,
+        "fn": 8
+      },
+      "metrics": {
+        "precision": null,
+        "recall": 0,
+        "f1": null,
+        "specificity": 1,
+        "fpr": 0,
+        "accuracy": 0.5555555555555556
+      },
+      "fires": 0,
+      "exclusive_hits": 0
+    },
     {
       "detector": "encchain",
       "counts": {
@@ -834,6 +1691,120 @@
       "exclusive_hits": 0
     },
     {
+      "detector": "iso",
+      "counts": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 10,
+        "fn": 8
+      },
+      "metrics": {
+        "precision": null,
+        "recall": 0,
+        "f1": null,
+        "specificity": 1,
+        "fpr": 0,
+        "accuracy": 0.5555555555555556
+      },
+      "fires": 0,
+      "exclusive_hits": 0
+    },
+    {
+      "detector": "linuxpkg",
+      "counts": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 10,
+        "fn": 8
+      },
+      "metrics": {
+        "precision": null,
+        "recall": 0,
+        "f1": null,
+        "specificity": 1,
+        "fpr": 0,
+        "accuracy": 0.5555555555555556
+      },
+      "fires": 0,
+      "exclusive_hits": 0
+    },
+    {
+      "detector": "lnk",
+      "counts": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 10,
+        "fn": 8
+      },
+      "metrics": {
+        "precision": null,
+        "recall": 0,
+        "f1": null,
+        "specificity": 1,
+        "fpr": 0,
+        "accuracy": 0.5555555555555556
+      },
+      "fires": 0,
+      "exclusive_hits": 0
+    },
+    {
+      "detector": "ole",
+      "counts": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 10,
+        "fn": 8
+      },
+      "metrics": {
+        "precision": null,
+        "recall": 0,
+        "f1": null,
+        "specificity": 1,
+        "fpr": 0,
+        "accuracy": 0.5555555555555556
+      },
+      "fires": 0,
+      "exclusive_hits": 0
+    },
+    {
+      "detector": "pdf",
+      "counts": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 10,
+        "fn": 8
+      },
+      "metrics": {
+        "precision": null,
+        "recall": 0,
+        "f1": null,
+        "specificity": 1,
+        "fpr": 0,
+        "accuracy": 0.5555555555555556
+      },
+      "fires": 0,
+      "exclusive_hits": 0
+    },
+    {
+      "detector": "peeler",
+      "counts": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 10,
+        "fn": 8
+      },
+      "metrics": {
+        "precision": null,
+        "recall": 0,
+        "f1": null,
+        "specificity": 1,
+        "fpr": 0,
+        "accuracy": 0.5555555555555556
+      },
+      "fires": 0,
+      "exclusive_hits": 0
+    },
+    {
       "detector": "static",
       "counts": {
         "tp": 1,
@@ -870,6 +1841,25 @@
       },
       "fires": 1,
       "exclusive_hits": 1
+    },
+    {
+      "detector": "tradecraft",
+      "counts": {
+        "tp": 0,
+        "fp": 0,
+        "tn": 10,
+        "fn": 8
+      },
+      "metrics": {
+        "precision": null,
+        "recall": 0,
+        "f1": null,
+        "specificity": 1,
+        "fpr": 0,
+        "accuracy": 0.5555555555555556
+      },
+      "fires": 0,
+      "exclusive_hits": 0
     },
     {
       "detector": "yara",
@@ -1129,6 +2119,22 @@
   ],
   "near_miss": [
     {
+      "detector": "archive",
+      "threshold": 8,
+      "benign_scored": 0,
+      "band": 2,
+      "near_threshold": 0,
+      "min_margin": -1
+    },
+    {
+      "detector": "chm",
+      "threshold": 8,
+      "benign_scored": 0,
+      "band": 2,
+      "near_threshold": 0,
+      "min_margin": -1
+    },
+    {
       "detector": "encchain",
       "threshold": 8,
       "benign_scored": 0,
@@ -1151,6 +2157,54 @@
       ]
     },
     {
+      "detector": "iso",
+      "threshold": 8,
+      "benign_scored": 0,
+      "band": 2,
+      "near_threshold": 0,
+      "min_margin": -1
+    },
+    {
+      "detector": "linuxpkg",
+      "threshold": 8,
+      "benign_scored": 0,
+      "band": 2,
+      "near_threshold": 0,
+      "min_margin": -1
+    },
+    {
+      "detector": "lnk",
+      "threshold": 8,
+      "benign_scored": 0,
+      "band": 2,
+      "near_threshold": 0,
+      "min_margin": -1
+    },
+    {
+      "detector": "ole",
+      "threshold": 8,
+      "benign_scored": 0,
+      "band": 2,
+      "near_threshold": 0,
+      "min_margin": -1
+    },
+    {
+      "detector": "pdf",
+      "threshold": 8,
+      "benign_scored": 0,
+      "band": 2,
+      "near_threshold": 0,
+      "min_margin": -1
+    },
+    {
+      "detector": "peeler",
+      "threshold": 50,
+      "benign_scored": 0,
+      "band": 12,
+      "near_threshold": 0,
+      "min_margin": -1
+    },
+    {
       "detector": "static",
       "threshold": 8,
       "benign_scored": 0,
@@ -1165,6 +2219,14 @@
       "band": 1,
       "near_threshold": 0,
       "min_margin": -1
+    },
+    {
+      "detector": "tradecraft",
+      "threshold": 8,
+      "benign_scored": 0,
+      "band": 2,
+      "near_threshold": 0,
+      "min_margin": -1
     }
   ],
   "false_positives": [],
@@ -1173,38 +2235,38 @@
   "skipped": [],
   "perf": {
     "samples": 18,
-    "total_duration_ns": 7065861,
-    "mean_duration_ns": 392547,
-    "p50_ns": 241106,
-    "p95_ns": 1540160,
-    "max_duration_ns": 1540160,
+    "total_duration_ns": 745839973,
+    "mean_duration_ns": 41435554,
+    "p50_ns": 40859106,
+    "p95_ns": 72289049,
+    "max_duration_ns": 72289049,
     "bytes_scanned": 17006,
-    "throughput_bytes_per_s": 2406783.8300243947,
+    "throughput_bytes_per_s": 22801.13779849662,
     "slowest": [
       {
-        "key": "benign-hello_elf",
-        "path": "benign/hello_elf.bin",
-        "duration_ns": 1540160
-      },
-      {
-        "key": "mal-elf_dropper_profile",
-        "path": "malicious/elf_dropper_profile.bin",
-        "duration_ns": 1404743
-      },
-      {
-        "key": "benign-emoji_notes",
-        "path": "benign/emoji_notes.md",
-        "duration_ns": 616180
-      },
-      {
-        "key": "mal-zero_width_prose",
-        "path": "malicious/zero_width_prose.md",
-        "duration_ns": 437705
+        "key": "mal-hash_only",
+        "path": "malicious/hash_only.bin",
+        "duration_ns": 72289049
       },
       {
         "key": "mal-ransom_extensions",
         "path": "malicious/ransom_extensions.bin",
-        "duration_ns": 414107
+        "duration_ns": 68620353
+      },
+      {
+        "key": "benign-README.txt",
+        "path": "benign/README.txt",
+        "duration_ns": 68548066
+      },
+      {
+        "key": "mal-zero_width_prose",
+        "path": "malicious/zero_width_prose.md",
+        "duration_ns": 66268342
+      },
+      {
+        "key": "benign-hindi_notes",
+        "path": "benign/hindi_notes.txt",
+        "duration_ns": 65119930
       }
     ]
   }

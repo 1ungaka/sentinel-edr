@@ -21,6 +21,8 @@ package pdf
 import (
 	"bytes"
 	"os"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // ── ATT&CK technique ids ───────────────────────────────────────────────────────
@@ -197,7 +199,7 @@ func ScanFile(path string, opts Options) *Result {
 	if fi.Size() > DefaultMaxSize {
 		return &Result{FilePath: path, Threshold: opts.threshold(), Skipped: "file over the in-memory size limit"}
 	}
-	data, err := os.ReadFile(path)
+	data, err := safefs.ReadFile(path, DefaultMaxSize)
 	if err != nil {
 		return &Result{FilePath: path, Threshold: opts.threshold(), Skipped: "read: " + err.Error()}
 	}

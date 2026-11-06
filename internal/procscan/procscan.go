@@ -27,6 +27,19 @@
 //   - Malicious command lines: the process argv run through the same install-
 //     script vectors the file scanner uses (reverse shells, curl|bash, droppers).
 //   - Being traced: a non-zero TracerPid, surfaced as context (T1055.008).
+//   - Network shells: an interpreter whose stdin and stdout are both a live TCP
+//     connection, which is what a reverse or bind shell is whatever its argv
+//     says (T1059.004).
+//   - Pipe relays: an interpreter fed by, and writing to, a network tool through
+//     pipes, the `mkfifo | sh | nc` shape that puts no socket on the shell.
+//   - Setuid shells: an interpreter whose effective uid differs from its real
+//     uid, what a SUID GTFOBin leaves behind (T1548.001).
+//   - Anonymous executable memory: a writable and executable mapping with no
+//     backing file, context only because JIT runtimes do this too (T1055).
+//   - Kernel events: what the cau-kernel exec guard recorded about a live process.
+//
+// Scanning stays read-only. Acting on a result is a separate, explicit step:
+// see Respond.
 package procscan
 
 import (
@@ -37,7 +50,9 @@ import (
 	"strings"
 
 	"github.com/s-b-repo/cau/internal/intel"
+	"github.com/s-b-repo/cau/internal/parallel"
 	"github.com/s-b-repo/cau/scanner/linuxpkg"
+	"github.com/s-b-repo/cau/scanner/tradecraft"
 )
 
 // DefaultThreshold is the per-process score at which a process is reported.
@@ -59,6 +74,7 @@ const (
 	techPreload    = "T1574.006" // Hijack Execution Flow: Dynamic Linker Hijacking
 	techPtrace     = "T1055.008" // Process Injection: Ptrace System Call
 	techProcInject = "T1055"     // Process Injection (generic)
+	techSetuid     = "T1548.001" // Abuse Elevation Control: Setuid and Setgid
 )
 
 // Finding is one signal raised against a process.
@@ -72,6 +88,10 @@ type Finding struct {
 
 // Process is one scored process in the report.
 type Process struct {
+	// startTicks is the kernel's start time for this PID, which is what tells it
+	// from a later process that reused the number.
+	startTicks uint64
+
 	PID      int       `json:"pid"`
 	PPID     int       `json:"ppid,omitempty"`
 	Comm     string    `json:"comm"`
@@ -88,6 +108,10 @@ type Result struct {
 	Threshold  int       `json:"threshold"`
 	Flagged    []Process `json:"flagged,omitempty"`
 	Warnings   []string  `json:"warnings,omitempty"`
+	// KernelRefused and KernelSeen count the guard's events in the window read,
+	// including processes that no longer exist.
+	KernelRefused int `json:"kernel_refused,omitempty"`
+	KernelSeen    int `json:"kernel_seen,omitempty"`
 }
 
 // Options configure a scan.
@@ -98,6 +122,9 @@ type Options struct {
 	// Intel, when non-nil, matches process command lines against the abuse-intel
 	// feed (a running process talking to a known-bad host).
 	Intel *intel.Feed
+	// KernelEvents are exec events from the cau-kernel guard, matched to live
+	// processes by LoadKernelEvents' caller.
+	KernelEvents []KernelEvent
 }
 
 func (o Options) threshold() int {
@@ -117,17 +144,27 @@ func (o Options) procRoot() string {
 // rawProc is the set of /proc fields detect() scores. Kept separate from the
 // reading so detection is a pure, testable function.
 type rawProc struct {
-	pid       int
-	ppid      int
-	comm      string
-	exeTarget string // raw readlink of /proc/<pid>/exe ("" if unreadable)
-	exeErr    bool
-	cmdline   string // argv joined with spaces
-	argv0     string
-	libs      []string // file-backed pathnames from maps
-	preload   string   // LD_PRELOAD from environ
-	libpath   string   // LD_LIBRARY_PATH from environ
-	tracerPID int
+	pid        int
+	startTicks uint64 // field 22 of /proc/<pid>/stat
+	ppid       int
+	comm       string
+	exeTarget  string // raw readlink of /proc/<pid>/exe ("" if unreadable)
+	exeErr     bool
+	cmdline    string // argv joined with spaces
+	argv0      string
+	libs       []string // file-backed pathnames from maps
+	preload    string   // LD_PRELOAD from environ
+	libpath    string   // LD_LIBRARY_PATH from environ
+	tracerPID  int
+	anonRWX    int    // anonymous rwx mappings
+	stdioPeer  string // TCP peer of stdin+stdout, "" when they are not a socket
+	stdin      string // /proc/<pid>/fd/0 target
+	stdout     string // /proc/<pid>/fd/1 target
+	stdinFIFO  bool   // stdin is a pipe or a named pipe
+	pipeRelay  string // the network tool this interpreter's stdout feeds
+	hasUID     bool
+	ruid       int
+	euid       int
 }
 
 // knownSystemNames are process names that attackers impersonate; a process
@@ -152,22 +189,42 @@ func Scan(opts Options) *Result {
 		res.Warnings = append(res.Warnings, "cannot read "+root+": "+err.Error())
 		return res
 	}
+	pids := make([]int, 0, len(entries))
 	for _, e := range entries {
-		if res.Scanned >= maxProcs {
-			res.Warnings = append(res.Warnings, "process cap reached")
-			break
+		if pid, perr := strconv.Atoi(e.Name()); perr == nil && pid > 0 {
+			pids = append(pids, pid) // anything else is not a pid directory
 		}
-		pid, perr := strconv.Atoi(e.Name())
-		if perr != nil || pid <= 0 {
-			continue // not a pid directory
-		}
-		rp, ok := readProc(root, pid)
-		if !ok {
+	}
+	if len(pids) > maxProcs {
+		pids = pids[:maxProcs]
+		res.Warnings = append(res.Warnings, "process cap reached")
+	}
+
+	// Every process is read at once: a table is mostly waiting on the kernel, and
+	// slots keep the result in directory order whatever finishes first.
+	raw := make([]rawProc, len(pids))
+	readable := make([]bool, len(pids))
+	parallel.For(len(pids), 0, func(i int) { raw[i], readable[i] = readProc(root, pids[i]) })
+	procs := make([]rawProc, 0, len(pids))
+	for i := range raw {
+		if !readable[i] {
 			res.Unreadable++
 			continue
 		}
 		res.Scanned++
+		procs = append(procs, raw[i])
+	}
+	markPipeRelays(root, procs)
+	kernel := indexKernelEvents(opts.KernelEvents, res)
+
+	scored := make([]Process, len(procs))
+	parallel.For(len(procs), 0, func(i int) {
+		rp := procs[i]
 		p := detect(rp, th)
+		for _, f := range kernel.findings(rp) {
+			p.Findings = append(p.Findings, f)
+			p.Score += f.Score
+		}
 		// Abuse-intel feed over the command line (kept out of the pure detect so
 		// detect stays feed-free and unit-testable).
 		if opts.Intel != nil && rp.cmdline != "" {
@@ -178,6 +235,9 @@ func Scan(opts Options) *Result {
 				p.Score += f.Score
 			}
 		}
+		scored[i] = p
+	})
+	for _, p := range scored {
 		if p.Score >= th {
 			res.Flagged = append(res.Flagged, p)
 		}
@@ -192,8 +252,42 @@ func Scan(opts Options) *Result {
 }
 
 // detect scores one process. Pure function of rp.
+// cmdlineFindings runs argv through the package-script and tradecraft
+// recognisers. They overlap on purpose, so together they are one piece of
+// evidence: the strongest keeps its score and the rest are reported at zero.
+// Without that, two recognisers agreeing about the text of `grep "/dev/tcp" note`
+// would add up to a confirmed process.
+func cmdlineFindings(cmdline string) []Finding {
+	if cmdline == "" {
+		return nil
+	}
+	var out []Finding
+	for _, f := range linuxpkg.ScanText("cmdline", cmdline) {
+		out = append(out, Finding{Class: "procscan.cmdline." + strings.TrimPrefix(f.Class, "linuxpkg.script."),
+			Score: f.Score, Technique: f.Technique, Detail: f.Detail, Evidence: f.Evidence})
+	}
+	for _, f := range tradecraft.Analyze([]byte(cmdline), tradecraft.Options{}).Findings {
+		if f.Score >= tradecraft.DefaultThreshold {
+			out = append(out, Finding{Class: "procscan.cmdline." + strings.TrimPrefix(f.Class, "tradecraft."),
+				Score: f.Score, Technique: f.Technique, Detail: f.Detail, Evidence: trunc(f.Evidence, 160)})
+		}
+	}
+	best := -1
+	for i, f := range out {
+		if best < 0 || f.Score > out[best].Score {
+			best = i
+		}
+	}
+	for i := range out {
+		if i != best {
+			out[i].Score = 0
+		}
+	}
+	return out
+}
+
 func detect(rp rawProc, th int) Process {
-	p := Process{PID: rp.pid, PPID: rp.ppid, Comm: rp.comm, Cmdline: rp.cmdline}
+	p := Process{startTicks: rp.startTicks, PID: rp.pid, PPID: rp.ppid, Comm: rp.comm, Cmdline: rp.cmdline}
 	p.Exe = rp.exeTarget
 
 	var out []Finding
@@ -231,13 +325,36 @@ func detect(rp rawProc, th int) Process {
 			Detail: "LD_LIBRARY_PATH includes a world-writable or hidden directory", Evidence: trunc(rp.libpath, 160)})
 	}
 
-	// 4) Malicious command line — reuse the file scanner's vector engine.
-	for _, f := range linuxpkg.ScanText("cmdline", rp.cmdline) {
-		out = append(out, Finding{Class: "procscan.cmdline." + strings.TrimPrefix(f.Class, "linuxpkg.script."),
-			Score: f.Score, Technique: f.Technique, Detail: f.Detail, Evidence: f.Evidence})
+	// 4) Malicious command line: the package and tradecraft recognisers.
+	out = append(out, cmdlineFindings(rp.cmdline)...)
+
+	// 5) A network shell: the wiring, not the argv.
+	if rp.stdioPeer != "" && isInterpreter(rp.comm) {
+		out = append(out, Finding{Class: "procscan.netshell.socket-stdio", Score: 9, Technique: techUnixShell,
+			Detail:   "an interpreter's stdin and stdout are a live TCP connection (reverse or bind shell)",
+			Evidence: "peer " + rp.stdioPeer})
 	}
 
-	// 5) Being traced — context, low weight on its own.
+	if rp.pipeRelay != "" {
+		out = append(out, Finding{Class: "procscan.netshell.pipe-relay", Score: 9, Technique: techUnixShell,
+			Detail:   "an interpreter's output feeds a network tool through a pipe while its input is also piped (a relayed shell)",
+			Evidence: rp.pipeRelay})
+	}
+	if rp.hasUID && rp.ruid != rp.euid && isInterpreter(rp.comm) {
+		out = append(out, Finding{Class: "procscan.privesc.setuid-shell", Score: 9, Technique: techSetuid,
+			Detail:   "an interpreter runs with an effective uid other than its real uid: nothing legitimate runs a set-uid shell",
+			Evidence: "ruid=" + strconv.Itoa(rp.ruid) + " euid=" + strconv.Itoa(rp.euid)})
+	}
+
+	// 6) Anonymous executable memory. Context only: node, KDE and other JIT
+	// users carry these on a clean host (measured), so it can only corroborate.
+	if rp.anonRWX > 0 {
+		out = append(out, Finding{Class: "procscan.inject.anon-rwx", Score: 2, Technique: techProcInject,
+			Detail:   "anonymous memory that is writable and executable (JIT runtimes do this; so does injected shellcode)",
+			Evidence: strconv.Itoa(rp.anonRWX) + " mapping(s)"})
+	}
+
+	// 7) Being traced — context, low weight on its own.
 	if rp.tracerPID > 0 {
 		out = append(out, Finding{Class: "procscan.inject.traced", Score: 2, Technique: techPtrace,
 			Detail: "process is being ptrace-attached by another process", Evidence: "TracerPid=" + strconv.Itoa(rp.tracerPID)})

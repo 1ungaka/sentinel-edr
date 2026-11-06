@@ -2,9 +2,12 @@
 
 ```
 cau scan      [flags] [path ...]     scan files and directories
-cau ps        [flags]                scan the live process table over /proc (read-only)
+cau ps        [flags]                scan the live process table over /proc; --respond stops or kills confirmed processes
+cau persist   [flags]                audit the host for persistence (read-only)
+cau defend    [flags]                chain every layer: incidents, real-time file scanning, response
 cau installed [flags]                audit already-installed packages' maintainer scripts
 cau firmware  [flags] <image>        parse a UEFI firmware image: inventory, FV integrity, implants
+cau boot-scan [flags]                read the boot chain, read-only: MBR/GPT, the ESP, Secure Boot state, option ROMs
 cau feed      <subcommand> [flags]   abuse-intel feed: list / check / update
 cau hash      [flags] <path ...>     print SHA-256, imphash, TLSH and ssdeep digests
 cau cluster   [flags] <path ...>     group PE and ELF files by import-table similarity
@@ -36,7 +39,9 @@ cau scan --dir / --jobs 16 --no-heuristics --no-static --quiet
 Positional arguments, `--file` and `--dir` can be combined; directories are
 walked recursively. Sockets, devices and FIFOs are skipped; symbolic links to
 files are followed only with `--follow-symlinks`, symbolic links to
-directories never.
+directories never. A directory you name yourself is scanned even when it is a
+symbolic link, so `cau scan /bin` works on a merged-`/usr` host; the rule above
+is for links found during the walk.
 
 ### Targets and resources
 
@@ -66,6 +71,7 @@ directories never.
 | `--no-pkg` | off | disable the Linux software-package pass (.deb/.rpm/Arch/Flatpak/AppImage/Docker/Snap install scripts) |
 | `--no-archive` | off | disable the compressed-container pass (ZIP/TAR/gzip: bombs, Zip-Slip, lure/payload members) |
 | `--no-chm` | off | disable the Compiled HTML Help (CHM) pass (embedded executables, shortcuts, dangerous scripts) |
+| `--no-tradecraft` | off | disable the behavioural pass over scripts and payload bytes (web shells, network shells, in-memory loaders, shellcode) |
 | `--no-peel` | off | disable the obfuscation-chain peeler (NOVEL-012) |
 | `--no-fusion` | off | disable the fusion lattice |
 | `--heuristic-threshold N` | 7 | heuristic score at which a file is SUSPICIOUS |
@@ -79,6 +85,7 @@ directories never.
 | `--pkg-threshold N` | 8 | Linux-package install-script score at which a file is SUSPICIOUS |
 | `--archive-threshold N` | 8 | compressed-container score at which a file is SUSPICIOUS |
 | `--chm-threshold N` | 8 | CHM help-file score at which a file is SUSPICIOUS |
+| `--tradecraft-threshold N` | 8 | tradecraft score at which a file is SUSPICIOUS |
 | `--feed <path>` | search path | abuse-intel feed to match indicators against (empty = none; see `cau feed`) |
 | `--peel-threshold N` | 50 | obfuscation-chain score at which a file is SUSPICIOUS (a depth-2 revealed chain scores 60) |
 | `--yara-timeout D` | 30s | per-file YARA budget; a timed-out scan keeps the matches it found and records a warning |
@@ -89,8 +96,101 @@ directories never.
 | `--quarantine-level <bar>` | `malicious` | what `--quarantine` blocks: `malicious` (a hard hash/YARA hit only) or `suspicious` (**also** files the fusion lattice places at the SUSPICIOUS tier — the fused multi-indicator score, each indicator at its own weighted level, crossed the threshold with or without any single detector crossing alone). The recorded label names the score and the indicators that drove it. |
 | `--quarantine-store <dir>` | default vault | vault directory for `--quarantine` |
 | `--interval <dur>` | 0 (one-shot) | **daemon mode**: re-scan every interval (e.g. `15m`, `1h`) until SIGINT/SIGTERM, writing the report each cycle; a finding never stops the daemon. Scheduled, not real-time. See `packaging/systemd/` for service units. |
+| `--wazuh-url <url>` | — | Wazuh Manager API base (e.g. `https://wazuh.example.com:55000`). When set, the scan's OCSF findings are posted to the manager after the local report is written. Free — the agent speaks directly, no console required. |
+| `--wazuh-user <name>` | — | Wazuh API user |
+| `--wazuh-password-env <VAR>` | `WAZUH_PASSWORD` | environment variable holding the Wazuh API password. Argv is never used — argv is world-readable in `/proc/<pid>/cmdline`. |
+| `--wazuh-ca <file>` | — | PEM CA bundle trusted for the Wazuh manager's TLS certificate |
+| `--wazuh-insecure` | off | skip Wazuh TLS verification (also allows `http://`). Explicit opt-in; prints a warning |
+| `--wazuh-timeout <dur>` | 10s | per-request timeout for the forwarder |
 
 Hash signatures cannot be turned off: a signature database is required.
+
+### Wazuh SIEM forwarding (free)
+
+The agent posts the scan's OCSF findings to a Wazuh Manager over its REST
+API: `POST /security/user/authenticate` with HTTP Basic, then `POST /events`
+with the returned JWT and a body of `{"events":[<json-finding>, ...]}`. Each
+finding is byte-identical to what `cau scan --format ocsf` writes locally,
+so a Wazuh custom decoder keyed on OCSF `class_uid` 2004 catches the
+delivery with no translation. The password comes from the env var named by
+`--wazuh-password-env` (default `WAZUH_PASSWORD`), never from argv.
+
+The forwarder is **best-effort**: a transport error is logged and dropped,
+so a Wazuh outage never breaks the scan's exit code, a CI gate or the local
+report. Batches cap at 100 events per request. Scan-time is reported on
+stderr as `[*] wazuh forward: N/M findings delivered`.
+
+```sh
+export WAZUH_PASSWORD='…'    # or point --wazuh-password-env elsewhere
+cau scan --dir /var/www \
+         --format ocsf \
+         --wazuh-url https://wazuh.example.com:55000 \
+         --wazuh-user cau-agent \
+         --wazuh-ca /etc/pki/wazuh/manager-ca.pem
+```
+
+Shipping `cau scan --wazuh-url …` directly to the Manager stays free
+because it is a single-host action (see `docs/pricing.md`). syslog, Splunk
+HEC, Elastic / OpenSearch `_bulk` and the OCSF Lake sink follow the same
+rule and will ship free when added.
+
+### SIEM sink formats and forwarding (free)
+
+Beside the four report formats, `--format` takes nine SIEM sink formats:
+`ecs`, `cef`, `leef`, `gelf`, `syslog`, `syslog-ecs`, `syslog-cef`,
+`syslog-leef` and `otlp` (shapes and field mappings in
+[output-formats.md](output-formats.md#siem-sink-formats)). They all carry the
+same findings as `--format ocsf`, one event per finding, so they can be
+written to a file or a pipe like any report.
+
+`--sink-url` also delivers them to a collector after the scan. `--format`
+still picks the local report; `--sink-format` picks what is sent (it defaults
+to `--format` when that is a sink format).
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--sink-url <url>` | none | `udp://host:port`, `tcp://host:port`, `tls://host:port` or `https://host/path` |
+| `--sink-format <fmt>` | `--format` if a sink format | which sink format to send |
+| `--sink-index <name>` | none | with `https://` and `ecs`: send an OpenSearch / Elasticsearch `_bulk` body creating into this index or data stream |
+| `--sink-auth-env <VAR>` | `CAU_SINK_AUTH` | environment variable holding the HTTP `Authorization` header value. Never on argv |
+| `--sink-ca <file>` | system roots | PEM CA bundle trusted for the collector's certificate |
+| `--sink-insecure` | off | skip TLS verification; also the only way `http://` is accepted |
+| `--sink-timeout <dur>` | 10s | per-connection and per-request timeout |
+
+| Destination | Framing |
+|---|---|
+| `udp://` | one event per datagram; an event over 8,192 bytes is reported undelivered, never truncated |
+| `tcp://`, `tls://` with `syslog*` | RFC 6587 octet counting (the framing RFC 5425 requires over TLS) |
+| `tcp://`, `tls://` with `gelf` | NUL-terminated messages (the GELF TCP input) |
+| `tcp://`, `tls://` with `ecs`, `cef`, `leef` | newline-delimited |
+| `https://` with `otlp` | one `ExportLogsServiceRequest`; point it at the collector's `/v1/logs` |
+| `https://` with `ecs` and `--sink-index` | `_bulk` body, a `create` action before each document; a 200 whose body says `"errors": true` is reported as a failure |
+| `https://` with `gelf` | one POST per message (the GELF HTTP input) |
+
+```sh
+# Security Onion / any syslog collector: ECS documents in RFC 5424 frames over TLS
+cau scan --dir /srv --sink-url tls://so-manager.example:6514 --sink-format syslog-ecs \
+         --sink-ca /etc/pki/so-ca.pem
+
+# OpenSearch Security Analytics: ECS over the bulk API
+export CAU_SINK_AUTH='Basic …'
+cau scan --dir /srv --sink-url https://opensearch.example:9200/_bulk \
+         --sink-format ecs --sink-index logs-cau.finding-default
+
+# OpenTelemetry collector
+cau scan --dir /srv --sink-url https://otel.example:4318/v1/logs --sink-format otlp
+
+# OSSIM / QRadar: CEF or LEEF over syslog
+cau scan --dir /srv --sink-url udp://ossim.example:514 --sink-format syslog-cef
+```
+
+The flags are checked before the scan starts, so a mistyped collector is a
+usage error (exit 4). Delivery itself is **best-effort**, like the Wazuh
+forwarder: a collector that is down is one `[WARN]` line and never changes the
+exit code. A clean scan opens no connection. `udp://` and `tcp://` are
+cleartext and the status line says so; redirects are not followed. For the
+resident agent (`cau defend`) the queued, retrying forwarder is separate; this
+one sends once, at the end of a scan.
 
 ### Daemon mode: crash recovery and self-protection
 
@@ -156,18 +256,327 @@ levels are supersets of each other:
 | `heuristic` | ... or a heuristic, static or stego score at its threshold, or a fused verdict reached by corroboration |
 | `clean` | ... or any sub-threshold heuristic or static observation; the run must be spotless |
 
+## cau defend
+
+Every layer works alone: `cau ps` finds a shell and never reads its file, `cau
+persist` finds a cron line and never scans what it runs, and each decides on its
+own. `cau defend` runs them all at once, each on its own schedule, and joins what
+they see into **incidents**, so a process, its file and the entry that restarts it
+are one finding.
+
+```
+sudo cau defend --report-only                    # change nothing: alerts on stdout
+sudo cau defend                                  # acts: freezes, quarantines and blocks confirmed incidents
+sudo cau defend --once --report-only --watch /var/www   # one pass, exit 1 on any incident
+sudo cau defend --respond stop --quarantine      # act on confirmed incidents
+sudo cau defend --respond stop --quarantine --block-exe \
+     --kernel-events /run/cau/kernel-events.jsonl --canary-manifest canary.json
+```
+
+| Layer | Source | Pace |
+|---|---|---|
+| process | the live process table; a flagged process's executable is read through `/proc/<pid>/exe`, so a deleted or memfd binary still gets scanned | `--interval`, on a change to a watched persistence directory, and on a newly flagged file |
+| file | all fifteen detectors, weighed by the fusion lattice, over new files, flagged executables and whatever a persistence entry points at | as files land |
+| persistence | `cau persist` | as for process |
+| network | the network plane (`cau net`): every socket the kernel holds, attributed to its process and executable, plus the resolver configuration and the neighbour table. Beaconing and gateway-MAC churn compare samples, so they exist only here and in `cau net --interval` | as for process |
+| external | telemetry from elsewhere (`--ingest`): another cau host's incidents, an OCSF event from a firewall or an IDS, or a plain JSON line. It joins on the **peer address**, the one identifier two machines agree on, so one C2 address seen from two places is one incident. Remote evidence corroborates and never directs | as for process |
+| kernel | the `cau-kernel enforce netshell` event log, including refused attempts whose process is gone; `--kernel-events` or auto-discovered from `/var/log/cau-kernel/events.jsonl` | with process |
+| canary | decoys from `cau canary plant`; a rewritten or deleted decoy is live evidence; `--canary-manifest` or auto-discovered from `/var/lib/cau/canary.json` | as for process |
+| package | installed maintainer scripts (`cau installed`) | hourly |
+| selftest | the engine's own detection content, verified against the baseline recorded by `cau selftest --record` (ATT&CK T1562.001). A drift is live evidence of tampering and confirms on its own. Auto-discovered from `integrity.json` next to the signature DB | `--selftest-interval` (default 15m) |
+| feed | re-reads the abuse-intel feed from disk, so a `cau feed update` run on the host lands without a restart | `--feed-reload` (default 10m) |
+
+**Proactive.** A dropped script is flagged a few milliseconds after it lands, and a
+persistence entry that runs it confirms the incident tens of milliseconds later. A
+real binary takes as long as its scan, about 0.3 s for 1.4 MB on a quiet host: see
+[the measurements](../README.md#measured-not-asserted). Files are watched with inotify under the places attacks land
+(`/tmp`, `/var/tmp`, `/dev/shm`, `/var/www`, `/srv`) and persist (cron, systemd
+units, profile, udev, MOTD, APT, sudoers, PAM and root's SSH directories), with
+`--watch` to replace that list. A file is scanned as soon as it lands and correlated
+against what the other layers last reported; a change to a persistence directory
+runs the audit immediately, and so does a newly flagged file, because the entry that
+restarts it may sit somewhere no watch covers. A file that gets `chmod +x` later is
+scanned again. What is already there is swept at startup, and after the kernel
+reports lost events. Symlinks are not followed. Reaching the 8,192-directory limit is
+reported.
+
+Flagged files are remembered, because otherwise an attacker could beat correlation
+by waiting: a file dropped now joins the process that runs it an hour later, and the
+incident is raised again with its new evidence.
+
+**Nothing waits.** Every layer, every scan worker, the startup sweep and each
+incident's response is its own goroutine, so a slow part delays only itself: the
+package audit takes seconds and no alert waits for it. Within a part the work fans
+out too: the process table per process, the persistence audit per check, the package
+audit per package, the engine per detector and a response per action. Two things
+stay single-file on purpose. The correlator is one goroutine, because a join has to
+see one view of the evidence; it does no I/O, and a join takes about 50 µs over ten
+signals and 1.4 ms over a thousand, with requests made while one runs collapsed into
+the next. Writes to one file are collapsed into one rescan.
+
+New files go ahead of anything a sweep found, and one worker never takes sweep work,
+so a drop lands just as fast while a large tree is being swept. A file is scanned
+at most ten times a second however often it changes. Reading the events still costs
+something: a file rewritten in a tight loop used 83 % of one core, measured at 150,000
+rewrites a second. Scans are bounded by the
+core count, up to 32, and each reads at most 64 MiB into memory, so a burst of large
+files can briefly hold that many times 64 MiB. A file over 1 GiB is not read at all,
+because hashing streams to the end and a sparse file is any size for free. It raises
+a `file.too-large` alert instead, and is never quarantined for that alone. The
+watched trees are also swept every five minutes, which is what finds a file nothing
+reported: no inotify, or a directory past the watch limit.
+
+**A crash is news.** A detector that panics on a file runs once more, and the other
+detectors are not affected. The panic is reported whether or not the retry worked,
+as a warning in every report and, under `cau defend`, as a `file.detector-panic`
+alert. If the retry also fails the file went without that detector's opinion, and a
+file that was otherwise clean is reported as an error rather than as clean. A parser
+bug can be tripped by a harmless file, so this is an alert for a human and never
+confirms anything on its own, though it joins other evidence like any file signal.
+
+A daemon task that panics is retried at once, and raises one `defend.crash.<task>`
+alert on the incident stream, with the stack in the service log. A retry that keeps
+failing waits for that task's next trigger, so a repeating panic can't spin. A
+response is the exception: it is not retried, because part of it may have happened.
+
+**Blocking.** It defends by default: a confirmed incident gets its process
+frozen (`--respond stop`), its file moved to the vault (`--quarantine`), and the
+kernel and firewall blocks (`--block-exe`, `--netblock`) arm themselves where the
+host can do them, skipping with a clear log line where it cannot.
+`--report-only` turns the whole response surface off and leaves it detecting,
+alerting and forwarding — the mode to run in for a while on a host you do not
+know yet. `report-only = true` in `/etc/cau/cau.conf` does the same without
+editing a unit file.
+
+What makes that safe to leave on is not the default but what counts as
+confirmed, and that every default action is reversible: `stop` freezes a process
+with its memory intact for you to examine rather than killing it, and the vault
+restores. `--respond kill` is still opt-in, because it is the one that is not
+reversible. Response acts only on a **confirmed** incident, which needs one of:
+
+| Evidence | Examples |
+|---|---|
+| live state of the host | a shell on a real socket or pipe relay, a set-uid shell, memfd execution, a process with no file on disk holding a socket, a kernel guard event, a rewritten canary |
+| two independent layers on one artefact | a flagged file that a cron line runs; this host's quiet connection to a peer a firewall already identified |
+| known-bad content, for a file | a hash or YARA hit |
+| known-bad peer, for a connection | a remote address the abuse-intel feed lists |
+
+One layer's opinion alone is an alert for a human. Text in argv never confirms
+anything, because `grep "/dev/tcp" notes.txt` reads exactly like the attack. Only a
+file the content scanner flagged is quarantined, never a cron table or a PAM stack
+that merely names it, and never a system path. System paths also never link
+signals: every shell's executable is `/usr/bin/bash`, and joining on it would merge
+every unrelated incident on the host. `--once` exits 0 clean, 1 incidents, 3 failed,
+4 usage. Alerts are text, or one JSON object per line with `--format json`.
+
+**Forwarding to a SIEM.** Each incident is posted as one OCSF 1.3.0 Detection
+Finding in the same envelope `cau scan --format ocsf` writes, so one correlation
+rule matches events from either surface. Free and unmetered, like the rest of
+detection and prevention: see [pricing](pricing.md).
+
+```
+sudo cau defend --wazuh-url https://wazuh.example.com:55000 \
+     --wazuh-user cau-agent --wazuh-password-env WAZUH_PASSWORD
+```
+
+| Flag | Default | |
+|---|---|---|
+| `--wazuh-url <base>` | | Wazuh Manager API base; enables forwarding |
+| `--wazuh-user <user>` | | API user |
+| `--wazuh-password-env <var>` | `WAZUH_PASSWORD` | variable holding the password. It is never put on argv, which is world-readable in `/proc/<pid>/cmdline` |
+| `--wazuh-ca <file>` | | PEM CA bundle to trust for the manager's certificate |
+| `--wazuh-insecure` | off | skip TLS verification; also allows `http://` |
+| `--wazuh-timeout <dur>` | 10s | per-request timeout |
+| `--forward-queue <n>` | 4096 | incidents buffered while the manager is unreachable |
+
+Delivery runs on its own goroutine and is designed for a daemon nobody restarts:
+
+- **Detection never waits on the network.** Raising an incident hands it to a
+  bounded queue and returns, so a manager that is slow or wedged costs queued
+  events and not one millisecond of detection latency.
+- **An outage is buffered, not discarded.** A batch the manager refuses goes
+  back on the queue and is retried on a widening interval that settles at one
+  attempt a minute, rather than hammering a service that is already struggling.
+  When the manager returns, what was buffered is delivered.
+- **The buffer is bounded, so the cost is memory you chose and not the host.**
+  Past `--forward-queue` events the queue drops its *oldest* to admit a newer
+  one, because the local report is still the complete record and the freshest
+  incidents are the ones an analyst needs next. That eviction is the only way an
+  event is lost while the daemon is up, and it is counted.
+- **It says so when delivery breaks**, once on the way down and once on the way
+  back up, rather than once per failed batch: an unreachable SIEM must not fill
+  the log it is meant to relieve. The counts are reported at shutdown.
+- **A forwarder that cannot work fails at startup.** A `--wazuh-url` with no
+  password in the environment is a usage error, not a daemon that looks healthy
+  and delivers nothing.
+
+A partial delivery resends only the undelivered tail, so the manager does not
+get duplicates of exactly the events it did receive. `finding_info.uid` is the
+incident fingerprint the daemon itself dedupes on, so an incident raised again
+carries the same uid and is collapsible rather than a second page.
+
+**Network response and cross-domain intake.** `--netblock` is on by default, so a
+confirmed incident's peers are dropped in cau's own nftables table or iptables
+chains — and skipped with one clear line at startup on a host with neither, so a
+defence that cannot act never looks armed. `--netblock=false` leaves the network
+plane read-only while every other layer keeps responding, and `--report-only`
+turns the whole response surface off; `--block-ttl` (default 1h) is how long that lasts, `--sever` also
+destroys the sockets already open, and `--netblock-dry-run` logs the firewall
+commands without running them. Loopback, this host's own addresses, its gateways
+and its resolvers are never blocked. `--ingest <path>` (repeatable, a file or a
+directory) reads telemetry from other hosts and sensors; `--ingest-max-age`
+(default 24h) keeps a file left behind by a stopped sensor from raising its last
+incident forever. Only this host's own artefacts are ever acted on: a remote
+signal confirms an incident, it does not direct the response. Strong remote
+evidence does put its peers on the network sensor's watchlist, which is how a
+sub-threshold local connection to an already-identified address stops being
+quiet. Full policy in [network.md](network.md).
+
+| Flag | Default | |
+|---|---|---|
+| `--report-only` | off | change nothing: detect, alert and forward, never act |
+| `--config <file>` | `/etc/cau/cau.conf` | agent configuration; the only place a setting can be signed |
+| `--siem <addr>` | | where to forward: IP, host, host:port or full URL. `10.0.0.5` means `https://10.0.0.5:55000` |
+| `--respond <action>` | `stop` | stop, kill or none for confirmed processes. `stop` is reversible and keeps the memory |
+| `--quarantine` | **on** | move confirmed files into the vault |
+| `--block-exe` | **on** | ask the kernel to refuse confirmed files; skipped if cau-kernel is absent |
+| `--netblock` | **on** | drop traffic to and from a confirmed incident's peers; skipped with no firewall |
+| `--block-ttl <dur>` | 1h | how long a block lasts; 0 means until it is removed |
+| `--sever` | off | with `--netblock`: destroy established connections to a blocked peer |
+| `--netblock-dry-run` | off | log the firewall commands and run none of them |
+| `--ingest <path>` | | read telemetry from this file or directory; repeatable |
+| `--ingest-max-age <dur>` | 24h | ignore ingested events older than this; 0 keeps everything |
+| `--no-network` | | disable the network layer |
+
+`packaging/systemd/cau-defend.service` runs it as a service, defending, with
+`--report-only` documented in the unit for operators who want to watch first.
+Its sandbox differs from the scan daemon's on purpose: that one hides other
+processes, `/tmp` and `/dev/shm`, which would leave this one healthy and blind.
+
+**Configuration and tamper resistance.** Settings come from the built-in
+defaults, then `/etc/cau/cau.conf`, then the command line — a flag you type
+always wins. The file is where the SIEM address belongs, because it is the only
+one of the three whose contents can be *signed*:
+
+```
+# /etc/cau/cau.conf
+siem      = 10.0.0.5          # https://10.0.0.5:55000; host:port and full URLs also work
+siem-user = cau-agent
+respond   = stop
+```
+
+```sh
+sudo cau selftest --record --sign-key priv.hex   # pin it; keep the key off the host
+sudo cau defend --siem 10.0.0.5                  # or set it for one run
+CAU_SIEM=10.0.0.5 sudo -E cau defend             # or from the environment
+```
+
+`cau selftest --record` baselines the signature DB, the YARA rules, the fuzzy
+DB, the threat feed, this configuration file and the agent binary, and pins the
+SIEM address into the manifest. Every file the agent reads is then checked twice:
+
+| Check | What it closes |
+|---|---|
+| how it sits on disk | a symlink can be repointed after the check; a world-writable file, or (running as root) a group-writable one, or one owned by another user, can be rewritten after it |
+| against the signed baseline | the contents changed since someone trusted them |
+
+The feed is verified on **every reload**, not only on the selftest interval,
+because the reload is what an emptied feed would ride in on — a feed that fails
+is refused and the last good one stays live. The digest is taken over the file
+the agent is *about* to read, not the path the baseline records, so pointing
+`feed =` or `--feed` at another file is reported rather than quietly verified
+against the untouched original. A feed that parses to zero indicators never
+replaces a populated one, baseline or no baseline.
+
+Because the feed is the one baselined resource an operator updates routinely,
+`cau feed update` re-records its digest as it writes, so an ordinary update
+lands without being mistaken for an attack — and the daemon re-reads the
+baseline on each reload, so a re-record takes effect without a restart. A
+*signed* baseline is never rewritten without its key: pass `--sign-key` to
+`cau feed update`, or re-record afterwards with `cau selftest --record
+--sign-key`. The command says which, rather than leaving a stale digest that
+would later read as tampering. The SIEM address is pinned, so
+editing `cau.conf` to point elsewhere neither silences the stream nor redirects
+it: the baselined address is used and the edit is raised as
+`defend.tamper.siem-redirected`. Any other drift raises a confirmed incident of
+its own (T1562.001).
+
+A failed check never disables the agent. Refusing to run because one file
+changed would hand an attacker a one-file off switch for the defence, so the
+agent keeps the last trustworthy value and says so loudly instead. The honest
+limit is in [limitations](limitations.md): an attacker who can edit the config
+can usually also re-record an *unsigned* baseline, which is why `--sign-key`
+exists and why the key belongs off the host.
+
+**Leaving it running.** The unit appends to `/var/log/cau/defend.jsonl`, so
+`packaging/logrotate/cau` (installed to `/etc/logrotate.d/cau` by the Debian and
+Arch packages, or by `make install-logrotate`) rotates it daily, at 100 MB, over
+14 generations. Without it the one thing an always-on agent is guaranteed to do
+is fill the disk of the host it protects. The newest rotation is left
+uncompressed for `grep` and `jq`. Rotation restarts the unit to reopen the
+append target rather than using `copytruncate`, which races with a writing
+process and can tear a line.
+
+## cau persist
+
+Audits a Linux host for persistence (`internal/persist`): what will run after
+the next reboot or login, and the accounts and privileges that let an attacker
+back in. Read-only: it never edits a file, because the line it would remove may
+be the only evidence, and a machine-edited PAM or sudoers file can lock the
+operator out.
+
+```
+sudo cau persist                 # audit this host
+cau persist --all                # include sub-threshold observations
+cau persist --root /mnt/suspect  # audit a mounted disk from a clean host
+cau persist --format json
+```
+
+| Class | Looks at | Technique |
+|---|---|---|
+| `persist.ld-preload` | `/etc/ld.so.preload` | T1574.006 |
+| `persist.symlink.writable-target` | an audited path that links into a world-writable or hidden location | T1037 |
+| `persist.symlink.critical-file` | `ld.so.preload`, `sudoers`, `passwd`, `shadow` or `crontab` being a link at all | per file |
+| `persist.symlink.unaudited` | an audited path linking outside the system trees (an observation, shown with `--all`) | T1037 |
+| `persist.cron.*` | crontabs, `cron.d`, the periodic directories, spools | T1053.003 |
+| `persist.systemd.*` | `Exec*=` lines of system, user and transient units and their drop-ins | T1543.002 |
+| `persist.shellrc.*` | profile and rc files, `~/.ssh/rc`; aliases shadowing `sudo`, `su`, `ssh`, `passwd`; exported `LD_PRELOAD` | T1546.004 |
+| `persist.rc-local.*` | `rc.local` | T1037.004 |
+| `persist.autostart.*` | XDG autostart `Exec=` lines | T1547.013 |
+| `persist.ssh-key.*` | forced commands; direct root keys (observation) | T1098.004 |
+| `persist.account.*` | extra UID 0 accounts, empty passwords | T1136.001, T1078.003 |
+| `persist.sudoers.*` | `ALL ALL=NOPASSWD: ALL`; `env_keep` of a loader variable; single-user NOPASSWD (observation) | T1548.003 |
+| `persist.udev.*` | `RUN` keys of local udev rules | T1546 |
+| `persist.init-script.*` | MOTD, `init.d` and `if-up` scripts | T1037 |
+| `persist.apt-hook.*` | `Pre-Invoke` and `Post-Invoke` package hooks | T1546.004 |
+| `persist.ld-conf.*` | library search path entries in writable locations | T1574.006 |
+| `persist.modprobe.*` | `install` directives that run a command | T1547.006 |
+| `persist.perms.*` | account files writable or `shadow` readable by everyone; autostart files anyone can write | T1222.002 |
+| `persist.caps.*` | root-equivalent file capabilities on interpreters | T1548.001 |
+| `persist.pam.*` | `auth sufficient pam_permit.so`; `pam_exec` from writable paths | T1556.003 |
+| `persist.suid.writable-dir` | set-uid programs in `/tmp`, `/var/tmp`, `/dev/shm` | T1548.001 |
+
+Autostart entries score on the same hostile-command recognisers as the package
+scanner, or on running from a world-writable or hidden location. Symlinks are
+not followed, so a root audit cannot be steered into quoting `/etc/shadow`. A link
+is judged by where it points instead, without opening the target, and one into a
+system tree is taken at face value: packages create them by the hundred.
+Run as root: without it `/etc/shadow`, other users' homes and their crontabs are
+skipped. Exit codes: 0 clean, 1 detections, 4 usage.
+
 ## cau ps
 
 A point-in-time threat scan of the **live process table**, read entirely from
-`/proc` (`internal/procscan`). It is strictly **read-only** — it never injects,
-ptraces, signals, or stops a process — and complements the file scanner: a
-dropper that already decoded and executed in memory leaves nothing on disk for
+`/proc` (`internal/procscan`). The scan itself is **read-only**; only `--respond`
+ever touches a process. It complements the file scanner: a dropper that already decoded and executed in memory leaves nothing on disk for
 `cau scan`, but its process is still running.
 
 ```
 cau ps                       # scan every process, text report
 cau ps --format json         # machine-readable
 sudo cau ps                  # full visibility into other users' processes
+sudo cau ps --respond stop   # freeze confirmed processes, keep their memory for forensics
+sudo cau ps --interval 10s --respond stop   # keep watching
 ```
 
 It flags processes a benign system would not be running:
@@ -178,9 +587,62 @@ It flags processes a benign system would not be running:
   `[kworker]` bracket-name with a real userspace exe (T1036.004 / T1036.005).
 - **Library-injection hooks** — a `.so` mapped from a world-writable, hidden, or
   deleted path, or a suspicious `LD_PRELOAD` / `LD_LIBRARY_PATH` (T1574.006).
-- **Malicious command lines** — reverse shells, `curl|bash`, droppers (it reuses
-  the `linuxpkg` command-line vectors).
-- **Processes under ptrace** (T1055.008).
+- **Malicious command lines** — reverse shells, `curl|bash`, droppers, and the
+  whole `tradecraft` vocabulary: socat (`EXEC:` and `SYSTEM:`), gawk `/inet`,
+  `openssl s_client` and `curl telnet://` relays, BusyBox `telnetd -l /bin/sh`,
+  inline PHP, Python, Perl, Ruby and Lua shells, encoded loaders, [GTFOBins](https://gtfobins.github.io)
+  breakouts under `sudo` or setuid, [LOLBAS](https://lolbas-project.github.io)
+  download and proxy-execution shapes, [lolol.farm](https://lolol.farm) trusted-SaaS
+  channels (Microsoft Graph mail, Firebase realtime DB, Cloudflare Workers,
+  Google Apps Script, Dropbox content upload, Discord CDN, Slack API, Lambda invoke,
+  blockchain RPC) and the [ArcticFox detection-bypass](https://github.com/s-b-repo/arcticfox-c3/blob/main/docs/Detection-Bypasses.md)
+  primitives (`memfd_create` + `execveat`, `prctl(PR_SET_NAME)`, `LD_PRELOAD`
+  shims, PAM backdoors, systemd unit hijacks, `/proc/self/exe` unlink, ICMP/DNS
+  covert channels, domain fronting). The recognisers overlap on purpose, so
+  together they count as one piece of evidence: the strongest keeps its score
+  and the rest report at zero.
+- **Network shells** — an interpreter whose stdin and stdout are both a live TCP
+  connection, the wiring of a reverse or bind shell, whatever its command line
+  claims (T1059.004). The socket inode is resolved against the process's own
+  network namespace, because harnesses run shells over `AF_UNIX` socketpairs
+  that look the same in `/proc/<pid>/fd`.
+- **Pipe relays** — `mkfifo | sh | nc` puts no socket on the shell, so this looks
+  for an interpreter whose stdout is the stdin of a network tool holding a live
+  connection, with its own stdin also piped. Both halves matter: `curl x | sh`
+  keeps a terminal on stdout, and `./report.sh | nc host` has no fed stdin.
+- **Set-uid shells** — an interpreter whose effective uid differs from its real
+  uid, what a SUID GTFOBin leaves behind (T1548.001). `sudo` sets both, so an
+  ordinary root shell does not match.
+- **Kernel guard events** — with `--kernel-events`, what `cau-kernel enforce
+  netshell` recorded about a live process. A PID alone is not identity, because
+  the log outlives processes, so the name must agree as well.
+- **Processes under ptrace** (T1055.008), and **anonymous executable memory**
+  (T1055) as context only: JIT runtimes carry it on a clean host, so it can
+  corroborate but never flag a process alone.
+
+### Responding
+
+`--respond stop` sends SIGSTOP, which freezes the process with its memory and
+sockets intact and is undone with `kill -CONT <pid>`. `--respond kill` sends
+SIGKILL and cannot be undone. Response is opt-in and acts only on a **confirmed**
+process: one with a conclusive finding (a network shell or pipe relay, a set-uid
+shell, memfd or `/dev/shm` execution, a masquerade, a kernel guard event, or a
+network-shell command line held by the interpreter or relay tool running it), or
+a combined score of at least `--respond-score` (default 16). Everything else
+is reported and left for a human, and the report says so for each process.
+
+`procscan.fileless.deleted` is deliberately not conclusive: a program upgraded
+while it runs looks exactly the same, and freezing a service for that is an
+outage the defender caused. Reverse-shell text in argv counts only on an
+interpreter, so `grep` over a note about one is never touched. PID 1, the
+responder and its ancestors are never signalled, and the process identity is
+re-read immediately before the signal so a recycled PID is not hit.
+
+`--block-exe` adds a kernel response: before the signal it asks `cau-kernel enforce
+block` to refuse the process's file, so it cannot be run or read again. It needs a
+running file guard (`cau-kernel enforce run --core bpf/lsm_fileopen.bpf.o`), and
+it refuses system paths and interpreters outright, because the executable of a
+reverse shell is usually `/bin/bash`.
 
 Without root, other users' processes are only partly readable; those fields are
 skipped and counted as *unreadable* rather than failing the scan.
@@ -195,6 +657,116 @@ skipped and counted as *unreadable* rather than failing the scan.
 Exit codes: `0` nothing flagged, `1` one or more processes flagged, `4` usage.
 (The procscan techniques are a **runtime** surface and are not yet part of the
 `cau coverage` ATT&CK matrix, which today ingests the file-scanner detectors.)
+
+## cau net
+
+A point-in-time threat scan of the **network plane**, read entirely from `/proc`
+and `/etc` (`internal/netscan`), plus the blocker that acts on it
+(`internal/netblock`). The scan is **read-only**: it opens no socket, sends no
+probe and captures no packets. See [network.md](network.md) for the design, the
+full class list and the response policy.
+
+```
+cau net                                       # one read of the network plane
+cau net --interval 30s                        # beaconing and MAC churn need samples
+cau net --feed /var/lib/cau/feed.txt          # match peers against the abuse-intel feed
+cau net --format json                         # machine-readable
+sudo cau net                                  # full attribution of other users' sockets
+sudo cau net --respond block --dry-run        # what it would block, and nothing else
+sudo cau net --respond block --block-ttl 30m  # act on live and known-bad findings only
+sudo cau net block 203.0.113.9 --reason "phishing kit C2"
+cau net blocks                                # what is blocked, why, and when it expires
+sudo cau net unblock 203.0.113.9
+sudo cau net clear                            # remove every rule cau created
+```
+
+Every socket the kernel holds is attributed to the process and the executable
+behind it, which is what makes a network finding something you can act on — and
+what lets the correlator join a connection to the file scanner's verdict on the
+same binary. Sockets are read **per network namespace**, so a container's
+backdoor is found and attributed rather than missed.
+
+It flags:
+
+- **Fileless network presence** — a socket held by a process whose executable is
+  a `memfd:`, a deleted inode or a tmpfs path (T1620 with T1071/T1571). This is
+  the one network class that counts as **live state**: a payload that never
+  touched disk is holding a connection now.
+- **Bind shells and relays** — a listener owned by nc, ncat, socat, telnet or
+  rcat, or by a shell or language runtime, whatever the command line says
+  (T1059.004).
+- **Known-bad peers** — a remote address, a `resolv.conf` nameserver or an
+  `/etc/hosts` target that the abuse-intel feed lists. An exact identification,
+  like a hash hit (T1071).
+- **Handler ports and unexpected listeners** — the default ports of the common
+  handlers (4444, 1337, 31337, …), and a binary no package installed listening
+  on every address (T1571). Context only: a developer can bind any of them.
+- **DNS-plane escape** — a program querying a nameserver this host is *not*
+  configured to use (T1071.004), DoT/DoQ from a program whose job is not DNS
+  (T1572), a `resolv.conf` naming a nameserver that is neither local nor a
+  documented public resolver, and an `/etc/hosts` entry that points a security
+  or update domain at a dead address so the host cannot heal itself (T1562.001).
+  A program sending to port 53 is *not* a signal: glibc's resolver runs inside
+  every process that looks up a name.
+- **Connect sweeps** — one process with connections in flight to twelve or more
+  distinct peers, the shape of service discovery (T1046).
+- **Beaconing** — repeated connections to one peer on a schedule, measured
+  across samples: four or more with 25 % jitter or less (T1071.001). Needs
+  `--interval` or `cau defend`.
+- **Neighbour-table tampering** — the default gateway's MAC moving under the
+  host, or one MAC answering for the gateway and another address (T1557.002).
+  Reported, never live: a router failover does this too.
+
+The reporting threshold (`--threshold`, default 5) is per **subject** — one
+process, or one peer when the holder could not be read — so a developer's
+`python3 -m http.server` (4) stays silent while the same interpreter on 4444 (8)
+does not. Without root most holders are unreadable; those sockets stay in the
+report as unattributed and are counted, never guessed at.
+
+### Blocking
+
+`--respond block` acts only on a finding that confirms itself: **live state** (a
+fileless process holding a socket) or an **exact identification** (a feed
+match). A score, however high, is an alert for a human.
+
+A block is a drop rule in cau's own nftables table (or its own iptables
+chains), at the output, input **and forward** hooks so a container host blocks
+its containers too. It **expires** — `--block-ttl`, one hour by default — with
+nftables holding the timeout in the kernel, so a block survives a crash of the
+agent and is still released on time; the iptables fallback carries the expiry in
+each rule's comment. `--block-ttl 0` makes it permanent, which you have to ask
+for. `--sever` also destroys the sockets already open, because a dropped TCP
+session otherwise keeps retransmitting inside the host for minutes.
+
+These are **never** blocked, however confirmed the incident: loopback, the
+unspecified address, multicast, link-local, every address configured on this
+host, every default gateway and every configured nameserver. Blocking the
+gateway is what an attacker would want a confirmed-looking incident to achieve.
+
+`cau net clear` removes exactly what cau created and leaves the host's own
+firewall as it was. Every block is appended to `/var/lib/cau/netblock.log` with
+its reason, which `cau net blocks` reads back.
+
+A drop rule is visible to the peer, and a peer with a second address is back at
+once. It buys an operator minutes; it is not containment, and this engine does
+not call it protection.
+
+| Flag | Meaning |
+|---|---|
+| `--format text\|json` | report format |
+| `--threshold <n>` | per-subject score to report (default 5) |
+| `--feed <path>` | abuse-intel feed to match remote addresses against |
+| `--interval <d>` | re-scan until a termination signal; what gives the time-based analytics their samples |
+| `--respond block` | block the peers of confirmed findings |
+| `--block-ttl <d>` | how long a block lasts (default 1h; 0 means until removed) |
+| `--sever` | also destroy established connections to a blocked peer |
+| `--dry-run` | print the firewall commands and run none of them |
+| `--backend nftables\|iptables` | force a backend instead of discovering one |
+| `--ledger <path>` | where blocks are recorded (default `/var/lib/cau/netblock.log`) |
+| `--reason <text>` | with `block`: why, for the ledger |
+| `--proc-root`, `--etc-root` | override `/proc` and `/etc` (testing) |
+
+Exit codes: 0 nothing flagged, 1 one or more findings, 3 the run failed, 4 usage.
 
 ## cau installed
 
@@ -228,9 +800,11 @@ Exit codes: `0` nothing flagged, `1` one or more packages flagged, `3` failed,
 ## cau firmware
 
 Parses a **UEFI firmware image** — its Firmware Volumes and the FFS files and
-sections inside them — and reports a module inventory (GUID, type, UI name,
-whether it carries a PE), the FV header's checksum integrity, and any module
-GUID on an operator-supplied implant blocklist. This is the Phase-8 firmware
+sections inside them, including volumes nested inside LZMA-compressed sections —
+and reports a module inventory (GUID, type, UI name, nesting depth, whether it
+carries a PE), the FV header's checksum integrity, any module GUID on an
+operator-supplied implant blocklist, and any module whose executable body
+matches a YARA rule. This is the Phase-8 firmware
 wedge: firmware persistence survives disk wipes, and no mainstream EDR publishes
 its firmware layer.
 
@@ -241,13 +815,30 @@ cau firmware ./capsule.bin --implants known-implants.txt --format json
 
 It is **honest about its boundary**: the engine ships **no implant truth set**,
 because firmware is overwhelmingly legitimate PEI/DXE/SMM drivers and scoring
-module shapes would be a false-positive machine. So only two things score —
+module shapes would be a false-positive machine. So only three things score —
 `uefi.volume-checksum-invalid` (an FV header whose 16-bit checksum does not
-validate, a genuine tamper/hand-built tell) and `uefi.known-implant-guid` (a
-module matching your `--implants` blocklist). Everything else is inventory.
-Module bodies are not disassembled, compressed/GUIDed sections are not
-decompressed, and NVRAM, signatures and boot policy are not analysed. ATT&CK
-T1542.001 (System Firmware).
+validate, a genuine tamper/hand-built tell), `uefi.known-implant-guid` (a
+module matching your `--implants` blocklist) and `uefi.module-rule-match` (a
+module's PE32/TE body matching a YARA rule, weight 8). Everything else is
+inventory. ATT&CK T1542.001 (System Firmware).
+
+**Compressed volumes.** Nearly every modern image keeps its driver volume in an
+LZMA-compressed section, so the parser carries its own bounded LZMA decoder
+and walks what is inside (at most 64 MiB per section, 256 MiB per image, four
+levels of nesting). On the stock OVMF images this takes the inventory from 0-1
+modules to 91-156. Sections in the EFI/Tiano compression or another
+GUID-defined encoding are not opened; the report counts every section that
+could not be opened and says its contents are not in the inventory.
+
+**Rules over module bodies.** Each module's executable section is run through
+the YARA rules (`--rules`, default the bundled set; `--no-yara` to skip). The
+bundled rules were written for operating-system malware, so a hit on a firmware
+module is strong evidence and no hit says little. Measured on the 11 OVMF
+images shipped by Debian (1,079 module bodies): no rule fired. That is one
+firmware family and a small sample, not a false-positive rate for vendor
+firmware. When rules are not run, the report says so instead of showing an
+empty result. Module bodies are not disassembled, and NVRAM, signatures and
+boot policy are not analysed.
 
 The `--implants` file is one `guid` or `guid|name` per line, `#` comments.
 
@@ -259,6 +850,106 @@ The `--implants` file is one `guid` or `guid|name` per line, `#` comments.
 
 Exit codes: `0` clean, `1` suspicious, `3` the run failed, `4` usage. (This is a
 standalone command; UEFI is not part of the per-file `cau scan`.)
+
+## cau boot-scan
+
+Reads the **boot chain**, the part of a host that a file scan never reaches,
+and reports what it finds. It is strictly read-only: disks are opened
+read-only, no firmware variable is set, no option ROM is enabled and no flash
+chip is touched. A test over the package source fails the build if that ever
+stops being true.
+
+```sh
+sudo cau boot-scan                                  # this host: ESP, firmware variables, sysfs
+sudo cau boot-scan --disk /dev/nvme0n1              # plus the disk's MBR, GPT and boot sectors
+cau boot-scan --offline --disk ./evidence.img       # an image from another machine, nothing else
+cau boot-scan --dbx-reference ./x64_DBXUpdate.bin --format json
+```
+
+| Surface | What is read | What is scored |
+|---|---|---|
+| Disks (`--disk`, repeatable) | MBR, GPT primary and backup headers with both CRC32s, each partition's first sector | a ransom note in the boot area (`boot.ransom-text`, the only class that crosses the threshold alone); a destroyed primary GPT with an intact backup; header or entry CRC failures; primary and backup that disagree; overlapping or out-of-range partitions; an ESP that is not FAT; unrecognised MBR boot code |
+| EFI System Partition (`--esp`) | every `.efi` file: SHA-256, PE subsystem, machine, whether a signature is present; queued firmware capsules | unsigned EFI binaries **when Secure Boot is enabled**; a `.efi` that is an OS-subsystem PE or not a PE at all; a `system32` directory at the ESP root |
+| Firmware variables (`--efivars`) | Secure Boot and setup mode, boot entries and order, dbx / db / shim MOK sizes, SBAT level | setup mode; an empty dbx with Secure Boot on; a dbx missing entries from `--dbx-reference` |
+| Firmware inventory (`--sysfs`) | ACPI table names, the WPBT table, PCI option ROMs, the firmware update resource table | the WPBT table (weight 1) |
+
+On Linux the ESP (the FAT mount at `/boot/efi`, `/efi` or `/boot`),
+`/sys/firmware/efi/efivars` and `/sys` are found automatically; `--offline`
+turns that off. Reading a live disk, and usually the ESP, needs root. Whatever
+could not be read is listed under "Not inspected / limits" and is never
+reported clean: an unreadable ESP is not an empty one, and an absent
+`SecureBoot` variable is "unknown", not "disabled".
+
+Boundaries: a signature is reported present or absent and never verified (the
+engine holds no trust store); option ROM contents are not read, because sysfs
+only maps a ROM after a write; Secure Boot being off is reported as posture
+and not scored; the scan is one point in time. Recognising the MBR boot code
+as GRUB, Windows or syslinux only withholds the low-weight "unrecognised"
+finding and is never evidence that the code is benign.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--disk <path>` | none | disk image or block device (repeatable) |
+| `--esp <dir>` | auto | mounted EFI System Partition |
+| `--efivars <dir>` | auto | efivarfs mount |
+| `--sysfs <dir>` | auto | sysfs root for the firmware inventory |
+| `--offline` | off | scan only what is named |
+| `--dbx-reference <file>` | none | revocation list to compare the host dbx against (the UEFI Forum dbx update, bare or in its signed wrapper) |
+| `--format <fmt>` | `text` | `text` or `json` |
+| `--threshold N` | 8 | score at which the scan is reported suspicious |
+
+Exit codes: `0` nothing at or above the threshold, `1` suspicious, `3` nothing
+could be scanned, `4` usage. ATT&CK: T1542.003, T1542.001, T1542.002, T1561.002,
+T1486, T1553.006. These are a host surface and are not yet rows in the
+`cau coverage` file-scanner matrix.
+
+## cau hwid
+
+```sh
+cau hwid                                   # snapshot, text
+sudo cau hwid --record /var/lib/cau/hwid.json
+sudo cau hwid --check  /var/lib/cau/hwid.json
+cau hwid --redact --format json            # shareable: serials, UUID and MACs as digests
+```
+
+A read-only snapshot of the host's **hardware identity**, taken from sysfs, and
+a comparison with a recorded baseline: is this still the same machine.
+
+| Anchor | Read from | Notes |
+|---|---|---|
+| DMI / SMBIOS | `/sys/class/dmi/id` | vendor, product, UUID, serials, BIOS. The UUID and serials need root; vendor filler such as `To Be Filled By O.E.M.` is a `placeholder`, never compared as an identity |
+| Network interfaces | `/sys/class/net` | address and `addr_assign_type`. Type 3 on a physical NIC means the address was set by userspace. sysfs does not expose the burned-in address, so this shows that the MAC was changed, not from what; virtual interfaces are listed and never flagged |
+| TPM | `/sys/class/tpm/tpm0` | presence, version, PCRs 0-7 (SHA-256). No quote is captured: the PCR values are the kernel's unsigned report |
+| Entropy source | `/sys/class/misc/hw_random` | the active hardware RNG, or none |
+
+Every field has a state: `ok`, `absent`, `unreadable` or `placeholder`. The
+`unverifiable` list names every anchor the host could not prove in this run,
+and is never empty (the TPM quote is always on it). Nothing is padded to
+"verified".
+
+`--check` reports differences by kind. Only `changed` (a value that was `ok`
+in the baseline and is `ok` and different now, or a NIC that went from a
+permanent to a userspace-set address) sets exit code 1. `not-reverified` (it
+was readable when recorded and is not now, typically because the check ran
+without root) is printed and does not change the exit code. A firmware update
+legitimately changes the BIOS fields and PCRs, and the output says so.
+
+`--redact` replaces the UUID, serials and MAC addresses with a truncated
+SHA-256 so a snapshot can be shared and still compared. It is a pseudonym, not
+anonymity: a short serial can be enumerated. A redacted snapshot cannot be
+compared with an unredacted baseline.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--sysfs <dir>` | `/sys` | sysfs root |
+| `--format <fmt>` | `text` | `text` or `json` |
+| `--redact` | off | digest the UUID, serials and MAC addresses |
+| `--record <file>` | none | write the snapshot as a baseline (mode 0600; refuses to overwrite without `--force`) |
+| `--check <file>` | none | compare with a baseline |
+
+Exit codes: `0` ok, `1` identity changed (`--check` only), `3` the run failed,
+`4` usage. The package itself never writes; only `--record` does, in the
+command layer. Serials and UUIDs stay on the host unless you move the file.
 
 ## cau feed
 
@@ -309,7 +1000,7 @@ clusters over the import sets with a Jaccard floor. Files of other formats
 are counted and skipped.
 
 ```sh
-cau cluster --dir ./samples
+cau cluster ./samples
 cau cluster --min-similarity 0.8 --imphashes a.exe b.exe c.exe
 ```
 
@@ -461,6 +1152,48 @@ view: each covered technique is mapped through its ATT&CK tactic onto the
 as honest gaps — the counterfactual to ATT&CK's technique grid, showing which
 parts of an intrusion's progression a file scanner can observe.
 
+## cau honesty
+
+```sh
+cau honesty                                   # text, from the working tree
+cau honesty --format json --no-timestamp --output honesty.json
+cau honesty --eval eval-out/report.json --strict
+```
+
+One document that says what the engine covers, what was measured and whether
+its detection content is intact, built from three things the engine already
+computes. It is meant to be run by someone other than the vendor.
+
+| Section | Source | States |
+|---|---|---|
+| ATT&CK coverage | the same matrix as `cau coverage`, compared with `baselines/attack-coverage.txt` | `measured`, `mismatch`, `error` |
+| Evaluation | a report written by `cau eval run --out` (`--eval`, default `baselines/smoke.json`) | `measured`, `not-measured`, `error` |
+| Selftest | the signed integrity baseline `cau selftest` checks | `measured`, `no-baseline`, `tampered`, `error` |
+
+There is no overall score or grade: a gap in one section is not offset by a
+result in another. Anything unknown is `null`, never zero. A missing integrity
+baseline is `no-baseline`, which is not a pass. The evaluation section carries
+a corpus class; the committed smoke corpus is labelled synthetic, and its
+recall is described as a plumbing check and not a detection rate. A report
+whose totals do not follow from its own sample records is an `error`. The
+`not_claimed` list states what the index does not measure (no third-party
+columns, no real-malware recall unless a real corpus report is supplied, no
+runtime coverage, no signature on the index itself).
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--format <fmt>` | `text` | `text`, `markdown` or `json` |
+| `--output <file>` | stdout | write the document to a file |
+| `--eval <file>` | `baselines/smoke.json` if present | evaluation report to read |
+| `--expect <file>` | the committed baseline if present | coverage expectation to compare with |
+| `--manifest <file>`, `--pubkey <file>` | auto | selftest baseline and its public key |
+| `--db`, `--rules`, `--fuzzy-db` | auto | detection content to describe |
+| `--no-timestamp` | off | omit `generated`, for byte-identical output (`SOURCE_DATE_EPOCH` is also honoured) |
+| `--strict` | off | exit 1 when a section is `mismatch`, `tampered` or `error` |
+
+Exit codes: `0` the document was produced, whatever it says; `1` only with
+`--strict`; `3` it could not be written; `4` usage.
+
 ## cau quarantine
 
 ```sh
@@ -507,21 +1240,43 @@ failed, 4 usage.
 ## cau peel
 
 ```sh
-cau peel [--format text|json] [--max-depth n] [--max-nodes n]
-         [--max-output n] [--max-children n] [--timeout dur] <file>
+cau peel [--format text|json] [--jobs n] [--stream] [--max-depth n]
+         [--max-nodes n] [--max-output n] [--max-children n] [--timeout dur]
+         <file>...
 ```
 
-Walks the obfuscation-chain tree of a file (NOVEL-012): at each node every
-applicable reversible layer decoder — base64, base32, hex, gzip, zlib, flate,
-bzip2 — spawns a child, under a single global per-sample budget wall shared
-across every branch (nodes, decoded bytes, depth, frontier width, wall clock).
-Because the budget is global, adding layers costs latency, never more total
-spend. The peeler only *decodes*; it never executes sample content.
+Walks the obfuscation-chain tree of each file (NOVEL-012). At each node every
+reversible layer that applies decodes at once, and each result opens a branch,
+under a single global per-sample budget wall shared across every branch (nodes,
+decoded bytes, depth, frontier width, wall clock). Because the budget is global,
+adding layers costs latency, never more total spend. The peeler only *decodes*;
+it never executes sample content.
 
-Chain *depth* is the signal: a revealed executable or script is a finding only
-at depth >= 2 (a real chain), because a single ordinary layer — a `.gz` of a
+| Layers | |
+|---|---|
+| Bases | 2, 8, 10 and 16 (bare, or as lists: `72 101`, `0x48,0x65`, `\x48\x65`, `%48%65`); 32 (RFC 4648, lower case, hex, Crockford, z-base-32); 36; 45; 58 (Bitcoin, Flickr, Ripple); 62; 64 (standard and URL-safe, with or without wrapping); 85 (RFC 1924, Ascii85, Z85); 91; 92 |
+| Substitutions | every Caesar shift (rot1 to rot25), rot5, rot18, rot47, atbash, reversal |
+| Other | gzip, zlib, raw deflate, bzip2, UTF-16, blobs carved out of a surrounding script |
+
+Layers chain in any order, and one blob can open several branches: a script with
+three embedded payloads is three chains. A chain is named by its layers, such as
+`carve>base64>rot13>flate`, and a Caesar layer by its shift, such as `caesar-7`.
+A wrong guess at a base gives noise and is dropped. A substitution has to reveal
+something, because rotating text only gives more text; rotations are tried on
+the first 4 KiB, and a whole-number base (36, 58, 62) reads at most 64 KiB.
+
+`--jobs` peels that many files at once, one per CPU by default, and reports them
+in command-line order. `--stream` prints each layer and chain as it is found; with
+`--format json` that output is JSON lines, ending in a `"kind":"result"` object
+per file. Several files with `--format json` and no `--stream` give an array. A
+file that cannot be read is reported and the others still run.
+
+Chain *depth* is the signal: a revealed executable or script is a finding at
+depth >= 2 (a real chain), because a single ordinary layer — a `.gz` of a
 binary, one base64 blob — is normal packaging and is the single-layer
-encoded-executable detector's job. A branch that hits a wall is reported as
+encoded-executable detector's job. A substitution counts at any depth, because
+no packaging tool writes one, and a carve does not count as a layer, because it
+decodes nothing. A branch that hits a wall is reported as
 `peel-exhausted`, a first-class scored outcome, never a silent clean. Each peel
 renders a stable chain signature such as `base64>gzip>base64`. Exit codes: 0
 clean, 1 a chain revealed a payload or the peel was exhausted, 3 failed, 4
@@ -532,6 +1287,8 @@ usage.
 ```sh
 cau intake --format stix|misp|malwarebazaar|loldrivers
            (--input <file> | --url <url>) [--db <path>] [--dry-run] [--output <file>]
+cau intake --taxii <collection-url> [--taxii-state <file> | --added-after <ts>]
+           [--auth-env <VAR>] [--provenance <file>] [--db <path>] [--dry-run]
 ```
 
 Parses a threat-intelligence feed into hash signatures and appends the new ones
@@ -547,10 +1304,32 @@ its own). `--dry-run` prints the new signatures, `--output` writes them to a fil
 instead of appending to the database. Exit codes: 0 ok (even when nothing is
 new), 3 failed, 4 usage.
 
+`--taxii` polls a **TAXII 2.1 collection** (`…/collections/<id>/`) for STIX
+objects, following the server's pagination, and feeds them to the STIX parser.
+`--taxii-state <file>` keeps the polling cursor (the server's
+`X-TAXII-Date-Added-Last`), so each run asks only for what was added since the
+last run that wrote; `--added-after` sets the cursor by hand. The
+`Authorization` header value comes from the environment variable named by
+`--auth-env` (default `CAU_INTAKE_AUTH`). The collection must be `https://`
+unless `--allow-http` is given, a redirect to another host is refused, and the
+poll is bounded in pages, objects and bytes. A dry run neither advances the
+cursor nor writes provenance.
+
+What is not ingested: a STIX indicator its producer marked `revoked` or whose
+`valid_until` has passed, and a MISP attribute exported with `to_ids: false`
+(context, not a detection). `--provenance <file>` appends one JSON line per
+new signature with its `source`, `origin`, `retrieved_at` and `confidence`.
+Confidence is what the source states (STIX `confidence` on the None / Low /
+Med / High scale) and `unstated` otherwise; the engine does not invent one.
+The weekly `intake` workflow runs this against the public feeds, gates the
+candidates on the evaluation corpus and publishes them as an artifact. It
+never commits: promotion is a pull request.
+
 ## cau update
 
 ```sh
 cau update (--from <dir> | --url <base>) [--pubkey <file>] [--db <path>] [--dry-run]
+           [--allow-downgrade]
 ```
 
 Installs a signed signature-database bundle, fail-closed. The engine never
@@ -561,9 +1340,13 @@ Ed25519 signature over the manifest). One signature covers everything because
 the manifest carries the payload's SHA-256.
 
 Nothing on disk changes unless the signature verifies against the trusted key,
-the payload digest matches the signed manifest, and the bundle's
-`min_engine_version` is satisfied. On success the live database is replaced
-atomically and the previous one is kept as `<db>.bak`. `--from` reads a local
+the payload digest matches the signed manifest, the bundle's
+`min_engine_version` is satisfied, and the bundle is not older than the one
+installed. On success the live database is replaced atomically, the previous
+one is kept as `<db>.bak`, and the manifest is recorded as `<db>.manifest`.
+That record is what stops a mirror replaying an old signed bundle; the first
+install has nothing to compare against, and `--allow-downgrade` installs an
+older bundle on purpose, to back out a bad release. `--from` reads a local
 directory (also the air-gap path — the identical payload delivered by media);
 `--url` fetches `<base>/hashes.txt`, `<base>/manifest.json` and
 `<base>/manifest.json.sig`. `--dry-run` verifies only. The trusted Ed25519
@@ -578,10 +1361,14 @@ cau selftest --record [--sign-key priv.hex] [--manifest file]
 cau selftest [--pubkey pub.hex] [--manifest file]
 ```
 
-Verifies that the engine's detection content — the signature database, the YARA
-rules, and the fuzzy database — has not been tampered with, so an attacker who
-guts signatures or neuters a rule (ATT&CK T1562.001, Impair Defenses) is caught
-instead of silently disabling the scanner. `--record` digests each resource and
+Verifies that nothing the agent relies on has been tampered with — the signature
+database, the YARA rules, the fuzzy database, the threat feed, `/etc/cau/cau.conf`
+and the agent binary — so an attacker who guts signatures or neuters a rule
+(ATT&CK T1562.001, Impair Defenses) is caught instead of silently disabling the
+scanner. Detection content is the obvious target but not the cheapest one:
+emptying the feed, or repointing the SIEM address at a collector of their own,
+needs no change to a single rule, which is why both are baselined and why the
+SIEM address is pinned into the manifest. `--record` digests each resource and
 writes a baseline (`integrity.json` next to the signature database by default);
 without `--record` it recomputes and compares, exiting 1 and naming each drifted
 resource on any change. Directory resources (the rules) reduce to one canonical
@@ -591,7 +1378,10 @@ For tamper-*resistance* (not just drift detection), record a **signed** baseline
 with `--sign-key` and verify it with `--pubkey` (or `$CAU_SELFTEST_PUBKEY`):
 an attacker who rewrites both the content and the manifest still cannot forge
 the Ed25519 signature, so the check fails closed. Keep the signing key off the
-host; run `cau selftest --pubkey …` from a timer or before each scan. Exit
+host; run `cau selftest --pubkey …` from a timer or before each scan. A `--pubkey`
+that cannot be read or parsed is an **error**, never a quiet fall back to a
+digest-only check — that downgrade is exactly what deleting the key would be
+worth doing for, and it would leave every later log line looking healthy. Exit
 codes: 0 intact, 1 drift or a bad/missing required signature, 3 failed, 4 usage.
 
 ## cau verify-self
@@ -615,6 +1405,7 @@ running executable's own name). Exit 0 verified, 1 failed, 3 run error, 4 usage.
 ```sh
 cau bundle update    --db hashes.txt --sign-key priv.hex --out dist [--db-version V] [--min-engine V]
 cau bundle checksums --sign-key priv.hex --out dist <file>...
+cau bundle sbom      [--binary <path>] [--output <file>]
 ```
 
 Producer-side signing, run in CI with the signing key from a secret.
@@ -622,6 +1413,13 @@ Producer-side signing, run in CI with the signing key from a secret.
 `manifest.json.sig`) that `cau update` installs. `checksums` writes a signed
 `SHA256SUMS` (+ `.sig`) over the release files that `cau verify-self` and users
 check downloads against. Both use Ed25519; keep the key off developer machines.
+
+`sbom` writes a CycloneDX 1.5 software bill of materials for a Go binary (this
+one by default), read from the build information the linker embedded in it: the
+modules that were actually linked, each with its go.sum hash. The document has
+no timestamp and no serial number, so the same binary always yields the same
+bytes. Libraries linked through cgo (libyara, the C library) are not Go modules;
+the document says so in a property rather than omitting them silently.
 
 ## CI recipes
 

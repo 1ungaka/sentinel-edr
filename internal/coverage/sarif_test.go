@@ -56,7 +56,7 @@ func recordExpectCovering(t *testing.T, m *Matrix, overlay string) *Expect {
 func TestExpectFourStates(t *testing.T) {
 	// A fresh matrix with the four states exercised.
 	m := Build(Inputs{Tool: "CAU EDR", Version: "test", Rules: rules(), YaraLoaded: true, HashCount: 51})
-	e := recordExpectCovering(t, m, "T1003 partial only strings\nT1620 gap planned decode\nT1046 none sensor owns it")
+	e := recordExpectCovering(t, m, "T1003 partial only strings\nT1542 gap planned decode\nT1046 none sensor owns it")
 	m2 := Build(Inputs{Tool: "CAU EDR", Version: "test", Rules: rules(), YaraLoaded: true, HashCount: 51})
 	problems := Compare(m2, e)
 	if len(problems) != 0 {
@@ -66,12 +66,12 @@ func TestExpectFourStates(t *testing.T) {
 	if tq := find(m2, "T1003"); tq == nil || !tq.Partial || tq.State() != StatePartialS {
 		t.Errorf("T1003 should be partial: %+v", tq)
 	}
-	// T1620 (planned) and T1046 (none) are gaps with the right state.
+	// T1542 (planned) and T1046 (none) are gaps with the right state.
 	gapState := map[string]string{}
 	for _, g := range m2.Gaps {
 		gapState[g.ID] = g.State
 	}
-	if gapState["T1620"] != StatePlanned || gapState["T1046"] != StateNoneS {
+	if gapState["T1542"] != StatePlanned || gapState["T1046"] != StateNoneS {
 		t.Errorf("gap states = %v", gapState)
 	}
 
@@ -94,14 +94,14 @@ func TestExpectFourStates(t *testing.T) {
 
 func TestRecordPreservesPartialAndNone(t *testing.T) {
 	m := Build(Inputs{Rules: rules(), YaraLoaded: true})
-	prev := recordExpectCovering(t, m, "T1003 partial acknowledged incomplete\nT1620 gap planned\nT1046 none sensor")
+	prev := recordExpectCovering(t, m, "T1003 partial acknowledged incomplete\nT1542 gap planned\nT1046 none sensor")
 	Compare(m, prev)
 	rec := Record(m, prev)
 	text := string(rec)
 	if !strings.Contains(text, "T1003       partial   acknowledged incomplete") {
 		t.Errorf("partial row not preserved:\n%s", text)
 	}
-	if !strings.Contains(text, "T1620       gap       planned") || !strings.Contains(text, "T1046       none      sensor") {
+	if !strings.Contains(text, "T1542       gap       planned") || !strings.Contains(text, "T1046       none      sensor") {
 		t.Errorf("gap/none rows not preserved:\n%s", text)
 	}
 	// Re-parsing the recorded file and comparing is clean.
@@ -120,7 +120,7 @@ func TestRecordPreservesPartialAndNone(t *testing.T) {
 
 func TestWriteSARIF(t *testing.T) {
 	m := Build(Inputs{Tool: "CAU EDR", Version: "test", Rules: rules(), YaraLoaded: true, HashCount: 51})
-	e := recordExpectCovering(t, m, "T1003 partial strings only\nT1620 gap planned decode\nT1046 none sensor owns it")
+	e := recordExpectCovering(t, m, "T1003 partial strings only\nT1542 gap planned decode\nT1046 none sensor owns it")
 	m2 := Build(Inputs{Tool: "CAU EDR", Version: "test", Rules: rules(), YaraLoaded: true, HashCount: 51})
 	Compare(m2, e)
 
@@ -154,7 +154,7 @@ func TestWriteSARIF(t *testing.T) {
 	cases := []struct{ id, level, kind, state string }{
 		{"coverage/T1003", "note", "informational", "partial"},
 		{"coverage/T1486", "note", "pass", "detected"},
-		{"coverage/T1620", "warning", "open", "planned"},
+		{"coverage/T1542", "warning", "open", "planned"},
 		{"coverage/T1046", "note", "informational", "none"},
 	}
 	for _, c := range cases {
@@ -173,7 +173,7 @@ func TestWriteSARIF(t *testing.T) {
 		}
 	}
 	// The planned gap's message carries its note; a detected one names its content.
-	if msg := byID["coverage/T1620"]["message"].(map[string]any)["text"].(string); !strings.Contains(msg, "roadmap") || !strings.Contains(msg, "decode") {
+	if msg := byID["coverage/T1542"]["message"].(map[string]any)["text"].(string); !strings.Contains(msg, "roadmap") || !strings.Contains(msg, "decode") {
 		t.Errorf("planned message: %q", msg)
 	}
 	if msg := byID["coverage/T1003"]["message"].(map[string]any)["text"].(string); !strings.Contains(msg, "partially covered") {

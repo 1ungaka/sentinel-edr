@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/s-b-repo/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/safefs"
 	"github.com/s-b-repo/cau/scanner/static"
 )
 
@@ -37,7 +38,7 @@ func cmdHash(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("hash", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	format := fs.String("format", "text", "output format: text or json")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if fs.NArg() == 0 {
@@ -82,10 +83,10 @@ func cmdHash(args []string, stdout, stderr io.Writer) int {
 	} else {
 		for _, rec := range recs {
 			if rec.Error != "" {
-				fmt.Fprintf(stdout, "%s\n  error  : %s\n", rec.Path, rec.Error)
+				fmt.Fprintf(stdout, "%s\n  error  : %s\n", report.TermSafe(rec.Path), report.TermSafe(rec.Error))
 				continue
 			}
-			fmt.Fprintf(stdout, "%s (%d bytes)\n", rec.Path, rec.Size)
+			fmt.Fprintf(stdout, "%s (%d bytes)\n", report.TermSafe(rec.Path), rec.Size)
 			fmt.Fprintf(stdout, "  sha256 : %s\n", rec.SHA256)
 			if rec.Imphash != "" {
 				fmt.Fprintf(stdout, "  imphash: %s\n", rec.Imphash)
@@ -125,7 +126,7 @@ func cmdAddFuzzy(args []string, stdout, stderr io.Writer) int {
 	hash := fs.String("hash", "", "digest to add (with --type)")
 	name := fs.String("name", "", "threat name (e.g. \"Example Family\")")
 	db := fs.String("db", "", "fuzzy database (default: auto-discovered "+relFuzzy+")")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *name == "" || (*file == "" && (*typ == "" || *hash == "")) {
@@ -202,7 +203,7 @@ func cmdCluster(args []string, stdout, stderr io.Writer) int {
 	minSim := fs.Float64("min-similarity", 0.6, "Jaccard floor for near clusters (0 < x <= 1)")
 	withHashes := fs.Bool("imphashes", false, "also list every file's import hash (imphash for PE, import-set hash for ELF)")
 	maxMiB := fs.Int64("max-in-memory", static.DefaultMaxSize>>20, "largest file (MiB) to read")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if fs.NArg() == 0 {
@@ -229,7 +230,7 @@ func cmdCluster(args []string, stdout, stderr io.Writer) int {
 			paths = append(paths, target)
 			continue
 		}
-		filepath.Walk(target, func(p string, fi os.FileInfo, err error) error {
+		filepath.Walk(safefs.WalkRoot(target), func(p string, fi os.FileInfo, err error) error {
 			if err == nil && fi.Mode().IsRegular() {
 				paths = append(paths, p)
 			}
@@ -284,14 +285,14 @@ func cmdCluster(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "\n[%s] %d files with import similarity >= %.2f\n", c.ID, len(c.Members), c.MinSimilarity)
 		}
 		for _, m := range c.Members {
-			fmt.Fprintf(stdout, "    %s\n", m)
+			fmt.Fprintf(stdout, "    %s\n", report.TermSafe(m))
 		}
 	}
 	if doc.Imphashes != nil {
 		fmt.Fprintln(stdout)
 		for _, p := range paths {
 			if h, ok := doc.Imphashes[p]; ok {
-				fmt.Fprintf(stdout, "%s  %s\n", h, p)
+				fmt.Fprintf(stdout, "%s  %s\n", h, report.TermSafe(p))
 			}
 		}
 	}
@@ -301,10 +302,14 @@ func cmdCluster(args []string, stdout, stderr io.Writer) int {
 // hashFileSHA256 is a small local helper so `cau hash` does not need the
 // signature database.
 func hashFileSHA256(p string) (string, error) {
-	data, err := os.ReadFile(p)
+	f, _, err := safefs.Open(p)
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

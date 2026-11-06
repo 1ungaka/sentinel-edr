@@ -20,6 +20,8 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // Parsing and safety limits.
@@ -202,7 +204,7 @@ func ScanFile(path string, opts Options) *Result {
 		return &Result{FilePath: path, Threshold: opts.threshold(), Size: int(fi.Size()),
 			Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit", fi.Size(), max)}
 	}
-	data, err := os.ReadFile(path)
+	data, err := safefs.ReadFile(path, max)
 	if err != nil {
 		return &Result{FilePath: path, Threshold: opts.threshold(), Skipped: "read: " + err.Error()}
 	}

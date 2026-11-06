@@ -487,4 +487,5 @@ const (
 	SourcePeeler     = "peeler"
 	SourceArchive    = "archive"
 	SourceCHM        = "chm"
+	SourceTradecraft = "tradecraft"
 )

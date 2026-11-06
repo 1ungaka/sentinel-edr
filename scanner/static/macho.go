@@ -289,7 +289,7 @@ func (m *MachO) parseFat(data []byte, is64 bool) {
 			off = uint64(be32(data[p+8:]))
 			size = uint64(be32(data[p+12:]))
 		}
-		if off >= uint64(len(data)) || off+size > uint64(len(data)) || size < 8 {
+		if n := uint64(len(data)); off >= n || size > n-off || size < 8 { // subtraction: off+size can wrap
 			m.warn("fat slice %d at 0x%x (+%d) lies outside the file", i, off, size)
 			continue
 		}
@@ -391,7 +391,7 @@ func (img *MachOImage) parseLoadCommands(data []byte, base, size, hdrLen uint64)
 		case lcCodeSignature:
 			if len(b) >= 16 {
 				img.Signed = true
-				img.SignatureSize = int(r.Uint32(b[12:]))
+				img.SignatureSize = max(0, int(r.Uint32(b[12:]))) // negative on a 32-bit int
 			}
 		case lcEncryptionInfo, lcEncryptionInfo64:
 			if len(b) >= 20 {
@@ -443,7 +443,8 @@ func (img *MachOImage) parseSegment(data []byte, base uint64, b []byte, is64 boo
 	// segments other than __PAGEZERO.
 	if s.FileSize > 0 && s.Name != "__PAGEZERO" {
 		off := base + s.FileOff
-		if off+s.FileSize <= uint64(len(data)) {
+		// base+FileOff and FileOff+FileSize are both file-supplied and can wrap.
+		if n := uint64(len(data)); off >= base && off <= n && s.FileSize <= n-off {
 			s.Entropy = Entropy(data[off : off+s.FileSize])
 		} else {
 			s.Truncated = true
@@ -612,7 +613,10 @@ func (m *MachO) computeOverlay(data []byte) {
 	end := uint64(0)
 	for _, s := range img.Segments {
 		if !s.Truncated {
-			if e := s.FileOff + s.FileSize; e > end {
+			// The ceiling matters even on an intact segment: an empty one at a
+			// huge offset would otherwise push the end past the file and hide a
+			// real overlay.
+			if e := s.FileOff + s.FileSize; e > end && e <= uint64(len(data)) {
 				end = e
 			}
 		}
@@ -627,7 +631,7 @@ func (m *MachO) computeOverlay(data []byte) {
 		return
 	}
 	ov := Overlay{Offset: int64(end), Size: int64(uint64(len(data)) - end)}
-	if sigBytes > 0 && ov.Size >= int64(sigBytes) {
+	if sigBytes > 0 && uint64(ov.Size) >= sigBytes {
 		ov.CertificateBytes = int64(sigBytes)
 		ov.Size -= int64(sigBytes)
 	}

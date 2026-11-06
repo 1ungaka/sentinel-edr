@@ -9,8 +9,9 @@ written in Go. These pages are the reference; the repository
 | [Installation](installation.md) | requirements, building, installing, release tarballs, where resources are found |
 | [Command-line reference](cli.md) | every command and flag (`scan`, `coverage`, `rules`, `eval`, ...), exit codes, CI recipes |
 | [MCP server](mcp.md) | `cau-mcp`: the engine over the Model Context Protocol, its tools/resources/prompts and the scan-root sandbox |
-| [Detectors](detectors.md) | hash signatures, YARA, heuristics, static structure, invisible codepoints, encoded executables, the fusion lattice |
-| [Output formats](output-formats.md) | the text report, the JSON document (schema 1.10.0), SARIF 2.1.0, OCSF Detection Findings, the `--fail-on` policy |
+| [Network plane](network.md) | the NDR sensor's classes, the blocker (nftables/iptables, expiring, reversible), and how telemetry from other hosts and sensors is joined on the peer address |
+| [Detectors](detectors.md) | hash signatures, YARA, heuristics, static structure, invisible codepoints, encoded executables, tradecraft (web/net/in-memory shells, LOLBAS/GTFOBins, trusted-SaaS C2, EDR-bypass primitives), the fusion lattice |
+| [Output formats](output-formats.md) | the text report, the JSON document (schema 1.11.0), SARIF 2.1.0, OCSF Detection Findings, the `--fail-on` policy |
 | [Detection content](detection-content.md) | signature databases, YARA rule conventions and the linter, the fuzzy-hash database, external rule sets |
 | [Detection engineering](detection-engineering.md) | ADS documents per detector, the ATT&CK coverage matrix and its gate, Pyramid of Pain levels, OCSF |
 | [ADS](ads/README.md) | one Alerting and Detection Strategy per detector |

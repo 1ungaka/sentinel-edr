@@ -6,8 +6,10 @@
 // a bundle whose detached signature does not verify against that key, or whose
 // payload digest does not match the signed manifest, or whose declared
 // min-engine-version is newer than the running engine, is rejected and nothing
-// on disk changes. A successful apply replaces the live database atomically and
-// leaves a rollback copy.
+// on disk changes. So is a bundle older than the one installed: a signature proves
+// a bundle was released, not that it is current, and a mirror can replay any
+// release it has seen. A successful apply replaces the live database atomically,
+// leaves a rollback copy, and records what it installed.
 //
 // The bundle is three files produced by the release job:
 //
@@ -32,6 +34,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // ManifestSchema is the manifest format version this updater understands.
@@ -44,6 +48,9 @@ const (
 	SignatureName = "manifest.json.sig"
 )
 
+// StateSuffix names the record of the installed bundle, kept beside the database.
+const StateSuffix = ".manifest"
+
 // Errors a caller can branch on. Every one leaves the live database untouched.
 var (
 	ErrBadSignature   = errors.New("updater: manifest signature does not verify against the pinned key")
@@ -51,6 +58,7 @@ var (
 	ErrEngineTooOld   = errors.New("updater: bundle requires a newer engine")
 	ErrBadManifest    = errors.New("updater: manifest is malformed or an unsupported schema")
 	ErrNoKey          = errors.New("updater: no pinned public key configured")
+	ErrRollback       = errors.New("updater: bundle is older than the installed database")
 )
 
 // Manifest is the signed metadata for a bundle.
@@ -89,7 +97,7 @@ func Verify(b Bundle, pubKey ed25519.PublicKey, engineVersion string) (Verified,
 	}
 	var m Manifest
 	if err := json.Unmarshal(b.Manifest, &m); err != nil {
-		return Verified{}, fmt.Errorf("%w: %v", ErrBadManifest, err)
+		return Verified{}, fmt.Errorf("%w: %w", ErrBadManifest, err)
 	}
 	if m.Schema != ManifestSchema {
 		return Verified{}, fmt.Errorf("%w: schema %d (want %d)", ErrBadManifest, m.Schema, ManifestSchema)
@@ -104,10 +112,48 @@ func Verify(b Bundle, pubKey ed25519.PublicKey, engineVersion string) (Verified,
 	return Verified{Manifest: m, Payload: b.Payload}, nil
 }
 
+// CheckRollback returns ErrRollback when m is older than the bundle recorded as
+// installed at dbPath. With no record there is nothing to compare, so the first
+// install takes what it is given. Re-installing the same bundle is fine. A bundle
+// with no date cannot replace a dated one, or dropping the field would be the way
+// around this. A record that cannot be read fails closed.
+func CheckRollback(dbPath string, m Manifest) error {
+	raw, err := os.ReadFile(dbPath + StateSuffix)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("updater: read install record: %w", err)
+	}
+	var cur Manifest
+	if err := json.Unmarshal(raw, &cur); err != nil {
+		return fmt.Errorf("updater: install record %s%s is corrupt: %w", dbPath, StateSuffix, err)
+	}
+	if strings.EqualFold(cur.SHA256, m.SHA256) {
+		return nil
+	}
+	installed, err := time.Parse(time.RFC3339, cur.Created)
+	if err != nil {
+		return nil // the installed bundle carries no date to hold a floor at
+	}
+	if created, err := time.Parse(time.RFC3339, m.Created); err != nil || created.Before(installed) {
+		return fmt.Errorf("%w: installed db_version %s (%s), bundle db_version %s (%s)",
+			ErrRollback, cur.DBVersion, cur.Created, m.DBVersion, m.Created)
+	}
+	return nil
+}
+
 // Apply writes the verified payload to dbPath atomically, after copying the
-// current database (if any) to dbPath+".bak" as a rollback. It is only ever
-// called with the result of a successful Verify.
-func Apply(dbPath string, v Verified) (rollback string, err error) {
+// current database (if any) to dbPath+".bak" as a rollback, and records the
+// manifest beside it. It refuses a rollback unless allowDowngrade is set, which
+// is for an operator backing out a bad release. It is only ever called with the
+// result of a successful Verify.
+func Apply(dbPath string, v Verified, allowDowngrade bool) (rollback string, err error) {
+	if !allowDowngrade {
+		if err := CheckRollback(dbPath, v.Manifest); err != nil {
+			return "", err
+		}
+	}
 	if existing, rerr := os.ReadFile(dbPath); rerr == nil {
 		rollback = dbPath + ".bak"
 		if werr := writeFileAtomic(rollback, existing, 0o644); werr != nil {
@@ -119,20 +165,35 @@ func Apply(dbPath string, v Verified) (rollback string, err error) {
 	if err := writeFileAtomic(dbPath, v.Payload, 0o644); err != nil {
 		return "", fmt.Errorf("updater: install payload: %w", err)
 	}
+	state, err := json.MarshalIndent(v.Manifest, "", "  ")
+	if err != nil {
+		return rollback, fmt.Errorf("updater: encode install record: %w", err)
+	}
+	if err := writeFileAtomic(dbPath+StateSuffix, state, 0o644); err != nil {
+		return rollback, fmt.Errorf("updater: installed, but could not record it, so the rollback check is out of date: %w", err)
+	}
 	return rollback, nil
 }
+
+// Bundle size limits. --from is the air-gap path, so these files can be whatever
+// was on the media, and they are read before anything about them is verified.
+// The payload limit matches what `cau update --url` accepts.
+const (
+	maxPayloadBytes  = 256 << 20
+	maxManifestBytes = 1 << 20
+)
 
 // LoadBundleDir reads the three bundle files from a directory.
 func LoadBundleDir(dir string) (Bundle, error) {
 	var b Bundle
 	var err error
-	if b.Payload, err = os.ReadFile(filepath.Join(dir, PayloadName)); err != nil {
+	if b.Payload, err = safefs.ReadFile(filepath.Join(dir, PayloadName), maxPayloadBytes); err != nil {
 		return Bundle{}, fmt.Errorf("updater: read payload: %w", err)
 	}
-	if b.Manifest, err = os.ReadFile(filepath.Join(dir, ManifestName)); err != nil {
+	if b.Manifest, err = safefs.ReadFile(filepath.Join(dir, ManifestName), maxManifestBytes); err != nil {
 		return Bundle{}, fmt.Errorf("updater: read manifest: %w", err)
 	}
-	if b.Signature, err = os.ReadFile(filepath.Join(dir, SignatureName)); err != nil {
+	if b.Signature, err = safefs.ReadFile(filepath.Join(dir, SignatureName), maxManifestBytes); err != nil {
 		return Bundle{}, fmt.Errorf("updater: read signature: %w", err)
 	}
 	b.Signature = decodeSig(b.Signature)

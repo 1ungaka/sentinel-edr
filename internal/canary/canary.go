@@ -29,6 +29,9 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/s-b-repo/cau/internal/parallel"
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // manifestVersion guards the on-disk format against silent misparsing.
@@ -124,16 +127,13 @@ func Plant(dir string, count int) (*Manifest, error) {
 		if err != nil {
 			return nil, fmt.Errorf("canary: resolve path: %w", err)
 		}
-		if _, err := os.Lstat(path); err == nil {
-			return nil, fmt.Errorf("canary: %s already exists; refusing to overwrite", path)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("canary: stat %s: %w", path, err)
-		}
 		content, err := filler(name)
 		if err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(path, content, 0o600); err != nil {
+		if err := writeNew(path, content); errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("canary: %s already exists; refusing to overwrite", path)
+		} else if err != nil {
 			return nil, fmt.Errorf("canary: write %s: %w", path, err)
 		}
 		info, err := os.Stat(path)
@@ -152,14 +152,27 @@ func Plant(dir string, count int) (*Manifest, error) {
 	return m, nil
 }
 
+// writeNew creates path, failing if anything is there. O_EXCL makes that atomic
+// and refuses a symlink too: decoys go where an attacker can reach, and a link
+// planted first would have this write through it.
+func writeNew(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 // Check compares each canary in the manifest against the file on disk now and
 // returns one Result per canary, in manifest order. It reads file content to
 // judge modification, so it is a point-in-time check, not a live watch.
 func Check(m *Manifest) []Result {
-	out := make([]Result, 0, len(m.Canaries))
-	for _, c := range m.Canaries {
-		out = append(out, checkOne(c))
-	}
+	out := make([]Result, len(m.Canaries))
+	parallel.For(len(m.Canaries), 0, func(i int) { out[i] = checkOne(m.Canaries[i]) })
 	return out
 }
 
@@ -174,19 +187,20 @@ func Tripped(results []Result) []Result {
 	return out
 }
 
+// maxDecoyRead bounds the read of a decoy: an attacker may have replaced it with
+// anything, and anything this big is not the decoy.
+const maxDecoyRead = 64 << 20
+
 func checkOne(c Canary) Result {
-	info, err := os.Lstat(c.Path)
-	if errors.Is(err, os.ErrNotExist) {
+	data, info, err := safefs.ReadFileNoFollow(c.Path, maxDecoyRead)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		return Result{Canary: c, Status: StatusDeleted, Detail: "file no longer exists"}
-	}
-	if err != nil {
-		return Result{Canary: c, Status: StatusError, Detail: err.Error()}
-	}
-	if !info.Mode().IsRegular() {
+	case errors.Is(err, safefs.ErrNotRegular):
 		return Result{Canary: c, Status: StatusModified, Detail: "replaced by a non-regular file"}
-	}
-	data, err := os.ReadFile(c.Path)
-	if err != nil {
+	case errors.Is(err, safefs.ErrTooLarge):
+		return Result{Canary: c, Status: StatusModified, Detail: fmt.Sprintf("content changed (%d bytes, now over %d)", c.Size, maxDecoyRead)}
+	case err != nil:
 		return Result{Canary: c, Status: StatusError, Detail: err.Error()}
 	}
 	sum := sha256.Sum256(data)

@@ -1,5 +1,11 @@
 # Detectors
 
+This page is the **file** plane: the detectors that read a file's bytes. The
+runtime planes have their own pages — the process table in
+[cli.md](cli.md#cau-ps), persistence in [cli.md](cli.md#cau-persist), and the
+network plane, its blocker and the cross-host intake in
+[network.md](network.md).
+
 Every file is read once. The same buffer is hashed, scanned by libyara, and
 handed to the heuristic, static and stego passes; the fusion lattice then
 joins their outcomes. Each detector answers a different question:
@@ -19,6 +25,7 @@ joins their outcomes. Each detector answers a different question:
 | [Linux software package](#linux-software-package) | does an install-time script run root-level tradecraft? | SUSPICIOUS |
 | [Archive](#archive) | is this container a bomb, a Zip-Slip, or a lure around a payload? | SUSPICIOUS |
 | [CHM help file](#chm-help-file) | does this help file smuggle an executable, shortcut or script? | SUSPICIOUS |
+| [Tradecraft](#tradecraft) | does this file *do* something behavioural — a web/net/in-memory shell, a GTFOBins or LOLBAS primitive, a trusted-SaaS C2 channel, an EDR-bypass pairing? | SUSPICIOUS |
 | [Fusion](#fusion) | do several of the above agree, even below their own thresholds? | never lowers; raises CLEAN to SUSPICIOUS |
 
 SUSPICIOUS is evidence with a score and an explanation, never a confirmed
@@ -530,6 +537,58 @@ shape, which is the high-signal one, and says plainly what it cannot yet see.
 
 It is SUSPICIOUS-tier, never MALICIOUS. `--no-chm` disables it and
 `--chm-threshold` tunes the score.
+
+## Tradecraft
+
+Asks what a file *does*. Every other pass is keyed to a known identity or to a
+format's anatomy, and both are silent on a plain-text web shell, or on shellcode
+pasted into a script as a byte array: such a file names no family and has no
+structure to be odd about. On the lab corpus that gap was 0 % recall on web
+shells, raw shellcode and tiny Metasploit ELFs (see
+[Evaluation](evaluation.md#the-lab-corpus)).
+
+**Script vectors** read text, in any language they recognise by content, and name
+behaviour rather than a project:
+
+| Family | Classes | Fires on |
+|---|---|---|
+| Web shells (T1505.003) | `tradecraft.webshell.*` | a request parameter reaching an exec sink in PHP (directly, or followed through assignments by a small taint walk), ASP, ASP.NET, JSP, ColdFusion and CGI; PHP evaluating a decoded string |
+| Network shells (T1059) | `tradecraft.netshell.*` | a socket wired to an interpreter in shell, PHP, Python, Perl, Java, Ruby, Lua and PowerShell; relay tools (`nc`/`ncat`/`socat` with `EXEC:` or `SYSTEM:`, `openssl s_client`, BusyBox `telnetd`, `awk`'s `/inet`); a Python stager executing what it reads from a socket |
+| Unix breakouts (T1059.004, T1548.001, T1548.003) | `tradecraft.gtfobins.*` | [GTFOBins](https://gtfobins.github.io) escapes: a utility driven to spawn an interactive shell (editor/pager bang-escape, `pty.spawn`, `nmap --interactive`, `awk 'BEGIN{system}'`, `gdb -ex '!sh'`); the same under `sudo` (privilege escalation); a setuid breakout (`sh -p`, or the setuid bit set on a shell). The escape syntax is the signal, so a plain `find -exec rm` or `sudo sh -c` stays quiet |
+| In-memory execution (T1620) | `tradecraft.memory.*` | scripts allocating memory through native APIs and starting a thread in it, loading a .NET assembly from decoded bytes, or reaching native APIs by reflection |
+| Living off the land (T1218, T1105, T1003, T1490) | `tradecraft.lolbin.*` | a [LOLBAS](https://lolbas-project.github.io) system binary fetching a remote payload, proxying execution through a script handler, dumping credential stores or destroying recovery. A binary's name proves nothing, so `regsvr32 /s foo.dll` stays quiet while `/i:` with a remote scriptlet does not. The set spans `certutil`/`bitsadmin`/`certreq`/`GfxDownloadWrapper`/`ms-appinstaller` download, `rundll32`/`regsvr32`/`mshta`/`Microsoft.Workflow.Compiler`/`AgentExecutor`/`Register-CimProvider` proxy execution, and the credential/recovery tools |
+| Command channels (T1102) | `tradecraft.script.third-party-channel` | a script names a webhook (Discord/Telegram/Slack/Teams/Google Chat/DingTalk/Feishu/WeChat/Make/Zapier/IFTTT/Zulip/Webex/PagerDuty/Flock/Pushover/LINE Notify/ntfy/Healthchecks/n8n/ServerChan/PushPlus/…), a reverse tunnel (ngrok family/Cloudflare tunnels/localhost.run/serveo/localtunnel/dev tunnels/Tailscale/qsocket/ShellHub/tmate/pinggy/bore/packetriot/loophole/expose/sharedwithexpose/pitunnel/staqlab/telebit/…), a paste/file drop (pastebin raw/0x0.st/file.io/transfer.sh/catbox/anonfiles-class/…), an out-of-band interaction host (interact.sh/oast/burpcollaborator/dnslog/requestbin/…), a trusted-SaaS C2 cover from [LOLC2](https://lolc2.github.io) and [LOLFSaaS](https://lolfsaas.github.io) (Microsoft Graph, Google Drive/Sheets/Slides/Calendar/Translate, Dropbox, OneDrive, Firebase, Azure Functions, Cloudflare Workers/Pages, AWS Lambda, S3, Telegram bots, Discord CDN, Slack API, GitHub/GitLab/Bitbucket Contents/Gists, Reddit, Twitter/X, Mastodon, Spotify, SoundCloud, chess.com, lichess, OpenAI/Anthropic, blockchain RPC and explorers, …). Corroborating only |
+| SaaS C2 API abuse (T1102) | `tradecraft.c2service.saas-api-call` | a specific abusable path on a trusted host — `graph.microsoft.com/v1.0/me/sendMail`, firebaseio realtime-DB writes, Dropbox content upload, Google Apps Script `/macros/s/*/exec`, Cloudflare `workers.dev` / `pages.dev`, AWS Lambda invoke, SharePoint drive item write, Teams channel message POST. Higher signal than naming the host, because no browser hits these programmatically |
+| Detection bypasses (T1620, T1036.005, T1574.006, T1556.003, T1543.002, T1070.004, T1102.002, T1095, T1071.004, T1001.003, T1090.004) | `tradecraft.bypass.*` | the evasion primitives catalogued in [ArcticFox's bypass doc](https://github.com/s-b-repo/arcticfox-c3/blob/main/docs/Detection-Bypasses.md): `memfd_create` paired with `execveat`/`fexecve`/`/proc/self/fd` exec (anonymous in-memory binary), `prctl(PR_SET_NAME)` near a socket/exec (kernel-level process-name camouflage), writing `/etc/ld.so.preload` or resolving through `dlsym(RTLD_NEXT)` (shared-library shim), adding `pam_exec.so` to a PAM stack or replacing `pam_unix.so` (authentication-stack backdoor), `systemctl edit --full` or a `.service.d/override.conf` drop-in on a real unit (systemd unit hijack), unlinking `/proc/self/exe` (self-delete), fetching a GitHub README from the Contents / raw API with cache-busting params (dead-drop channel), a raw `IPPROTO_ICMP` socket paired with payload encode/decode (ICMP C2), `dns.resolver.resolve(..., 'TXT')` + `base64_decode` (DNS TXT C2), an open-redirect URL carrying zero-width codepoints (redirect heartbeat), a TLS `ServerName` that disagrees with the HTTP `Host` (domain fronting) |
+| Script tradecraft | `tradecraft.script.*` | AMSI tampering, download-and-execute, decode-and-execute, DCOM and `xp_cmdshell` execution, Group Policy password hunting, keyboard capture, token theft, disabling defences and the weaker signals below |
+
+A class scoring 8 or more is a verdict alone: the behaviour has no ordinary use.
+Below that a class is something admin scripts also do, and two must agree:
+credential-store access, token theft, remote execution, defence evasion and an
+unprivileged shell breakout score 6, reflection, autostart, capture and raw
+listening sockets score 4, timestomping, hidden windows, run-time command
+building and naming a third-party command channel score 3. A `sudo` or setuid
+breakout crosses the privilege boundary and so convicts alone.
+
+**Payload bytes** look for what position-independent code has to do to run at all,
+not for one tool's stub:
+
+| Class | Evidence |
+|---|---|
+| `shellcode.peb-walk-api-hash` | the PEB -> Ldr -> module-list walk within 512 bytes of a rotate-and-add over a name: finding APIs with no import table |
+| `shellcode.api-hash-constants` | two or more immediates equal to the ROR13 hash of a network or process API. The table is computed from the API names at start-up, so it is a statement about the hashing convention rather than a list of opaque numbers |
+| `shellcode.fpu-getpc-decoder` | `fnstenv` GetPC, a pop, and an in-place xor |
+| `shellcode.jmp-call-pop-decoder` | a jump to a call that lands back on a pop, with an xor in the body. The branch targets are followed, so reordered registers still match and a call landing elsewhere does not |
+| `shellcode.linux-socket-syscalls`, `linux-execve-shell` | hand-loaded syscall numbers in a blob under 64 KiB; a large static binary legitimately contains syscall instructions |
+
+**Carriers** connect the two. `0x` lists, VBA `&H` and decimal arrays, `\x` runs
+split across string literals, and base64 (through gzip, zlib and UTF-16) are
+decoded and analysed again, up to four layers on a shared 16 MiB budget. A class
+counts once however many layers show it.
+
+Nothing decoded is ever executed. It is SUSPICIOUS-tier, never MALICIOUS, so a
+hit alone does not trigger `--quarantine` at its default level. `--no-tradecraft`
+disables it and `--tradecraft-threshold` tunes the score.
 
 ## Fusion
 

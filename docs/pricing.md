@@ -24,9 +24,10 @@ alone.
 
 | Included in the free engine (MIT) | |
 |---|---|
-| Detection | all fourteen detectors plus the fusion lattice, shipped as content with measured false-positive rates |
+| Detection | all sixteen detectors plus the fusion lattice, shipped as content with measured false-positive rates |
 | Prevention | the full on-host response set: quarantine vault, restore, block, kill, canary tamper checks |
-| Output | text, JSON (versioned schema), SARIF 2.1.0, OCSF 1.3.0, CI exit codes |
+| Output | text (control-char / bidi escaped), JSON schema 1.11.0, SARIF 2.1.0, OCSF 1.3.0 Detection Findings, CI exit codes |
+| SIEM forwarders | the agent speaks SIEMs directly, so SIEM delivery is free. `cau scan --wazuh-url <manager>` posts the scan's OCSF findings to the Wazuh Manager REST API (`/security/user/authenticate` + `/events`) with JWT auth and a configurable CA bundle. syslog, Splunk HEC, Elastic/OpenSearch `_bulk` and OCSF-Lake sinks follow the same rule and ship free when added. The resident agent forwards too, not just one-off scans: `cau defend --wazuh-url <manager>` posts every correlated incident as it is raised, asynchronously and with a bounded local queue, so continuous delivery to your own SIEM needs no control plane |
 | Tooling | `cau-mcp` (the Model Context Protocol server), the evaluation harness, the rule linter, the coverage matrix |
 | Updates | the signed update channel, including the air-gapped bundle path — verified fail-closed before install |
 
@@ -36,13 +37,38 @@ watermarks in report content.
 ## What you pay for
 
 `cau-console` is a web console that runs a fleet of the free agents from one
-pane: inventory and health across sensor agents, scan nodes and MCP agents;
-central policy distribution as signed, audit-logged policy-as-code;
-cross-host incident timelines; the detection-content lifecycle with
-test-before-promote; governance (RBAC/SSO, audit trail); and at the Scale
-tier the Threat Graph, fleet-derived prevalence and evasion-distance
-telemetry. License enforcement lives in the console server alone; if a
-license check ever appears in the agent or engine, that is a bug.
+pane. The paid-feature shape is **final**; only the monetary values on this
+page are the DRAFT noted at the top.
+
+| Paid surface (`cau-console`, proprietary) | What it does (and why it cannot live on a single host) |
+|---|---|
+| Fleet inventory and health | one roster across sensor agents, scan nodes and registered MCP/AI agents, with heartbeat, version and content-manifest drift — inherently cross-host |
+| Central policy distribution | signed, audit-logged policy-as-code (`cau scan` flag sets, YARA rule packs, Wazuh / syslog / Splunk sink endpoints, quarantine rules) fanned out to agents, with a test-before-promote lifecycle and a diffable rollback timeline — the artefact is the fleet, not the host |
+| Cross-host incident timelines | one incident across agents that each saw a piece of the attack — the correlator is a server, not a host |
+| Multi-tenancy, RBAC, SSO, audit | tenants, roles, identity providers and a tamper-evident audit log — cross-identity state the agent cannot hold alone |
+| Content lifecycle | review / sign / promote / revoke YARA rules, hash lists, intel feeds and bypass catalogues — one authoritative source the fleet reads |
+| Threat Graph (Scale tier) | fleet-derived prevalence, evasion-distance telemetry and lateral-movement timelines — statistics over the fleet, not over one host |
+| Service levels | contractual response / uptime / privacy posture — contractual, not technical |
+
+License enforcement lives in the console server alone; if a license check
+ever appears in the agent or engine, that is a bug.
+
+**What is explicitly NOT paid**, by the same rule (restated here because
+these are the places the paid/free line gets fuzzy in practice):
+
+- Every detector and its content. Hash, YARA, heuristics, static structure,
+  stego, encchain, peel, lnk, ole, pdf, iso, linuxpkg, archive, chm,
+  tradecraft (LOLBAS / GTFOBins / lolol.farm / ArcticFox-bypass),
+  fusion — all free.
+- Every on-host response. Quarantine, restore, block, kill, canary
+  checks — all free.
+- Every SIEM sink the agent speaks to directly. The agent-to-Wazuh forward
+  (`cau scan --wazuh-url …`) is shipped and free. syslog, Splunk HEC,
+  Elastic / OpenSearch `_bulk`, and the OCSF Lake sink follow the same rule.
+- `cau-mcp` and the Model Context Protocol tools.
+- The evaluation harness, coverage matrix, rule linter and content-update
+  channel (including the air-gapped bundle path).
+- Running the agent in a fleet of one by hand, across any number of hosts.
 
 The console is licensed **per managed agent** — one enrolled sensor agent,
 scan node or registered MCP/AI analysis agent. Autonomous detection agents

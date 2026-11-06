@@ -110,6 +110,22 @@ var systemLoaderDirs = []string{"/lib", "/usr/lib", "/libexec", "/usr/libexec", 
 // insecureRPathRoots are directories any local user can write to.
 var insecureRPathRoots = []string{"/tmp", "/var/tmp", "/dev/shm", "/home", "/root", "/mnt", "/media", "/run/user", "/proc"}
 
+// tinyLoaderMax is the most file-backed bytes an ELF can load and still be too
+// small to have come from a linker and a libc. No benign ELF in the lab samples
+// (docs/evaluation.md) is below it without a section table or an interpreter.
+const tinyLoaderMax = 4096
+
+// loadedBytes is the file-backed size of the loadable segments.
+func loadedBytes(e *ELF) uint64 {
+	var n uint64
+	for _, s := range e.Segments {
+		if s.Load() {
+			n += s.FileSize
+		}
+	}
+	return n
+}
+
 // elfAnomalies derives the structural findings from a parsed ELF.
 func elfAnomalies(e *ELF) []Anomaly {
 	var out []Anomaly
@@ -186,6 +202,9 @@ func elfAnomalies(e *ELF) []Anomaly {
 	}
 	if image && e.NoSectionHeaders {
 		add("section.headers-missing", CatSections, 2, techPacking, "no section header table: stripped below what any linker emits (sstrip, packer or hand-built loader)")
+		if n := loadedBytes(e); n <= tinyLoaderMax && e.Interp == "" {
+			add("elf.tiny-loader", CatSections, 3, techPacking, "%d loaded bytes with no sections or program interpreter: a hand-built stub, not linker output", n)
+		}
 	}
 
 	// ── Entry point ──

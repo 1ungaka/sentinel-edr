@@ -18,8 +18,8 @@ _cau() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    top="scan hash cluster add-hash add-fuzzy eval heldout rules coverage
-quarantine canary peel firmware ps installed feed intake update selftest
+    top="scan hash cluster add-hash add-fuzzy eval heldout rules coverage honesty
+quarantine canary peel firmware boot-scan hwid ps net persist defend installed feed intake update selftest
 verify-self bundle completion version help"
 
     # ── flags ────────────────────────────────────────────────────────────────
@@ -37,9 +37,10 @@ verify-self bundle completion version help"
 -follow-symlinks -no-fail-on-scan-error -heuristic-threshold
 -static-threshold -stego-threshold -encchain-threshold -lnk-threshold
 -ole-threshold -pdf-threshold -iso-threshold -pkg-threshold -peel-threshold
--archive-threshold -chm-threshold -no-yara -no-heuristics -no-static
+-archive-threshold -chm-threshold -tradecraft-threshold -no-yara -no-heuristics -no-static
 -no-fuzzy -no-stego -no-fusion -no-encchain -no-lnk -no-ole -no-pdf -no-iso
--no-pkg -no-peel -no-archive -no-chm"
+-no-pkg -no-peel -no-archive -no-chm -no-tradecraft
+-sink-url -sink-format -sink-index -sink-auth-env -sink-ca -sink-insecure -sink-timeout"
                         ;;
                     hash|cluster)
                         flags="-file -db -format -output -pretty -max-in-memory
@@ -70,20 +71,38 @@ verify-self bundle completion version help"
                         flags="-feed -from -url -replace"
                         ;;
                     peel)
-                        flags="-file -format -max-depth -max-nodes
+                        flags="-file -format -jobs -stream -max-depth -max-nodes
 -max-children -max-output -timeout"
                         ;;
                     firmware)
-                        flags="-file -format -threshold -implants"
+                        flags="-file -format -threshold -implants -rules -no-yara"
+                        ;;
+                    honesty)
+                        flags="-format -output -eval -expect -db -rules -fuzzy-db -manifest -pubkey -no-timestamp -strict"
+                        ;;
+                    hwid)
+                        flags="-sysfs -format -redact -record -check -force"
+                        ;;
+                    boot-scan)
+                        flags="-disk -esp -efivars -sysfs -offline -dbx-reference -format -threshold"
                         ;;
                     ps)
-                        flags="-format -threshold -proc-root -feed"
+                        flags="-format -threshold -proc-root -feed -respond -respond-score -interval -block-exe -kernel-bin -kernel-events"
+                        ;;
+                    net)
+                        flags="-format -threshold -feed -proc-root -etc-root -interval -respond -block-ttl -sever -dry-run -backend -ledger -reason"
+                        ;;
+                    persist)
+                        flags="-root -format -threshold -all"
+                        ;;
+                    defend)
+                        flags="-once -interval -watch -no-watch -respond -quarantine -quarantine-store -block-exe -kernel-bin -kernel-events -canary-manifest -package-interval -selftest-interval -selftest-manifest -selftest-pubkey -feed-reload -rules -db -fuzzy-db -feed -format -no-process -no-persistence -no-network -no-selftest -netblock -block-ttl -sever -netblock-dry-run -ingest -ingest-max-age -etc-root -wazuh-url -wazuh-user -wazuh-password-env -wazuh-ca -wazuh-insecure -wazuh-timeout -forward-queue"
                         ;;
                     installed)
                         flags="-format -threshold -feed -dpkg-info -pacman-local"
                         ;;
                     intake)
-                        flags="-input -url -format -db -output -dry-run"
+                        flags="-input -url -taxii -added-after -taxii-state -auth-env -allow-http -provenance -format -db -output -dry-run"
                         ;;
                     selftest)
                         flags="-db -rules -fuzzy-db -manifest -record -sign-key

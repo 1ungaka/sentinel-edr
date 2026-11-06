@@ -48,6 +48,7 @@ var classCatalog = []Class{
 	{"segment.virtual-raw-mismatch", CatSections, 2, techPacking, fmtELF, "executable segment far larger in memory than on disk (unpack target)"},
 	{"section.exec-unusual-name", CatSections, 1, "", fmtBoth, "executable section with a non-compiler name"},
 	{"section.headers-missing", CatSections, 2, techPacking, fmtELF, "no section header table: sstrip, a packer or a hand-built loader"},
+	{"elf.tiny-loader", CatSections, 3, techPacking, fmtELF, "an ELF too small to be linker output, with no sections and no interpreter: a hand-built stub"},
 
 	// Entry point.
 	{"entrypoint.zero", CatEntry, 2, "", fmtBoth, "entry point is 0 in an executable"},

@@ -389,3 +389,20 @@ func isCIDR(s string) bool {
 func isDomain(s string) bool {
 	return reDomain.MatchString(s) && !strings.ContainsAny(s, " /\\")
 }
+
+// MatchHost matches one network indicator: an IP against the listed addresses
+// and CIDRs, or a hostname against the listed domains and their subdomains.
+//
+// It is the membership test the network sensor needs, where MatchText does not
+// apply: the kernel hands over an address, not a line of script to search.
+func (f *Feed) MatchHost(host string) (Hit, bool) {
+	if f == nil {
+		return Hit{}, false
+	}
+	host = strings.TrimSpace(host)
+	lbl, kind, ok := f.matchHost(host)
+	if !ok {
+		return Hit{}, false
+	}
+	return Hit{Kind: kind, Value: host, Label: lbl}, true
+}

@@ -15,6 +15,8 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // Parsing and safety limits.
@@ -157,7 +159,7 @@ func ScanFile(path string, opts Options) *Result {
 	if fi.Size() > max {
 		return &Result{FilePath: path, Threshold: opts.threshold(), Size: int(fi.Size()), Skipped: "file over the in-memory size limit"}
 	}
-	data, err := os.ReadFile(path)
+	data, err := safefs.ReadFile(path, max)
 	if err != nil {
 		return &Result{FilePath: path, Threshold: opts.threshold(), Skipped: "read: " + err.Error()}
 	}
@@ -238,7 +240,7 @@ func enumerate(data []byte) (names []string, truncated bool) {
 	// ITSF header: header section 1 (the directory) at 0x48 (offset) / 0x50 (len).
 	dirOff := le64(data, 0x48)
 	dirLen := le64(data, 0x50)
-	if dirOff == 0 || dirOff+0x54 > uint64(len(data)) {
+	if dirOff == 0 || dirOff > uint64(len(data))-0x54 { // len(data) >= 0x60, checked above
 		return nil, true
 	}
 	dir := data[dirOff:]

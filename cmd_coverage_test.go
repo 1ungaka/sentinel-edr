@@ -33,9 +33,10 @@ func TestCLICoverageAndRules(t *testing.T) {
 		{"rules no sub", []string{"rules"}, report.ExitUsage, ""},
 		{"rules help", []string{"rules", "help"}, report.ExitOK, ""},
 		{"rules lint", []string{"rules", "lint", "--rules", "rules"}, report.ExitOK, "errors"},
-		{"rules lint strict", []string{"rules", "lint", "--rules", "rules", "--strict"}, report.ExitThreat, "warning"},
+		{"rules lint strict", []string{"rules", "lint", "--rules", "rules", "--strict"}, report.ExitOK, "warnings  0"},
 		{"rules lint json", []string{"rules", "lint", "--rules", "rules", "--format", "json"}, report.ExitOK, `"profile": "cau"`},
-		{"rules lint generic", []string{"rules", "lint", "--rules", "rules", "--profile", "generic", "--strict"}, report.ExitThreat, "string-short"},
+		{"rules lint strict fails on a warning", []string{"rules", "lint", "--rules", weakRule(t), "--strict"}, report.ExitThreat, "string-short"},
+		{"rules lint generic", []string{"rules", "lint", "--rules", weakRule(t), "--profile", "generic", "--strict"}, report.ExitThreat, "string-short"},
 		{"rules lint bad profile", []string{"rules", "lint", "--rules", "rules", "--profile", "x"}, report.ExitRunFailed, ""},
 		{"rules lint bad format", []string{"rules", "lint", "--rules", "rules", "--format", "x"}, report.ExitUsage, ""},
 		{"rules lint missing", []string{"rules", "lint", "--rules", "/no/rules"}, report.ExitRunFailed, ""},
@@ -54,6 +55,33 @@ func TestCLICoverageAndRules(t *testing.T) {
 			}
 		})
 	}
+}
+
+// weakRule writes a rule the linter warns about: the bundled set has none, and
+// --strict needs a warning to act on.
+func weakRule(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "weak.yar")
+	body := `rule weak
+{
+    meta:
+        description = "fixture"
+        author = "test"
+        family = "fixture"
+        threat_level = 1
+        mitre_attack = "T1003"
+
+    strings:
+        $a = "ab" ascii wide
+
+    condition:
+        $a
+}
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestCLICoverageGateAndRecord(t *testing.T) {

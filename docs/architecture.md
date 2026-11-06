@@ -13,7 +13,7 @@
                                                  ▼
                               fusion lattice: ratios, roles, techniques, tier
                                                  ▼
-                      internal/report: text | JSON 1.3.0 | SARIF 2.1.0 + exit policy
+                      internal/report: text | JSON 1.11.0 | SARIF 2.1.0 | OCSF 1.3.0 + exit policy
                       internal/eval:   corpus runner, metrics, diff, regression gate
 ```
 
@@ -24,6 +24,37 @@ static and stego passes. Files over the in-memory limit are streamed: hashing
 streams, YARA memory-maps, and the other passes record that they were
 skipped and why, so a multi-gigabyte sample never makes the scanner allocate
 its size and never looks clean by accident.
+
+## The runtime planes and the correlator
+
+The pipeline above is the file plane. Three more planes read the host as it
+runs, and none of them reads a file's contents to do it:
+
+```
+  /proc/<pid>/{exe,comm,maps,fd,environ}  ──► internal/procscan ──┐
+  /proc/<pid>/net/{tcp,udp}, /proc/net/{arp,route},               │
+  /etc/{resolv.conf,hosts}                ──► internal/netscan  ──┤
+  cron, systemd, PAM, keys, SUID, preload ──► internal/persist  ──┼─► internal/correlate ─► incidents
+  cau-kernel exec-guard event log         ──► kernel signals    ──┤      (joins on host-scoped
+  planted decoys                          ──► internal/canary   ──┤       files and PIDs, and on
+  another host's or sensor's telemetry    ──► internal/ingest   ──┘       peer addresses across hosts)
+                                                                            │
+                                                  correlate.PlanFor ────────┤
+                                                                            ▼
+                      procscan.Respond (stop/kill) · quarantine · cau-kernel block · netblock (drop peers)
+```
+
+`internal/correlate` is a pure function of its input, which is what makes the
+response policy reviewable: `Confirmed` decides what a machine may act on and
+`PlanFor` decides what that action is, both testable without a host or an
+attack. Two properties the planes depend on:
+
+- **Link keys are host-scoped.** Two machines each with a `/tmp/payload` and a
+  PID 900 are two artefacts. The peer address is the one key that joins across
+  hosts on purpose.
+- **Only local signals direct a response.** A signal carrying a host name
+  corroborates an incident and is never acted on, because its PID and its paths
+  belong to another machine.
 
 ## Verdict tiers
 
@@ -77,6 +108,15 @@ scanner/lnk/, ole/, pdf/, iso/   document & container detectors (LNK, OLE/VBA, P
 scanner/linuxpkg/      Linux software-package install-script detector (.deb/.rpm/Arch/Flatpak/AppImage/Docker/Snap)
 scanner/fusion/        the fusion lattice (weighted sum + attack-path chaining)
 internal/procscan/     read-only live process-table scan (cau ps)
+internal/netscan/      read-only network-plane scan: socket tables per network
+                       namespace attributed to processes and executables,
+                       resolver and neighbour state, beaconing over samples (cau net)
+internal/netblock/     reversible, expiring kernel drop rules in cau's own
+                       nftables table or iptables chains (cau net block)
+internal/correlate/    joins every layer's signals into incidents and decides
+                       what a confirmed one permits (the response policy)
+internal/ingest/       telemetry from other hosts and sensors, joined on the
+                       peer address (cau defend --ingest)
 internal/peeler/       obfuscation-chain peeler (cau peel)
 internal/harden/       in-process self-protection (memory, privileges, process concealment)
 internal/report/       text / JSON / SARIF / OCSF reporters and the exit-code policy

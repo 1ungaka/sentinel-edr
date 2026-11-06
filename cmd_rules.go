@@ -68,7 +68,7 @@ func rulesLint(args []string, stdout, stderr io.Writer) int {
 	format := fs.String("format", "text", "output format: text or json")
 	output := fs.String("output", "", "write the report to this file instead of stdout")
 	strict := fs.Bool("strict", false, "exit 1 on warnings too")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *format != "text" && *format != "json" {
@@ -125,7 +125,7 @@ func rulesList(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	rules := fs.String("rules", "", "YARA rule file or directory (default: auto-discovered)")
 	format := fs.String("format", "text", "output format: text or json")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *format != "text" && *format != "json" {

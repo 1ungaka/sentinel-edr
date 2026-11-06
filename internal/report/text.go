@@ -19,6 +19,7 @@ import (
 	"github.com/s-b-repo/cau/scanner/pdf"
 	"github.com/s-b-repo/cau/scanner/static"
 	"github.com/s-b-repo/cau/scanner/stego"
+	"github.com/s-b-repo/cau/scanner/tradecraft"
 )
 
 // Reporter is the common shape of every output format.
@@ -26,11 +27,12 @@ type Reporter interface {
 	Write(w io.Writer, in Input) error
 }
 
-// Formats lists the names NewReporter accepts.
-var Formats = []string{"text", "json", "sarif", "ocsf"}
+// Formats lists the names NewReporter accepts: the four report formats, then
+// the SIEM sink profiles (see siem.go).
+var Formats = append([]string{"text", "json", "sarif", "ocsf"}, SinkFormats()...)
 
 // NewReporter selects a reporter by format name ("text", "json", "sarif",
-// "ocsf").
+// "ocsf", or a SIEM sink profile from SinkFormats).
 func NewReporter(format string, opts ...Option) (Reporter, error) {
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "", "text":
@@ -42,6 +44,9 @@ func NewReporter(format string, opts ...Option) (Reporter, error) {
 	case "ocsf":
 		return NewOCSFReporter(opts...), nil
 	default:
+		if _, ok := sinkProfileFor(strings.ToLower(strings.TrimSpace(format))); ok {
+			return NewSinkReporter(format, opts...)
+		}
 		return nil, fmt.Errorf("unknown output format %q (want one of %s)", format, strings.Join(Formats, ", "))
 	}
 }
@@ -63,7 +68,7 @@ func (r *TextReporter) Write(w io.Writer, in Input) error {
 	c := r.cfg
 
 	if in.RunError != nil {
-		fmt.Fprintf(bw, " [ERR] %s\n\n", c.errorString(in.RunError))
+		fmt.Fprintf(bw, " [ERR] %s\n\n", c.textError(in.RunError))
 	}
 
 	byPath := in.HeuristicsByPath()
@@ -114,6 +119,9 @@ func (r *TextReporter) Write(w io.Writer, in Input) error {
 		if hasResult && res.CHM != nil {
 			c.writeCHM(bw, res.CHM)
 		}
+		if hasResult && res.Tradecraft != nil {
+			c.writeTradecraft(bw, res.Tradecraft)
+		}
 		if hasResult && res.Fusion != nil {
 			c.writeFusion(bw, res.FilePath, res.Fusion)
 		}
@@ -127,17 +135,17 @@ func (r *TextReporter) Write(w io.Writer, in Input) error {
 }
 
 func (c config) writeResult(w io.Writer, r scanner.ScanResult) {
-	path := c.boundedMessage(r.FilePath)
+	path := c.textField(r.FilePath)
 	if r.Error != nil {
-		fmt.Fprintf(w, " [ERR] %s\n      %s\n\n", path, c.errorString(r.Error))
+		fmt.Fprintf(w, " [ERR] %s\n      %s\n\n", path, c.textError(r.Error))
 		return
 	}
 
 	// ── Hash match ──
 	if r.Detected {
 		fmt.Fprintln(w, " [!] DETECTED (Hash) —", path)
-		fmt.Fprintf(w, "     %-10s: %s\n", c.boundedMessage(r.MatchType), c.boundedHash(r.MatchHash))
-		fmt.Fprintf(w, "     %-10s: %s\n", "Match", c.boundedMessage(r.ThreatName))
+		fmt.Fprintf(w, "     %-10s: %s\n", c.textField(r.MatchType), c.boundedHash(r.MatchHash))
+		fmt.Fprintf(w, "     %-10s: %s\n", "Match", c.textField(r.ThreatName))
 		fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", r.Verdict)
 		fmt.Fprintf(w, "     %-10s: %s\n\n", "Scan time", elapsedString(r.ScanTime))
 	}
@@ -154,9 +162,9 @@ func (c config) writeResult(w io.Writer, r scanner.ScanResult) {
 		for _, m := range r.YaraMatches {
 			tags := ""
 			if len(m.Tags) > 0 {
-				tags = fmt.Sprintf(" [%s]", strings.Join(boundedList(c, m.Tags), ", "))
+				tags = fmt.Sprintf(" [%s]", TermSafe(strings.Join(boundedList(c, m.Tags), ", ")))
 			}
-			fmt.Fprintf(w, "     [YARA] %s::%s%s\n", c.boundedMessage(m.Namespace), c.boundedMessage(m.RuleName), tags)
+			fmt.Fprintf(w, "     [YARA] %s::%s%s\n", c.textField(m.Namespace), c.textField(m.RuleName), tags)
 			if meta := c.metaLine(m); meta != "" {
 				fmt.Fprintf(w, "            %s\n", meta)
 			}
@@ -166,7 +174,7 @@ func (c config) writeResult(w io.Writer, r scanner.ScanResult) {
 				if cut {
 					suffix = "..."
 				}
-				fmt.Fprintf(w, "            %s @ 0x%x : %q%s\n", c.boundedMessage(s.Name), s.Offset, data, suffix)
+				fmt.Fprintf(w, "            %s @ 0x%x : %q%s\n", c.textField(s.Name), s.Offset, data, suffix)
 			}
 		}
 		fmt.Fprintf(w, "     %-10s: %s\n\n", "Scan time", elapsedString(r.ScanTime))
@@ -178,7 +186,7 @@ func (c config) writeResult(w io.Writer, r scanner.ScanResult) {
 	}
 
 	for _, warn := range r.Warnings {
-		fmt.Fprintf(w, "     [WARN] %s\n", c.boundedMessage(warn))
+		fmt.Fprintf(w, "     [WARN] %s\n", c.textField(warn))
 	}
 }
 
@@ -186,31 +194,37 @@ func (c config) writeResult(w io.Writer, r scanner.ScanResult) {
 func (c config) metaLine(m scanner.YaraMatch) string {
 	var parts []string
 	if a := m.MetaString("author"); a != "" {
-		parts = append(parts, "author="+c.boundedMessage(a))
+		parts = append(parts, "author="+c.textField(a))
 	}
 	if tl, ok := m.MetaInt("threat_level"); ok {
 		parts = append(parts, fmt.Sprintf("threat_level=%d", tl))
 	}
 	if meta, ok := m.Meta("in_the_wild"); ok {
-		parts = append(parts, "in_the_wild="+c.boundedMessage(meta.String()))
+		parts = append(parts, "in_the_wild="+c.textField(meta.String()))
 	}
 	if d := m.MetaString("description"); d != "" {
-		parts = append(parts, "desc="+strconvQuote(c.boundedMessage(d)))
+		parts = append(parts, "desc="+strconvQuote(c.textField(d)))
 	}
 	return strings.Join(parts, " ")
 }
 
 func strconvQuote(s string) string { return fmt.Sprintf("%q", s) }
 
+// textField is boundedMessage for terminal output. Every attacker-reachable
+// string in this file goes through it or textError.
+func (c config) textField(s string) string { return TermSafe(c.boundedMessage(s)) }
+
+func (c config) textError(err error) string { return TermSafe(c.errorString(err)) }
+
 func (c config) writeHeuristic(w io.Writer, h scanner.HeuristicResult, standalone bool) {
-	path := c.boundedMessage(h.FilePath)
+	path := c.textField(h.FilePath)
 	if h.Error != nil {
-		fmt.Fprintf(w, " [ERR] Heuristics on %s: %s\n\n", path, c.errorString(h.Error))
+		fmt.Fprintf(w, " [ERR] Heuristics on %s: %s\n\n", path, c.textError(h.Error))
 		return
 	}
 
 	if h.Skipped != "" {
-		fmt.Fprintf(w, " [~] SKIPPED heuristics on %s: %s\n", path, c.boundedMessage(h.Skipped))
+		fmt.Fprintf(w, " [~] SKIPPED heuristics on %s: %s\n", path, c.textField(h.Skipped))
 		return
 	}
 
@@ -232,15 +246,15 @@ func (c config) writeHeuristic(w io.Writer, h scanner.HeuristicResult, standalon
 		for _, cat := range order {
 			tech := ""
 			if t := scanner.CategoryTechnique(cat); t != "" {
-				tech = "  (" + c.boundedMessage(t) + ")"
+				tech = "  (" + c.textField(t) + ")"
 			}
-			fmt.Fprintf(w, "     [%s]%s\n", c.boundedMessage(cat), tech)
+			fmt.Fprintf(w, "     [%s]%s\n", c.textField(cat), tech)
 			for _, hit := range byCategory[cat] {
 				extra := ""
 				if hit.Hits > 1 {
 					extra = fmt.Sprintf("  (x%d)", hit.Hits)
 				}
-				fmt.Fprintf(w, "       %-14s %s%s\n", "["+c.boundedMessage(hit.Source)+"]", c.boundedMessage(hit.Indicator), extra)
+				fmt.Fprintf(w, "       %-14s %s%s\n", "["+c.textField(hit.Source)+"]", c.textField(hit.Indicator), extra)
 			}
 		}
 		fmt.Fprintln(w)
@@ -259,13 +273,13 @@ func (c config) writeHeuristic(w io.Writer, h scanner.HeuristicResult, standalon
 // "packed with UPX" is visible even when it does not alert; a spotless
 // structure prints nothing (the hash/YARA line already said CLEAN).
 func (c config) writeStatic(w io.Writer, s *static.Result) {
-	path := c.boundedMessage(s.FilePath)
+	path := c.textField(s.FilePath)
 	if s.Error != nil {
-		fmt.Fprintf(w, " [ERR] Static analysis on %s: %s\n\n", path, c.errorString(s.Error))
+		fmt.Fprintf(w, " [ERR] Static analysis on %s: %s\n\n", path, c.textError(s.Error))
 		return
 	}
 	if s.Skipped != "" {
-		fmt.Fprintf(w, " [~] SKIPPED static analysis on %s: %s\n", path, c.boundedMessage(s.Skipped))
+		fmt.Fprintf(w, " [~] SKIPPED static analysis on %s: %s\n", path, c.textField(s.Skipped))
 		return
 	}
 	threshold := staticThresholdFor(s, c.staticThreshold)
@@ -281,16 +295,16 @@ func (c config) writeStatic(w io.Writer, s *static.Result) {
 		fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
 		fmt.Fprintf(w, "     %-10s: %d / %d threshold\n", "Score", s.Score, threshold)
 		if p := s.PE; p != nil {
-			fmt.Fprintf(w, "     %-10s: %s %s, %d imports, imphash %s\n", "Image", p.Format, c.boundedMessage(p.MachineName), p.ImportCount, c.boundedHash(p.Imphash))
+			fmt.Fprintf(w, "     %-10s: %s %s, %d imports, imphash %s\n", "Image", p.Format, c.textField(p.MachineName), p.ImportCount, c.boundedHash(p.Imphash))
 			if p.Packer != nil {
-				fmt.Fprintf(w, "     %-10s: %s\n", "Packer", c.boundedMessage(p.Packer.Name))
+				fmt.Fprintf(w, "     %-10s: %s\n", "Packer", c.textField(p.Packer.Name))
 			}
 		}
 		if e := s.ELF; e != nil {
-			image := fmt.Sprintf("%s %s %s, %d imports", e.Class, c.boundedMessage(e.MachineName), c.boundedMessage(e.TypeName), e.ImportCount)
+			image := fmt.Sprintf("%s %s %s, %d imports", e.Class, c.textField(e.MachineName), c.textField(e.TypeName), e.ImportCount)
 			switch {
 			case e.Interp != "":
-				image += ", interp " + c.boundedMessage(e.Interp)
+				image += ", interp " + c.textField(e.Interp)
 			case e.Static:
 				image += ", static"
 			}
@@ -299,14 +313,14 @@ func (c config) writeStatic(w io.Writer, s *static.Result) {
 			}
 			fmt.Fprintf(w, "     %-10s: %s\n", "Image", image)
 			if e.Packer != nil {
-				fmt.Fprintf(w, "     %-10s: %s\n", "Packer", c.boundedMessage(e.Packer.Name))
+				fmt.Fprintf(w, "     %-10s: %s\n", "Packer", c.textField(e.Packer.Name))
 			}
 			if m := e.Module; m != nil {
 				signed := "unsigned"
 				if m.Signed {
 					signed = "signature present, not verified"
 				}
-				fmt.Fprintf(w, "     %-10s: kernel module %s, vermagic %s, %s\n", "Module", c.boundedMessage(m.Name), c.boundedMessage(m.Vermagic), signed)
+				fmt.Fprintf(w, "     %-10s: kernel module %s, vermagic %s, %s\n", "Module", c.textField(m.Name), c.textField(m.Vermagic), signed)
 			}
 		}
 		fmt.Fprintln(w)
@@ -314,26 +328,26 @@ func (c config) writeStatic(w io.Writer, s *static.Result) {
 			if cs.Applied == 0 {
 				continue
 			}
-			fmt.Fprintf(w, "     [%s] %d/%d\n", c.boundedMessage(cs.Category), cs.Applied, cs.Cap)
+			fmt.Fprintf(w, "     [%s] %d/%d\n", c.textField(cs.Category), cs.Applied, cs.Cap)
 			for _, a := range scored {
 				if a.Category != cs.Category {
 					continue
 				}
 				tech := ""
 				if a.Technique != "" {
-					tech = "  (" + c.boundedMessage(a.Technique) + ")"
+					tech = "  (" + c.textField(a.Technique) + ")"
 				}
-				fmt.Fprintf(w, "       %-34s %s%s\n", c.boundedMessage(a.Class), c.boundedMessage(a.Detail), tech)
+				fmt.Fprintf(w, "       %-34s %s%s\n", c.textField(a.Class), c.textField(a.Detail), tech)
 			}
 		}
 		if sig := s.PE; sig != nil && sig.Authenticode != nil {
-			fmt.Fprintf(w, "     [Signature] %s\n", c.boundedMessage(sig.Authenticode.Note))
+			fmt.Fprintf(w, "     [Signature] %s\n", c.textField(sig.Authenticode.Note))
 		}
 		fmt.Fprintln(w)
 	case len(scored) > 0:
 		names := make([]string, 0, len(scored))
 		for _, a := range scored {
-			names = append(names, c.boundedMessage(a.Class))
+			names = append(names, c.textField(a.Class))
 		}
 		fmt.Fprintf(w, " [~] LOW SUSPICION (static) — %s (score: %d): %s\n", path, s.Score, strings.Join(names, ", "))
 	}
@@ -344,9 +358,9 @@ func (c config) writeStatic(w io.Writer, s *static.Result) {
 // the invisibles made visible; excused codepoints (emoji joiners, joining
 // scripts, a BOM) print nothing, because they are not evidence.
 func (c config) writeStego(w io.Writer, s *stego.Result) {
-	path := c.boundedMessage(s.FilePath)
+	path := c.textField(s.FilePath)
 	if s.Error != nil {
-		fmt.Fprintf(w, " [ERR] Stego analysis on %s: %s\n\n", path, c.errorString(s.Error))
+		fmt.Fprintf(w, " [ERR] Stego analysis on %s: %s\n\n", path, c.textError(s.Error))
 		return
 	}
 	if s.Skipped != "" || !stegoBreached(s, c.stegoThreshold) {
@@ -356,19 +370,19 @@ func (c config) writeStego(w io.Writer, s *stego.Result) {
 	fmt.Fprintf(w, " [!] DETECTED (Stego) — %s\n", path)
 	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
 	fmt.Fprintf(w, "     %-10s: %d / %d threshold\n", "Score", s.Score, threshold)
-	fmt.Fprintf(w, "     %-10s: %s, %d line(s), %d invisible codepoint(s) scored, %d excused by context\n", "Text", c.boundedMessage(s.Encoding), s.Lines, s.Suspicious, s.Benign)
+	fmt.Fprintf(w, "     %-10s: %s, %d line(s), %d invisible codepoint(s) scored, %d excused by context\n", "Text", c.textField(s.Encoding), s.Lines, s.Suspicious, s.Benign)
 	fmt.Fprintln(w)
 	for _, f := range s.Findings {
 		tags := ""
 		if f.Technique != "" || f.Novel != "" {
-			tags = "  (" + strings.TrimSpace(strings.Join([]string{c.boundedMessage(f.Technique), c.boundedMessage(f.Novel)}, " ")) + ")"
+			tags = "  (" + strings.TrimSpace(strings.Join([]string{c.textField(f.Technique), c.textField(f.Novel)}, " ")) + ")"
 		}
-		fmt.Fprintf(w, "     [%s] %d\n", c.boundedMessage(f.Class), f.Score)
-		fmt.Fprintf(w, "       %s%s\n", c.boundedMessage(f.Detail), tags)
+		fmt.Fprintf(w, "     [%s] %d\n", c.textField(f.Class), f.Score)
+		fmt.Fprintf(w, "       %s%s\n", c.textField(f.Detail), tags)
 	}
 	for _, cp := range s.Codepoints {
 		for _, ex := range cp.Examples {
-			fmt.Fprintf(w, "       %s %s\n", c.boundedMessage(cp.Code), c.boundedMessage(ex))
+			fmt.Fprintf(w, "       %s %s\n", c.textField(cp.Code), c.textField(ex))
 		}
 	}
 	fmt.Fprintln(w)
@@ -380,19 +394,19 @@ func (c config) writeEncChain(w io.Writer, e *encchain.Result) {
 	if e.Skipped != "" || !encChainBreached(e, c.encChainThreshold) {
 		return
 	}
-	path := c.boundedMessage(e.FilePath)
+	path := c.textField(e.FilePath)
 	threshold := encChainThresholdFor(e, c.encChainThreshold)
-	fmt.Fprintf(w, " [!] DETECTED (Encoded executable) â %s\n", path)
+	fmt.Fprintf(w, " [!] DETECTED (Encoded executable) — %s\n", path)
 	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
 	fmt.Fprintf(w, "     %-10s: %d / %d threshold\n", "Score", e.Score, threshold)
 	fmt.Fprintln(w)
 	for _, f := range e.Findings {
 		tags := ""
 		if f.Technique != "" || f.Novel != "" {
-			tags = "  (" + strings.TrimSpace(strings.Join([]string{c.boundedMessage(f.Technique), c.boundedMessage(f.Novel)}, " ")) + ")"
+			tags = "  (" + strings.TrimSpace(strings.Join([]string{c.textField(f.Technique), c.textField(f.Novel)}, " ")) + ")"
 		}
-		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
-		fmt.Fprintf(w, "       %s (%s, layer %d, at offset %d)\n", c.boundedMessage(f.Detail), c.boundedMessage(f.Encoding), f.Depth, f.Offset)
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.textField(f.Class), f.Score, tags)
+		fmt.Fprintf(w, "       %s (%s, layer %d, at offset %d)\n", c.textField(f.Detail), c.textField(f.Encoding), f.Depth, f.Offset)
 	}
 	fmt.Fprintln(w)
 }
@@ -403,7 +417,7 @@ func (c config) writeLNK(w io.Writer, l *lnk.Result) {
 	if l.Skipped != "" || !lnkBreached(l, c.lnkThreshold) {
 		return
 	}
-	path := c.boundedMessage(l.FilePath)
+	path := c.textField(l.FilePath)
 	threshold := lnkThresholdFor(l, c.lnkThreshold)
 	fmt.Fprintf(w, " [!] DETECTED (Shell Link) — %s\n", path)
 	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
@@ -412,12 +426,12 @@ func (c config) writeLNK(w io.Writer, l *lnk.Result) {
 	for _, f := range l.Findings {
 		tags := ""
 		if f.Technique != "" {
-			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+			tags = "  (" + c.textField(f.Technique) + ")"
 		}
-		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
-		detail := c.boundedMessage(f.Detail)
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.textField(f.Class), f.Score, tags)
+		detail := c.textField(f.Detail)
 		if f.Evidence != "" {
-			detail += ": " + c.boundedMessage(f.Evidence)
+			detail += ": " + c.textField(f.Evidence)
 		}
 		fmt.Fprintf(w, "       %s\n", detail)
 	}
@@ -429,7 +443,7 @@ func (c config) writeOLE(w io.Writer, o *ole.Result) {
 	if o.Skipped != "" || !oleBreached(o, c.oleThreshold) {
 		return
 	}
-	path := c.boundedMessage(o.FilePath)
+	path := c.textField(o.FilePath)
 	threshold := oleThresholdFor(o, c.oleThreshold)
 	fmt.Fprintf(w, " [!] DETECTED (OLE macro) — %s\n", path)
 	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
@@ -438,12 +452,12 @@ func (c config) writeOLE(w io.Writer, o *ole.Result) {
 	for _, f := range o.Findings {
 		tags := ""
 		if f.Technique != "" {
-			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+			tags = "  (" + c.textField(f.Technique) + ")"
 		}
-		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
-		detail := c.boundedMessage(f.Detail)
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.textField(f.Class), f.Score, tags)
+		detail := c.textField(f.Detail)
 		if f.Evidence != "" {
-			detail += ": " + c.boundedMessage(f.Evidence)
+			detail += ": " + c.textField(f.Evidence)
 		}
 		fmt.Fprintf(w, "       %s\n", detail)
 	}
@@ -455,7 +469,7 @@ func (c config) writePDF(w io.Writer, p *pdf.Result) {
 	if p.Skipped != "" || !pdfBreached(p, c.pdfThreshold) {
 		return
 	}
-	path := c.boundedMessage(p.FilePath)
+	path := c.textField(p.FilePath)
 	threshold := pdfThresholdFor(p, c.pdfThreshold)
 	fmt.Fprintf(w, " [!] DETECTED (PDF document) — %s\n", path)
 	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
@@ -464,12 +478,12 @@ func (c config) writePDF(w io.Writer, p *pdf.Result) {
 	for _, f := range p.Findings {
 		tags := ""
 		if f.Technique != "" {
-			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+			tags = "  (" + c.textField(f.Technique) + ")"
 		}
-		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
-		detail := c.boundedMessage(f.Detail)
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.textField(f.Class), f.Score, tags)
+		detail := c.textField(f.Detail)
 		if f.Evidence != "" {
-			detail += ": " + c.boundedMessage(f.Evidence)
+			detail += ": " + c.textField(f.Evidence)
 		}
 		fmt.Fprintf(w, "       %s\n", detail)
 	}
@@ -481,7 +495,7 @@ func (c config) writeISO(w io.Writer, i *iso.Result) {
 	if i.Skipped != "" || !isoBreached(i, c.isoThreshold) {
 		return
 	}
-	path := c.boundedMessage(i.FilePath)
+	path := c.textField(i.FilePath)
 	threshold := isoThresholdFor(i, c.isoThreshold)
 	fmt.Fprintf(w, " [!] DETECTED (ISO container) — %s\n", path)
 	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
@@ -490,12 +504,12 @@ func (c config) writeISO(w io.Writer, i *iso.Result) {
 	for _, f := range i.Findings {
 		tags := ""
 		if f.Technique != "" {
-			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+			tags = "  (" + c.textField(f.Technique) + ")"
 		}
-		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
-		detail := c.boundedMessage(f.Detail)
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.textField(f.Class), f.Score, tags)
+		detail := c.textField(f.Detail)
 		if f.Evidence != "" {
-			detail += ": " + c.boundedMessage(f.Evidence)
+			detail += ": " + c.textField(f.Evidence)
 		}
 		fmt.Fprintf(w, "       %s\n", detail)
 	}
@@ -507,7 +521,7 @@ func (c config) writeLinuxPkg(w io.Writer, p *linuxpkg.Result) {
 	if p.Skipped != "" || !linuxPkgBreached(p, c.linuxPkgThreshold) {
 		return
 	}
-	path := c.boundedMessage(p.FilePath)
+	path := c.textField(p.FilePath)
 	threshold := linuxPkgThresholdFor(p, c.linuxPkgThreshold)
 	format := ""
 	if p.Parsed != nil {
@@ -520,12 +534,12 @@ func (c config) writeLinuxPkg(w io.Writer, p *linuxpkg.Result) {
 	for _, f := range p.Findings {
 		tags := ""
 		if f.Technique != "" {
-			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+			tags = "  (" + c.textField(f.Technique) + ")"
 		}
-		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
-		detail := c.boundedMessage(f.Detail)
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.textField(f.Class), f.Score, tags)
+		detail := c.textField(f.Detail)
 		if f.Evidence != "" {
-			detail += ": " + c.boundedMessage(f.Evidence)
+			detail += ": " + c.textField(f.Evidence)
 		}
 		fmt.Fprintf(w, "       %s\n", detail)
 	}
@@ -537,7 +551,7 @@ func (c config) writeArchive(w io.Writer, a *archive.Result) {
 	if a.Skipped != "" || !archiveBreached(a, c.archiveThreshold) {
 		return
 	}
-	path := c.boundedMessage(a.FilePath)
+	path := c.textField(a.FilePath)
 	threshold := archiveThresholdFor(a, c.archiveThreshold)
 	format := ""
 	if a.Parsed != nil {
@@ -550,12 +564,12 @@ func (c config) writeArchive(w io.Writer, a *archive.Result) {
 	for _, f := range a.Findings {
 		tags := ""
 		if f.Technique != "" {
-			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+			tags = "  (" + c.textField(f.Technique) + ")"
 		}
-		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
-		detail := c.boundedMessage(f.Detail)
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.textField(f.Class), f.Score, tags)
+		detail := c.textField(f.Detail)
 		if f.Evidence != "" {
-			detail += ": " + c.boundedMessage(f.Evidence)
+			detail += ": " + c.textField(f.Evidence)
 		}
 		fmt.Fprintf(w, "       %s\n", detail)
 	}
@@ -567,7 +581,7 @@ func (c config) writeCHM(w io.Writer, h *chm.Result) {
 	if h.Skipped != "" || !chmBreached(h, c.chmThreshold) {
 		return
 	}
-	path := c.boundedMessage(h.FilePath)
+	path := c.textField(h.FilePath)
 	threshold := chmThresholdFor(h, c.chmThreshold)
 	fmt.Fprintf(w, " [!] DETECTED (CHM help file) — %s\n", path)
 	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
@@ -576,12 +590,38 @@ func (c config) writeCHM(w io.Writer, h *chm.Result) {
 	for _, f := range h.Findings {
 		tags := ""
 		if f.Technique != "" {
-			tags = "  (" + c.boundedMessage(f.Technique) + ")"
+			tags = "  (" + c.textField(f.Technique) + ")"
 		}
-		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
-		detail := c.boundedMessage(f.Detail)
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.textField(f.Class), f.Score, tags)
+		detail := c.textField(f.Detail)
 		if f.Evidence != "" {
-			detail += ": " + c.boundedMessage(f.Evidence)
+			detail += ": " + c.textField(f.Evidence)
+		}
+		fmt.Fprintf(w, "       %s\n", detail)
+	}
+	fmt.Fprintln(w)
+}
+
+// writeTradecraft renders the behavioural analysis when it fired.
+func (c config) writeTradecraft(w io.Writer, t *tradecraft.Result) {
+	if t.Skipped != "" || !tradecraftBreached(t, c.tradecraftThreshold) {
+		return
+	}
+	path := c.textField(t.FilePath)
+	threshold := tradecraftThresholdFor(t, c.tradecraftThreshold)
+	fmt.Fprintf(w, " [!] DETECTED (Tradecraft) — %s\n", path)
+	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
+	fmt.Fprintf(w, "     %-10s: %d / %d threshold\n", "Score", t.Score, threshold)
+	fmt.Fprintln(w)
+	for _, f := range t.Findings {
+		tags := ""
+		if f.Technique != "" {
+			tags = "  (" + c.textField(f.Technique) + ")"
+		}
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.textField(f.Class), f.Score, tags)
+		detail := c.textField(f.Detail)
+		if f.Evidence != "" {
+			detail += ": " + c.textField(f.Evidence)
 		}
 		fmt.Fprintf(w, "       %s\n", detail)
 	}
@@ -593,27 +633,27 @@ func (c config) writePeel(w io.Writer, p *peeler.Result) {
 	if p.Skipped != "" || !peelBreached(p, c.peelThreshold) {
 		return
 	}
-	path := c.boundedMessage(p.FilePath)
+	path := c.textField(p.FilePath)
 	threshold := peelThresholdFor(p, c.peelThreshold)
 	fmt.Fprintf(w, " [!] DETECTED (obfuscation chain) — %s\n", path)
 	fmt.Fprintf(w, "     %-10s: %s\n", "Verdict", "SUSPICIOUS")
 	fmt.Fprintf(w, "     %-10s: %d / %d threshold\n", "Score", p.Score, threshold)
-	fmt.Fprintf(w, "     %-10s: %s (depth %d)\n", "Outcome", c.boundedMessage(string(p.Outcome)), p.MaxDepth)
+	fmt.Fprintf(w, "     %-10s: %s (depth %d)\n", "Outcome", c.textField(string(p.Outcome)), p.MaxDepth)
 	if p.PrimarySignature != "" {
-		fmt.Fprintf(w, "     %-10s: %s\n", "Chain", c.boundedMessage(p.PrimarySignature))
+		fmt.Fprintf(w, "     %-10s: %s\n", "Chain", c.textField(p.PrimarySignature))
 	}
 	fmt.Fprintln(w)
 	for _, f := range p.Findings {
 		tags := ""
 		if f.Technique != "" {
-			tags = "  (" + c.boundedMessage(f.Technique)
+			tags = "  (" + c.textField(f.Technique)
 			if f.Novel != "" {
-				tags += ", " + c.boundedMessage(f.Novel)
+				tags += ", " + c.textField(f.Novel)
 			}
 			tags += ")"
 		}
-		fmt.Fprintf(w, "     [%s] %d%s\n", c.boundedMessage(f.Class), f.Score, tags)
-		fmt.Fprintf(w, "       %s\n", c.boundedMessage(f.Detail))
+		fmt.Fprintf(w, "     [%s] %d%s\n", c.textField(f.Class), f.Score, tags)
+		fmt.Fprintf(w, "       %s\n", c.textField(f.Detail))
 	}
 	fmt.Fprintln(w)
 }
@@ -626,7 +666,7 @@ func (c config) writeFusion(w io.Writer, path string, v *fusion.Verdict) {
 	if !v.Detected() || (len(v.Agreed) < 2 && !v.Corroborated) {
 		return
 	}
-	path = c.boundedMessage(path)
+	path = c.textField(path)
 	if v.Corroborated {
 		fmt.Fprintf(w, " [!] DETECTED (Fusion) — %s\n", path)
 	} else {
@@ -635,7 +675,7 @@ func (c config) writeFusion(w io.Writer, path string, v *fusion.Verdict) {
 	fmt.Fprintf(w, "     %-10s: %s (fused %.2f / %.2f, %s confidence)\n", "Verdict", strings.ToUpper(string(v.Tier)), v.Score, v.Threshold, v.Confidence)
 	agreed := make([]string, 0, len(v.Agreed)) // strongest first: not boundedList, which sorts
 	for _, a := range v.Agreed {
-		agreed = append(agreed, c.boundedMessage(a))
+		agreed = append(agreed, c.textField(a))
 	}
 	fmt.Fprintf(w, "     %-10s: %s\n", "Agreed", strings.Join(agreed, ", "))
 	if len(v.Techniques) > 0 || len(v.Novel) > 0 {
@@ -647,16 +687,16 @@ func (c config) writeFusion(w io.Writer, path string, v *fusion.Verdict) {
 		}
 		switch src.Role {
 		case fusion.RoleDefinitive:
-			fmt.Fprintf(w, "     [%s] %s\n", c.boundedMessage(src.Name), src.Role)
+			fmt.Fprintf(w, "     [%s] %s\n", c.textField(src.Name), src.Role)
 		default:
-			fmt.Fprintf(w, "     [%s] %d/%d, ratio %.2f, %s\n", c.boundedMessage(src.Name), src.Score, src.Threshold, src.Ratio, src.Role)
+			fmt.Fprintf(w, "     [%s] %d/%d, ratio %.2f, %s\n", c.textField(src.Name), src.Score, src.Threshold, src.Ratio, src.Role)
 		}
 		for _, e := range src.Evidence {
 			tech := ""
 			if e.Technique != "" {
-				tech = "  (" + c.boundedMessage(e.Technique) + ")"
+				tech = "  (" + c.textField(e.Technique) + ")"
 			}
-			fmt.Fprintf(w, "       %-34s %s%s\n", c.boundedMessage(e.Label), c.boundedMessage(e.Detail), tech)
+			fmt.Fprintf(w, "       %-34s %s%s\n", c.textField(e.Label), c.textField(e.Detail), tech)
 		}
 	}
 	fmt.Fprintln(w)
@@ -680,6 +720,7 @@ func (c config) writeSummary(w io.Writer, in Input) {
 	peelHits := len(in.PeelBreach(c.peelThreshold))
 	archiveHits := len(in.ArchiveBreach(c.archiveThreshold))
 	chmHits := len(in.CHMBreach(c.chmThreshold))
+	tradecraftHits := len(in.TradecraftBreach(c.tradecraftThreshold))
 	fused := len(in.FusionCorroborated())
 
 	fmt.Fprintln(w)
@@ -700,6 +741,7 @@ func (c config) writeSummary(w io.Writer, in Input) {
 	fmt.Fprintf(w, " Chain-peel detections : %d\n", peelHits)
 	fmt.Fprintf(w, " Archive detections    : %d\n", archiveHits)
 	fmt.Fprintf(w, " CHM detections        : %d\n", chmHits)
+	fmt.Fprintf(w, " Tradecraft detections : %d\n", tradecraftHits)
 	fmt.Fprintf(w, " Fused-only detections : %d\n", fused)
 	fmt.Fprintf(w, " Errors                : %d\n", in.ErrorCount())
 	fmt.Fprintf(w, " Exit code             : %d (%s)\n", code, reason)

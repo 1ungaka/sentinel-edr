@@ -117,6 +117,10 @@ func likelihood(name string, p profile) int {
 	case "flate":
 		// Raw deflate has no header; try it only after everything else.
 		return 10
+	case "cipher", "carve":
+		// Thirty trial transforms, or a scan of the whole blob. Everything
+		// cheaper and more specific goes first.
+		return 20
 	default:
 		return 50
 	}

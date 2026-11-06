@@ -1,6 +1,7 @@
 package peeler
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -19,6 +20,14 @@ func FuzzPeel(f *testing.F) {
 	f.Add([]byte("plain text, not a chain at all"))
 	f.Add([]byte{})
 	f.Add([]byte("QUJD")) // "ABC" in base64, too short to be a layer
+	f.Add(composeAny(fakeELF, "base85", "rot47", "base64", "gzip"))
+	f.Add(composeAny(fakeELF, "reverse", "base58", "caesar-7", "base91", "gzip"))
+	f.Add(composeAny(fakeELF, "base92", "base45", "atbash", "hex", "zlib"))
+	f.Add([]byte("72 101 108 108 111 32 119 111 114 108 100 33"))
+	f.Add([]byte(`\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03`))
+	f.Add([]byte("<~,9\\^LBl5SFBF86lEblk3FEDI_0/#(71G1@60ekI:3A5V\"Hm!KD$3~>"))
+	f.Add(append([]byte{0xff, 0xfe}, bytes.Repeat([]byte{'a', 0}, 32)...))
+	f.Add([]byte("A=\"" + string(encodeLayer("base64", largeELF())) + "\"\nB=\"" + string(encodeLayer("hex", largeELF())) + "\"\n"))
 
 	// Tight limits keep each fuzz iteration fast while still exercising every
 	// wall (nodes, output, depth, wall-clock).

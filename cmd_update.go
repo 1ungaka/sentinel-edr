@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -34,9 +35,10 @@ files: %s, %s and %s (a detached Ed25519 signature over the manifest). The
 manifest carries the payload's SHA-256, so one signature covers everything.
 
 Nothing on disk changes unless the signature verifies against the pinned key,
-the payload digest matches the signed manifest, and the bundle's
-min-engine-version is satisfied. On success the live database is replaced
-atomically and the previous one is kept as <db>.bak.
+the payload digest matches the signed manifest, the bundle's
+min-engine-version is satisfied, and the bundle is not older than the one
+installed. On success the live database is replaced atomically, the previous
+one is kept as <db>.bak, and the manifest is recorded as <db>%s.
 
 Flags:
   --from <dir>    read the bundle from a local directory
@@ -45,9 +47,12 @@ Flags:
                   and $%s
   --db <path>     signature database to replace (default: auto-discovered)
   --dry-run       verify only; report what would be installed, change nothing
+  --allow-downgrade
+                  install a bundle older than the current one, to back out a
+                  bad release
 
 Exit codes: 0 ok, 1 verification failed, 3 the run failed, 4 usage.
-`, updater.PayloadName, updater.ManifestName, updater.SignatureName,
+`, updater.PayloadName, updater.ManifestName, updater.SignatureName, updater.StateSuffix,
 		updater.PayloadName, updater.ManifestName, updater.SignatureName, envUpdateKey)
 }
 
@@ -59,7 +64,8 @@ func cmdUpdate(args []string, stdout, stderr io.Writer) int {
 	pubkeyFile := fs.String("pubkey", "", "trusted Ed25519 public key file (hex)")
 	db := fs.String("db", "", "signature database to replace (default: auto-discovered)")
 	dryRun := fs.Bool("dry-run", false, "verify only; change nothing")
-	if err := fs.Parse(args); err != nil {
+	allowDowngrade := fs.Bool("allow-downgrade", false, "install a bundle older than the current one")
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if (*from == "") == (*url == "") {
@@ -87,20 +93,32 @@ func cmdUpdate(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "[*] verified bundle: db_version %s, min-engine %s, %d payload bytes\n",
 		orDash(v.Manifest.DBVersion), orDash(v.Manifest.MinEngineVersion), len(v.Payload))
 
+	dbPath, searched := findResource(*db, envSignatures, relSignatures)
+	if dbPath == "" {
+		dbPath = *db // install to the explicit path even if it does not exist yet
+	}
+
+	// Before the dry-run return, so a dry run does not promise an install that
+	// would be refused.
+	if dbPath != "" && !*allowDowngrade {
+		if err := updater.CheckRollback(dbPath, v.Manifest); err != nil {
+			code := report.ExitRunFailed
+			if errors.Is(err, updater.ErrRollback) {
+				code = report.ExitThreat // a replayed bundle is a finding, like a bad signature
+			}
+			return fail(stderr, code, "%v (--allow-downgrade installs it anyway)", err)
+		}
+	}
+
 	if *dryRun {
 		fmt.Fprintln(stdout, "[*] dry-run: signature and digest verified; nothing installed")
 		return report.ExitOK
 	}
 
-	dbPath, searched := findResource(*db, envSignatures, relSignatures)
 	if dbPath == "" {
-		if *db != "" {
-			dbPath = *db // install to the explicit path even if it does not exist yet
-		} else {
-			return fail(stderr, report.ExitRunFailed, "signature database not found; pass --db (searched: %s)", strings.Join(searched, ", "))
-		}
+		return fail(stderr, report.ExitRunFailed, "signature database not found; pass --db (searched: %s)", strings.Join(searched, ", "))
 	}
-	rollback, err := updater.Apply(dbPath, v)
+	rollback, err := updater.Apply(dbPath, v, *allowDowngrade)
 	if err != nil {
 		return fail(stderr, report.ExitRunFailed, "%v", err)
 	}

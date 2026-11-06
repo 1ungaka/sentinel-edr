@@ -22,7 +22,10 @@ encoded PowerShell plus download.
 Indicator tables are in `scanner/heuristics.go`; `scanner.Categories()`
 exposes the category → technique map that the coverage matrix and fused
 verdicts read. Files over the in-memory cap are streamed and skip this pass,
-and the report says so.
+and the report says so. The `.onion` indicator weighs 1 (down from the
+original higher weight), because every Go binary with a network stack
+carries the string in its `crypto/tls` initialisation list and the original
+weight produced a steady trickle of benign hits.
 
 ## Blind Spots and Assumptions
 Capability hidden behind dynamic API resolution or encryption; a binary that

@@ -360,7 +360,7 @@ func TestMachOOverlay(t *testing.T) {
 	spec := defaultMachoSpec()
 	hi := make([]byte, 8192)
 	for i := range hi {
-		hi[i] = byte((i*2654435761 + 7) >> 3)
+		hi[i] = byte((uint64(i)*2654435761 + 7) >> 3)
 	}
 	spec.overlay = hi
 	m := parseMacho(t, spec)
@@ -419,7 +419,7 @@ func TestMachODetectedByAnalyze(t *testing.T) {
 	spec := defaultMachoSpec()
 	hi := make([]byte, 8192)
 	for i := range hi {
-		hi[i] = byte((i*2654435761 + 13) >> 1)
+		hi[i] = byte((uint64(i)*2654435761 + 13) >> 1)
 	}
 	spec.segments[1].data = hi
 	spec.dylibs = nil

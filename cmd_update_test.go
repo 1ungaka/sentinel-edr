@@ -133,3 +133,57 @@ func TestCLIUpdateUsage(t *testing.T) {
 		t.Errorf("both sources: code=%d", code)
 	}
 }
+
+// A bundle older than the installed one verifies perfectly: this is the replay a
+// compromised mirror would serve.
+func TestCLIUpdateRefusesARollback(t *testing.T) {
+	work := t.TempDir()
+	db := filepath.Join(work, "hashes.txt")
+	newLine := "SHA256|" + strings.Repeat("1", 64) + "|New\n"
+	oldLine := "SHA256|" + strings.Repeat("2", 64) + "|Old\n"
+
+	dir, pub := writeDatedBundle(t, []byte(newLine), "2026-06-01T00:00:00Z")
+	if code, _, errOut := runCLI(t, "update", "--from", dir, "--pubkey", pub, "--db", db); code != report.ExitOK {
+		t.Fatalf("install: %d %s", code, errOut)
+	}
+
+	dir, pub = writeDatedBundle(t, []byte(oldLine), "2026-01-01T00:00:00Z")
+	code, _, errOut := runCLI(t, "update", "--from", dir, "--pubkey", pub, "--db", db)
+	if code != report.ExitThreat {
+		t.Fatalf("rollback: code=%d err=%s", code, errOut)
+	}
+	if !strings.Contains(errOut, "--allow-downgrade") {
+		t.Errorf("the refusal does not name the way out: %q", errOut)
+	}
+	if got, _ := os.ReadFile(db); string(got) != newLine {
+		t.Fatalf("db changed: %q", got)
+	}
+
+	// --dry-run says the same thing instead of promising an install that fails.
+	if code, _, _ := runCLI(t, "update", "--from", dir, "--pubkey", pub, "--db", db, "--dry-run"); code != report.ExitThreat {
+		t.Fatalf("dry-run: code=%d", code)
+	}
+
+	if code, _, errOut := runCLI(t, "update", "--from", dir, "--pubkey", pub, "--db", db, "--allow-downgrade"); code != report.ExitOK {
+		t.Fatalf("--allow-downgrade: %d %s", code, errOut)
+	}
+	if got, _ := os.ReadFile(db); string(got) != oldLine {
+		t.Fatalf("db = %q", got)
+	}
+}
+
+func writeDatedBundle(t *testing.T, payload []byte, created string) (dir, pubFile string) {
+	t.Helper()
+	dir, pubFile = writeBundle(t, payload, "0.1.0")
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := updater.BuildManifest(payload, "2026.11.02", "0.1.0")
+	m.Created = created
+	mb, _ := json.Marshal(m)
+	os.WriteFile(filepath.Join(dir, updater.ManifestName), mb, 0o644)
+	os.WriteFile(filepath.Join(dir, updater.SignatureName), []byte(hex.EncodeToString(ed25519.Sign(priv, mb))), 0o644)
+	os.WriteFile(pubFile, []byte(hex.EncodeToString(pub)), 0o644)
+	return dir, pubFile
+}

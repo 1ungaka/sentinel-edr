@@ -31,7 +31,7 @@ var completionShells = []string{"bash", "zsh", "fish"}
 func cmdCompletion(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("completion", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 

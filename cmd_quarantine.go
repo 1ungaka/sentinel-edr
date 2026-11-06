@@ -113,7 +113,7 @@ func quarantineAdd(args []string, stdout, stderr io.Writer) int {
 	store := fs.String("store", "", "vault directory")
 	threat := fs.String("threat", "manual", "threat label for the entry")
 	keep := fs.Bool("keep", false, "copy into the vault instead of moving")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if fs.NArg() != 1 {
@@ -131,7 +131,7 @@ func quarantineAdd(args []string, stdout, stderr io.Writer) int {
 	if *keep {
 		action = "copied"
 	}
-	fmt.Fprintf(stdout, "%s %s into the vault as %s (%s, %d bytes)\n", action, e.OriginalPath, e.ID, e.ThreatName, e.Size)
+	fmt.Fprintf(stdout, "%s %s into the vault as %s (%s, %d bytes)\n", action, report.TermSafe(e.OriginalPath), e.ID, report.TermSafe(e.ThreatName), e.Size)
 	return report.ExitOK
 }
 
@@ -140,7 +140,7 @@ func quarantineList(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	store := fs.String("store", "", "vault directory")
 	format := fs.String("format", "text", "output format: text or json")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *format != "text" && *format != "json" {
@@ -167,7 +167,7 @@ func quarantineList(args []string, stdout, stderr io.Writer) int {
 	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tThreat\tSize\tQuarantined\tOriginal")
 	for _, e := range entries {
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", e.ID, e.ThreatName, e.Size, e.QuarantinedAt.Format(time.RFC3339), e.OriginalPath)
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", e.ID, report.TermSafe(e.ThreatName), e.Size, e.QuarantinedAt.Format(time.RFC3339), report.TermSafe(e.OriginalPath))
 	}
 	tw.Flush()
 	fmt.Fprintf(stdout, "\n%d entr%s in %s\n", len(entries), plural(len(entries)), s.Dir())
@@ -180,7 +180,7 @@ func quarantineRestore(args []string, stdout, stderr io.Writer) int {
 	store := fs.String("store", "", "vault directory")
 	to := fs.String("to", "", "destination path (default: the recorded original)")
 	force := fs.Bool("force", false, "overwrite the destination if it exists")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if fs.NArg() != 1 {
@@ -202,7 +202,7 @@ func quarantineVerify(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("quarantine verify", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	store := fs.String("store", "", "vault directory")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if fs.NArg() > 1 {
@@ -237,7 +237,7 @@ func quarantineDelete(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("quarantine delete", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	store := fs.String("store", "", "vault directory")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if fs.NArg() != 1 {
@@ -300,11 +300,11 @@ func autoQuarantine(store, level string, results []scanner.ScanResult, status fu
 			}
 		}
 		if _, err := s.Quarantine(r.FilePath, reason, false); err != nil {
-			status("[WARN] could not quarantine %s: %v", r.FilePath, err)
+			status("[WARN] could not quarantine %s: %s", report.TermSafe(r.FilePath), report.TermSafe(err.Error()))
 			continue
 		}
 		moved++
-		status("[*] quarantined %s (%s)", r.FilePath, reason)
+		status("[*] quarantined %s (%s)", report.TermSafe(r.FilePath), report.TermSafe(reason))
 	}
 	return moved, nil
 }

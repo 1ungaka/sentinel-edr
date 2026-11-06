@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CAU development environment.
+# CAU development environment. Sourced, so it cannot set -e. audit:ok
 #   source scripts/dev-env.sh
 #
 # Toolchain was installed without root:

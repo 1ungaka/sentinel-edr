@@ -21,7 +21,12 @@ compiler warnings are shown, not suppressed. Bundled rules carry `ascii
 wide` (the originals were ASCII-only and never fired on mimikatz.exe), hex
 patterns as hex (two originals matched the text `"0x89,0x00"` and could never
 fire), `threat_level`, `family` and `mitre_attack`. `cau rules lint` enforces
-all of that; `cau rules list` prints the inventory.
+all of that; `cau rules list` prints the inventory. `highly_sus_shellcode`
+was rewritten after it fired on `msdia140.dll` and missed every Metasploit
+stub; new rules cover the Windows netcat lineage and wrapped PEASS. The
+loose `.locked` / `.encrypted` / `.crypt` ransomware rule now requires a
+ransom-note name beside the extensions to stop the 18 Go-binary false
+positives it had.
 
 ## Blind Spots and Assumptions
 An author who knows the ruleset: renamed strings, encrypted payloads, split

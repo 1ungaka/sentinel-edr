@@ -273,7 +273,7 @@ func (f *cfbFile) chain(start uint32) []uint32 {
 		if cur == endOfChain || cur >= maxRegSect {
 			break
 		}
-		if int(cur) >= len(f.fat) {
+		if uint64(cur) >= uint64(len(f.fat)) {
 			f.warn("FAT chain index out of range")
 			break
 		}
@@ -427,7 +427,7 @@ func (f *cfbFile) readMini(start uint32, size uint64) []byte {
 		if cur == endOfChain || cur >= maxRegSect {
 			break
 		}
-		if int(cur) >= len(f.miniFat) {
+		if uint64(cur) >= uint64(len(f.miniFat)) {
 			f.warn("MiniFAT index out of range")
 			break
 		}

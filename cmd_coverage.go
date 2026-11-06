@@ -31,7 +31,7 @@ func cmdCoverage(args []string, stdout, stderr io.Writer) int {
 	includeInfo := fs.Bool("include-info", false, "list weight-0 informational static classes under unmapped content")
 	frameworksView := fs.Bool("frameworks", false, "append the Unified Kill Chain sequencing view (text format)")
 	quiet := fs.Bool("quiet", false, "suppress progress lines on stderr")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if fs.NArg() != 0 {

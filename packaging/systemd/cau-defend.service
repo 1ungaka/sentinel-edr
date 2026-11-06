@@ -1,0 +1,146 @@
+# Runs `cau defend`: every detection layer at once, incidents correlated across
+# them, new files scanned as they land.
+#
+# As shipped this DEFENDS, it does not just watch: a confirmed incident gets its
+# process frozen and its file moved to the vault, and the kernel and firewall
+# blocks arm themselves if the host can do them. Every default action is
+# reversible on purpose — 'stop' leaves the process's memory intact to examine,
+# the vault restores — and none of them fire on one layer's opinion. What counts
+# as confirmed is in `cau defend --help`.
+#
+# To watch before you let it act, add --report-only to ExecStart and read
+# /var/log/cau/defend.jsonl for a while. It still detects, alerts and forwards;
+# it just changes nothing. The same switch lives in /etc/cau/cau.conf as
+# `report-only = true`, which does not need this unit edited.
+#
+# Settings belong in /etc/cau/cau.conf rather than here where it is practical:
+# that file is the only one whose contents can be signed into the integrity
+# baseline, which is what stops an edit to the SIEM address silently redirecting
+# this agent's incident stream. See packaging/cau.conf.
+#
+# Its sandbox differs from cau-daemon.service on purpose, and each difference is a
+# layer that would otherwise fail silently, looking healthy and seeing nothing:
+#   ProcSubset=pid and ProtectProc=invisible would hide every other process;
+#   PrivateTmp would show the watcher an empty private /tmp;
+#   PrivateDevices would hide /dev/shm;
+#   ProtectSystem=strict without ReadWritePaths would stop quarantine.
+#
+# Install: copy to /etc/systemd/system/, then
+#   systemctl daemon-reload && systemctl enable --now cau-defend.service
+# The optional kernel guard is cau-kernel's cau-kernel-guard.service.
+#
+# This unit appends to /var/log/cau/defend.jsonl and is meant to be left
+# running, so install packaging/logrotate/cau to /etc/logrotate.d/cau as well
+# (both packages do; `make install-logrotate` does it from a source tree).
+# Without rotation the agent eventually fills the disk it is protecting.
+#
+# To forward every incident to a SIEM as an OCSF Detection Finding, add the
+# forwarder flags to ExecStart and put the password in the environment rather
+# than on argv, which is world-readable in /proc/<pid>/cmdline:
+#   ExecStart=/usr/bin/cau defend ... --wazuh-url https://wazuh.example:55000 \
+#       --wazuh-user cau-agent --wazuh-password-env WAZUH_PASSWORD
+#   EnvironmentFile=/etc/cau/forward.env      # WAZUH_PASSWORD=..., chmod 0600
+# Forwarding also needs the manager reachable, so widen RestrictAddressFamilies
+# to "AF_UNIX AF_INET AF_INET6" below: as shipped this unit has no network at
+# all, which is right for a report-only agent and wrong for a forwarding one.
+
+# The network layer reads /proc only, so DETECTION works exactly as shipped.
+# Network RESPONSE needs more: nft and iptables change a ruleset over netlink,
+# which takes both a capability and an address family a tight sandbox would
+# drop. Since --netblock is on by default, this unit grants exactly those two
+# (CAP_NET_ADMIN, AF_NETLINK, below) so the blocker arms on a host that has a
+# firewall. Shipping the default on while the sandbox guaranteed it could never
+# work would have meant a warning on every boot and a unit whose own header was
+# untrue.
+#
+# Starting this unit on a host with nftables therefore creates an empty `inet
+# cau` table with its own chains at the filter hooks, before any incident: the
+# ruleset is put in place once so a block is a set element rather than a rule
+# change under pressure. It is cau's own table and nothing else is read or
+# edited, `cau net blocks` shows what is in it, and `cau net clear` removes it
+# entirely. An operator expecting the firewall untouched until something happens
+# should know that, which is why it is written here.
+#
+# The blocks are reversible and expire after --block-ttl (1h by default), and
+# the host's own addresses, its gateways and its resolvers are never blocked
+# whatever an incident says. On a host with neither nft nor iptables the agent
+# finds out at startup, says so in one line and leaves the blocker off; the rest
+# of the defence is unaffected and nothing fails silently per incident.
+#
+# To leave the network plane read-only instead, set `netblock = false` in
+# /etc/cau/cau.conf and drop CAP_NET_ADMIN and AF_NETLINK below. The config side
+# alone is enough to stop it blocking; removing the capability as well is what
+# makes it so the agent could not block even if its configuration said to.
+# --sever also needs the ss tool present in the unit's filesystem view.
+#
+# To take in telemetry from other hosts or sensors, give the directory to
+# --ingest and add it to ReadWritePaths only if something in this unit writes
+# there; reading needs nothing beyond ProtectSystem allowing the path:
+#   ExecStart=/usr/bin/cau defend ... --ingest /var/lib/cau/telemetry
+
+[Unit]
+Description=CAU EDR layered defence (correlation, real-time file watch, response)
+Documentation=https://github.com/s-b-repo/cau
+After=network-online.target cau-kernel-guard.service
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+WatchdogSec=60s
+Restart=always
+RestartSec=10
+KillSignal=SIGTERM
+TimeoutStopSec=60
+Nice=10
+ExecStartPre=-/usr/bin/cau selftest
+# --kernel-events is safe without the guard: a missing log only means no events.
+ExecStart=/usr/bin/cau defend --kernel-events /run/cau/kernel-events.jsonl --format json
+StandardOutput=append:/var/log/cau/defend.jsonl
+StandardError=journal
+
+# Root, narrowed to what the layers need: reading any file and any process's
+# /proc entries (fd, exe, maps), signalling a confirmed process, and moving a
+# confirmed file into the vault.
+# CAP_NET_ADMIN is here because --netblock is on by default: without it every
+# block fails with EPERM on every start, which is the worst of both worlds — the
+# unit claims to block and never does. Drop it, and set `netblock = false` in
+# /etc/cau/cau.conf, if you would rather this agent could not touch the firewall.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE CAP_KILL CAP_DAC_OVERRIDE CAP_FOWNER CAP_NET_ADMIN
+StateDirectory=cau
+LogsDirectory=cau
+UMask=0077
+
+ProtectSystem=strict
+ReadWritePaths=/var/log/cau /var/lib/cau /tmp /var/tmp /dev/shm -/var/www -/srv
+ProtectHome=read-only
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# No network: a report-only agent has nothing to talk to, and this closes the
+# most useful socket an attacker who reached this process could ask for. If you
+# enable the SIEM forwarder (--wazuh-url), replace this with the line below or
+# every delivery fails with EPERM:
+#   RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+#
+# AF_NETLINK is included because nft and iptables reach the kernel over it, and
+# --netblock is on by default. There is still no AF_INET or AF_INET6 here, so as
+# shipped this agent cannot open a network connection at all: add those two only
+# when you turn the SIEM forwarder on.
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

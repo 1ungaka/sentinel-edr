@@ -116,6 +116,117 @@ Add benign samples in the proportion you expect in production if you want a
 precision number too: a corpus that is 95 % malware makes every detector look
 precise.
 
+### The lab corpus
+
+`corpus/heldout` needs an API key and live malware, and has never been populated,
+so until the lab corpus existed the only recall number in this repository was
+smoke's 100 %, which its own documentation disowns. The lab corpus needs neither.
+It measures the engine against real offensive tooling a Kali host already ships,
+plus payloads `msfvenom` generates, and against benign files from the same
+machine. It reads and hashes files and never runs one, and nothing it produces is
+committed.
+
+```sh
+scripts/build-lab-corpus.py generate         # msfvenom payloads and UPX variants
+scripts/build-lab-corpus.py manifest         # the dev and heldout splits
+scripts/build-lab-corpus.py wide             # 25,000 benign files, heldout excluded
+scripts/build-lab-corpus.py sources <dir>    # revshells, LOLBAS and GTFOBins data
+make eval-lab
+```
+
+Positives are split **by tool or payload**, stratified by class, so no sibling of a
+dev sample sits in heldout. The assignment is a pure function of the group name.
+Detection content is written against `dev` only. From `heldout` only aggregates
+are read, and only to report: per-sample misses and false positives there are
+never looked at, because fixing them would turn the number into a tuning score.
+
+Measured 2026-11-06 on detection sources fingerprinted `eab3cc2e7091f08b`. Numbers
+describe that build: re-run `make eval-lab` after changing detection content.
+
+| Split | Detected | False positives |
+|---|---|---|
+| dev, before | 70/222 (31.5 %) | 5/2,357 (0.21 %) |
+| dev, after | 166/222 (74.8 %) | 3/2,357 (0.13 %) |
+| **heldout, before** | **71/280 (25.4 %)** | **5/2,431 (0.21 %)** |
+| **heldout, after** | **172/280 (61.4 %)** | **6/2,431 (0.25 %)** |
+| wide benign sweep | n/a | 38/25,000 (0.15 %) |
+
+Heldout by class:
+
+| Class | Before | After |
+|---|---|---|
+| Metasploit ELF | 0/6 | 6/6 |
+| Metasploit executables and DLLs | 8/16 | 16/16 |
+| Metasploit raw shellcode | 0/11 | 11/11 |
+| Metasploit script and source formats | 10/34 | 32/34 |
+| Windows hacktools | 9/13 | 9/13 |
+| Offensive PowerShell | 44/181 | 91/181 |
+| Web shells | 0/17 | 7/17 |
+| UPX-packed hacktools | 0/2 | 0/2 |
+
+Reverse-shell templates from [revshells](https://github.com/0dayCTF/reverse-shell-generator)
+have their own split, by tool: 37/37 on the half the vectors were written from and
+**34/39 (87.2 %)** on the half that was never displayed.
+
+Read these numbers for what they are:
+
+- **This is not a malware detection rate.** These are public offensive tools, not
+  samples from intrusions. `make eval-recall` over real malware remains the number
+  that matters and remains unmeasured.
+- **Unseen tool, not unseen author.** Metasploit payloads share stubs, so a heldout
+  payload is a new payload from a framework dev has seen. The same goes for a
+  heldout PowerShell directory of a framework whose other directories are in dev,
+  and the one-liners are shapes any detection author already knows.
+- **The heuristics were tuned on this tool set** before this split existed, so
+  their contribution to heldout is not independent. `tradecraft` was written after.
+- **Some positives cannot be detected, and stay in the denominator.** A module
+  loader or a joke script carries no malicious behaviour, and several Laudanum
+  files never execute anything. Nothing was relabelled to improve a number.
+- **Windows specificity is thin.** The benign set is a Linux host's: about 900 PE
+  files and fewer than 100 PowerShell scripts. A Windows estate's admin scripts
+  have not been measured, so treat `tradecraft.script.*` false-positive rates there
+  as unknown.
+- **Heldout was read twice**, baseline and final, aggregates only.
+
+The wide sweep's 4 `tradecraft` hits are all genuine offensive material shipped by
+Kali packages: two `davtest` web shells, the `webacoo` generator and the `dploot`
+package description. The other hits are the older detectors, chiefly the stego and
+heuristic classes in [Limitations](limitations.md).
+
+**With a third-party rule set.** Adding [Neo23x0/signature-base](https://github.com/Neo23x0/signature-base)
+(commit 36ab704, 5,230 rules alongside the bundled ones, Detection Rule License)
+took heldout to **197/280 (70.4 %)** with 7/2,431 false positives, and dev to
+180/222, on the build one step before the final numbers above. The wide sweep goes from 38 to 48 hits of 25,000, and nearly every added
+YARA hit is an offensive tool Kali ships (`creddump7`, `sqlninja`, `dsniff`, Veil,
+`commix`) that the benign filter did not exclude, not ordinary software flagged by
+mistake. On a host that does not carry those tools the rate should be lower, which
+this corpus cannot measure. It stays opt-in: a YARA hit is MALICIOUS, which
+`--quarantine` acts on, so a large external rule set is an operator's decision, and
+it costs compile time at start and scan time per file. Heldout has now been read
+six times, aggregates only, with nothing changed in response.
+
+Four catalogues measure **coverage, never a detection rate**, because the
+content was written from them and much of what they list is harmless alone:
+[GTFOBins](https://gtfobins.github.io), [LOLBAS](https://lolbas-project.github.io)
+and the lolol.farm family ([LOLC2](https://lolc2.github.io),
+[LOLFSaaS](https://lolfsaas.github.io), [LOTTunnels](https://lottunnels.github.io),
+[LOTWebhooks](https://lotwebhooks.github.io)) are all drawn on by the tradecraft
+pass. An `explorer.exe` launch, a plain `regsvr32 /s`, `sudo sh -c` or a
+Microsoft Graph documentation link all stay quiet by design, since a binary or
+a hostname proves nothing on its own. GTFOBins network shells cover 32/34 (the
+rest are a VS Code tunnel and an attacker-side listener); the GTFOBins
+`sudo`/setuid breakouts are detected by shape, not by binary name; LOLBAS
+77/374 are recognised, including the download / proxy-exec gap-fill shapes
+from the LOLBAS-2024 round (`certreq`, `GfxDownloadWrapper`, `ms-appinstaller`,
+`Microsoft.Workflow.Compiler`, `AgentExecutor`, `Register-CimProvider`); the
+LOLC2 catalogue covers all 56 abused services with per-service URL vectors,
+split across host-only (score 3) and specific-abusable-path (score 5);
+LOTWebhooks covers 41/41 webhook destinations and LOTTunnels covers 92/92
+tunnel domains. The ArcticFox detection-bypass catalogue
+(<https://github.com/s-b-repo/arcticfox-c3/blob/main/docs/Detection-Bypasses.md>)
+contributes a parallel row: every one of the twelve techniques it describes
+has a paired-signal detector in `scanner/tradecraft/bypass_vectors.go`.
+
 ### The smoke corpus
 
 `corpus/smoke` is synthetic and committed: plain-text files carrying the
@@ -216,6 +327,7 @@ technique is a regression and a rule that adds one has to be recorded with
 | `heuristic` | the score reaches the threshold | `heuristic/score` plus one `heuristic/<category>` per category |
 | `static` | the static score reaches the threshold | `static/score`, one `static/<class>` per scored anomaly, `static/fuzzy/<type>` per similarity match |
 | `stego` | the stego score reaches the threshold | `stego/score` plus one `stego/<class>` per scored finding |
+| `lnk`, `ole`, `pdf`, `iso`, `linuxpkg`, `peeler`, `archive`, `chm`, `tradecraft` | the pass reaches its threshold | `<pass>/score` plus one per finding, read back from the engine's own result so the harness decides nothing the scanner did not |
 | `fusion` | the fused verdict is suspicious **by corroboration only** | `fusion/corroborated` plus `fusion/agreed/<source>` |
 
 The fusion detector runs the whole engine but reports nothing a single

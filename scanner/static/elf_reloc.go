@@ -137,6 +137,10 @@ func (e *ELF) relativeAddends(data []byte) map[uint64]uint64 {
 			n = maxELFRelocs
 		}
 		for i := uint64(0); i < n; i++ {
+			// i*ent cannot wrap (i < sz/ent), but base+int(i*ent) can.
+			if i*ent > uint64(len(data)) {
+				break
+			}
 			p := base + int(i*ent)
 			if p+int(want) > len(data) {
 				break
@@ -172,6 +176,10 @@ func (e *ELF) relativeAddends(data []byte) map[uint64]uint64 {
 			n = maxELFRelocs
 		}
 		for i := uint64(0); i < n; i++ {
+			// i*ent cannot wrap (i < sz/ent), but base+int(i*ent) can.
+			if i*ent > uint64(len(data)) {
+				break
+			}
 			p := base + int(i*ent)
 			if p+int(want) > len(data) {
 				break
@@ -295,13 +303,13 @@ func (e *ELF) parseVersions(data []byte) {
 			return ""
 		}
 		so, ss, ok := e.fileRange(sec.Offset, sec.Size)
-		if !ok || int(off) >= ss {
+		if !ok || uint64(off) >= uint64(ss) {
 			return ""
 		}
 		return cstring(data, so+int(off), maxNameLen)
 	}
 	strtabOf := func(link uint32) *ELFSection {
-		if int(link) < len(e.Sections) {
+		if uint64(link) < uint64(len(e.Sections)) {
 			return &e.Sections[link]
 		}
 		return nil
@@ -317,14 +325,14 @@ func (e *ELF) parseVersions(data []byte) {
 			}
 			strs := strtabOf(s.Link)
 			p := off
-			for recs := 0; recs < maxELFVersions && p+16 <= off+sz; recs++ {
+			for recs := 0; recs < maxELFVersions && p >= off && p+16 <= off+sz; recs++ {
 				vnCnt := int(r.Uint16(data[p+2:]))
 				vnFile := r.Uint32(data[p+4:])
 				vnAux := int(r.Uint32(data[p+8:]))
 				vnNext := int(r.Uint32(data[p+12:]))
 				need := ELFVersionNeed{File: str(strs, vnFile)}
 				ap := p + vnAux
-				for a := 0; a < vnCnt && a < maxELFVersions && ap+16 <= off+sz; a++ {
+				for a := 0; a < vnCnt && a < maxELFVersions && ap >= off && ap+16 <= off+sz; a++ {
 					vnaName := r.Uint32(data[ap+8:])
 					vnaNext := int(r.Uint32(data[ap+12:]))
 					if v := str(strs, vnaName); v != "" {
@@ -350,7 +358,7 @@ func (e *ELF) parseVersions(data []byte) {
 			}
 			strs := strtabOf(s.Link)
 			p := off
-			for recs := 0; recs < maxELFVersions && p+20 <= off+sz; recs++ {
+			for recs := 0; recs < maxELFVersions && p >= off && p+20 <= off+sz; recs++ {
 				vdFlags := r.Uint16(data[p+2:])
 				vdCnt := int(r.Uint16(data[p+6:]))
 				vdAux := int(r.Uint32(data[p+12:]))
@@ -358,7 +366,7 @@ func (e *ELF) parseVersions(data []byte) {
 				// vd_flags bit 0x1 is VER_FLG_BASE: the object's own soname, not
 				// a defined version. Its first aux name is skipped.
 				ap := p + vdAux
-				for a := 0; a < vdCnt && a < maxELFVersions && ap+8 <= off+sz; a++ {
+				for a := 0; a < vdCnt && a < maxELFVersions && ap >= off && ap+8 <= off+sz; a++ {
 					vdaName := r.Uint32(data[ap:])
 					vdaNext := int(r.Uint32(data[ap+4:]))
 					if v := str(strs, vdaName); v != "" && (a > 0 || vdFlags&0x1 == 0) {

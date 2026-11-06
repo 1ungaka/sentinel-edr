@@ -438,6 +438,8 @@ func AddFuzzySignature(dbPath, typ, digest, threatName string) error {
 			r.Close()
 		}
 	}
-	_, err = fmt.Fprintf(f, "%s%s|%s|%s\n", prefix, t, h, name)
-	return err
+	if _, err = fmt.Fprintf(f, "%s%s|%s|%s\n", prefix, t, h, name); err != nil {
+		return err
+	}
+	return f.Close() // the deferred one is then a no-op; this one reports the flush
 }

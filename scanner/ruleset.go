@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	yara "github.com/hillu/go-yara/v4"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // RuleSource is a single unit of YARA source that can be compiled into a
@@ -218,6 +220,15 @@ func compileOnce(sources []RuleSource) compilePass {
 	}
 	defer compiler.Destroy()
 
+	// Inline text comes from an MCP client, not the operator's rules directory.
+	// include would read any file this process can, past the path sandbox.
+	for i := range sources {
+		if sources[i].Text != "" {
+			compiler.DisableIncludes()
+			break
+		}
+	}
+
 	for i := range sources {
 		if aerr := addRuleSource(compiler, sources[i]); aerr != nil {
 			return compilePass{
@@ -391,7 +402,7 @@ func collectRuleFiles(path string) ([]string, error) {
 	}
 
 	var files []string
-	err = filepath.Walk(path, func(p string, fi os.FileInfo, werr error) error {
+	err = filepath.Walk(safefs.WalkRoot(path), func(p string, fi os.FileInfo, werr error) error {
 		if werr != nil {
 			// An unreadable sub-directory must not abort the whole load.
 			if fi != nil && fi.IsDir() {

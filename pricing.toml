@@ -31,9 +31,10 @@ per_host_charge = 0.0
 metered = false
 license_check = "none — there is no license boundary in the engine or the agent"
 permanently_free = [
-  "all detection: hash, YARA, heuristics, static structure, stego, encchain, peel, lnk, ole, pdf, iso, linuxpkg, archive, chm, fusion",
+  "all detection: hash, YARA, heuristics, static structure, stego, encchain, peel, lnk, ole, pdf, iso, linuxpkg, archive, chm, tradecraft, fusion",
   "all on-host prevention/response: quarantine, restore, block, kill, canaries",
   "cau-mcp (the MCP server), the evaluation harness, JSON/SARIF/OCSF reports, CI exit codes",
+  "SIEM forwarders the agent speaks to directly — Wazuh Manager via the REST API (shipped: cau scan --wazuh-url). syslog, Splunk HEC, Elastic/OpenSearch bulk and OCSF Lake sinks follow the same rule and ship free when added.",
   "detection-content updates through the signed update channel (air-gapped bundle included)",
 ]
 

@@ -115,7 +115,11 @@ func (s *Sandbox) contains(real string) bool {
 		if real == root {
 			return true
 		}
-		if strings.HasPrefix(real, root+string(os.PathSeparator)) {
+		prefix := root
+		if !strings.HasSuffix(prefix, string(os.PathSeparator)) { // "/" already ends in one
+			prefix += string(os.PathSeparator)
+		}
+		if strings.HasPrefix(real, prefix) {
 			return true
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/s-b-repo/cau/internal/intel"
+	"github.com/s-b-repo/cau/internal/parallel"
 	"github.com/s-b-repo/cau/internal/report"
 	"github.com/s-b-repo/cau/scanner/linuxpkg"
 )
@@ -82,7 +83,7 @@ func cmdInstalled(args []string, stdout, stderr io.Writer) int {
 	feedPath := fs.String("feed", "", "abuse-intel feed file")
 	dpkgInfo := fs.String("dpkg-info", defaultDpkgInfo, "dpkg info directory")
 	pacmanLocal := fs.String("pacman-local", defaultPacmanLocal, "pacman local database directory")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *format != "text" && *format != "json" {
@@ -126,7 +127,7 @@ func cmdInstalled(args []string, stdout, stderr io.Writer) int {
 		}
 		for _, p := range res.Flagged {
 			fmt.Fprintln(stdout)
-			fmt.Fprintf(stdout, " [!] %s (%s) score %d  scripts: %s\n", p.Name, p.Manager, p.Score, strings.Join(p.Scripts, ","))
+			fmt.Fprintf(stdout, " [!] %s (%s) score %d  scripts: %s\n", report.TermSafe(p.Name), p.Manager, p.Score, report.TermSafe(strings.Join(p.Scripts, ",")))
 			for _, fnd := range p.Findings {
 				tag := ""
 				if fnd.Technique != "" {
@@ -137,7 +138,7 @@ func cmdInstalled(args []string, stdout, stderr io.Writer) int {
 				if fnd.Evidence != "" {
 					detail += ": " + fnd.Evidence
 				}
-				fmt.Fprintf(stdout, "       %s\n", truncStr(detail, 200))
+				fmt.Fprintf(stdout, "       %s\n", truncStr(report.TermSafe(detail), 200))
 			}
 		}
 		if len(res.Flagged) == 0 {
@@ -184,8 +185,8 @@ func auditDpkg(infoDir string, threshold int, feed *intel.Feed, res *installedRe
 	if err != nil {
 		return // not a dpkg system, or unreadable
 	}
-	// Group scripts by package name (the file stem before the script suffix).
-	byPkg := map[string]map[string]string{}
+	type script struct{ pkg, kind, path, body string }
+	var scripts []script
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -193,26 +194,32 @@ func auditDpkg(infoDir string, threshold int, feed *intel.Feed, res *installedRe
 		name := e.Name()
 		for _, suf := range dpkgScriptSuffixes {
 			if strings.HasSuffix(name, suf) {
-				pkg := strings.TrimSuffix(name, suf)
-				body := readScript(filepath.Join(infoDir, name))
-				if body == "" {
-					continue
-				}
-				if byPkg[pkg] == nil {
-					byPkg[pkg] = map[string]string{}
-				}
-				byPkg[pkg][strings.TrimPrefix(suf, ".")] = body
+				scripts = append(scripts, script{strings.TrimSuffix(name, suf), strings.TrimPrefix(suf, "."), filepath.Join(infoDir, name), ""})
 				break
 			}
 		}
 	}
-	for pkg, scripts := range byPkg {
-		res.Scanned++
-		findings, score, names := scoreScripts(scripts, feed)
-		if score >= threshold {
-			res.Flagged = append(res.Flagged, installedPkg{Name: pkg, Manager: "dpkg", Scripts: names, Score: score, Findings: findings})
+	parallel.For(len(scripts), 0, func(i int) { scripts[i].body = readScript(scripts[i].path) })
+
+	// Group scripts by package name (the file stem before the script suffix).
+	byPkg := map[string]map[string]string{}
+	for _, s := range scripts {
+		if s.body == "" {
+			continue
 		}
+		if byPkg[s.pkg] == nil {
+			byPkg[s.pkg] = map[string]string{}
+		}
+		byPkg[s.pkg][s.kind] = s.body
 	}
+	pkgs := make([]string, 0, len(byPkg))
+	for pkg := range byPkg {
+		pkgs = append(pkgs, pkg)
+	}
+	sort.Strings(pkgs)
+	scorePackages(len(pkgs), threshold, res, func(i int) (string, string, map[string]string) {
+		return pkgs[i], "dpkg", byPkg[pkgs[i]]
+	}, feed)
 }
 
 func auditPacman(localDir string, threshold int, feed *intel.Feed, res *installedResult) {
@@ -220,19 +227,40 @@ func auditPacman(localDir string, threshold int, feed *intel.Feed, res *installe
 	if err != nil {
 		return
 	}
+	names := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+		if e.IsDir() {
+			names = append(names, e.Name())
 		}
-		installPath := filepath.Join(localDir, e.Name(), "install")
-		body := readScript(installPath)
-		if body == "" {
-			continue
+	}
+	bodies := make([]string, len(names))
+	parallel.For(len(names), 0, func(i int) { bodies[i] = readScript(filepath.Join(localDir, names[i], "install")) })
+	var pkgs []int
+	for i := range bodies {
+		if bodies[i] != "" {
+			pkgs = append(pkgs, i)
 		}
-		res.Scanned++
-		findings, score, names := scoreScripts(map[string]string{".INSTALL": body}, feed)
+	}
+	scorePackages(len(pkgs), threshold, res, func(i int) (string, string, map[string]string) {
+		return names[pkgs[i]], "pacman", map[string]string{".INSTALL": bodies[pkgs[i]]}
+	}, feed)
+}
+
+// scorePackages scores n packages at once. Nearly all of an audit's time is spent
+// here, in the recognisers, and packages have nothing to do with one another.
+func scorePackages(n, threshold int, res *installedResult, pkg func(int) (string, string, map[string]string), feed *intel.Feed) {
+	flagged := make([]*installedPkg, n)
+	parallel.For(n, 0, func(i int) {
+		name, manager, scripts := pkg(i)
+		findings, score, names := scoreScripts(scripts, feed)
 		if score >= threshold {
-			res.Flagged = append(res.Flagged, installedPkg{Name: e.Name(), Manager: "pacman", Scripts: names, Score: score, Findings: findings})
+			flagged[i] = &installedPkg{Name: name, Manager: manager, Scripts: names, Score: score, Findings: findings}
+		}
+	})
+	res.Scanned += n
+	for _, p := range flagged {
+		if p != nil {
+			res.Flagged = append(res.Flagged, *p)
 		}
 	}
 }

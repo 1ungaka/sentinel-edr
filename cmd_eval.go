@@ -91,7 +91,7 @@ func evalValidate(args []string, stdout, stderr io.Writer) int {
 	requireProv := fs.Bool("require-provenance", false, "malware samples without a provenance source are errors, not warnings")
 	maxSize := fs.Int64("max-file-size", 0, "warn about samples larger than this many bytes")
 	asJSON := fs.Bool("json", false, "print the validation result as JSON")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *corpus == "" {
@@ -132,6 +132,7 @@ func evalRun(args []string, stdout, stderr io.Writer) int {
 	noStego := fs.Bool("no-stego", false, "disable the invisible-codepoint (stego) detector")
 	stegoThreshold := fs.Int("stego-threshold", stego.Threshold, "stego detection threshold")
 	encChainThreshold := fs.Int("encchain-threshold", encchain.Threshold, "encoded-executable detection threshold")
+	noFormats := fs.Bool("no-format-passes", false, "disable the format passes (.lnk, OLE, PDF, ISO, Linux package, peeler, archive, CHM, tradecraft)")
 	noFusion := fs.Bool("no-fusion", false, "disable the fusion detector (corroboration of sub-threshold detectors)")
 	jobs := fs.Int("jobs", 0, "samples scanned concurrently (default: number of CPUs)")
 	onError := fs.String("on-error", string(eval.OnErrorExclude), "unscannable samples: exclude, miss (count as FN) or fail")
@@ -142,7 +143,7 @@ func evalRun(args []string, stdout, stderr io.Writer) int {
 	policyPath := fs.String("policy", "", "regression policy JSON for --baseline (default: built-in policy)")
 	verify := fs.Bool("verify-hashes", true, "validate the corpus (with hash verification) before running")
 	quiet := fs.Bool("quiet", false, "no progress on stderr")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *corpus == "" {
@@ -244,10 +245,13 @@ func evalRun(args []string, stdout, stderr io.Writer) int {
 		detectors = append(detectors, scannerbridge.StegoDetector(*stegoThreshold))
 		detectors = append(detectors, scannerbridge.EncChainDetector(*encChainThreshold))
 	}
+	if !*noFormats {
+		detectors = append(detectors, scannerbridge.PassDetectors()...)
+	}
 	if !*noFusion {
 		// The fusion detector runs the same engine the CLI runs and reports
 		// only what corroboration adds.
-		detectors = append(detectors, scannerbridge.FusionDetector(&scanner.Engine{
+		fe := &scanner.Engine{
 			DB:                 db,
 			Yara:               ys,
 			Heuristics:         !*noHeur,
@@ -257,7 +261,11 @@ func evalRun(args []string, stdout, stderr io.Writer) int {
 			FuzzyDB:            fuzzy,
 			Stego:              !*noStego,
 			StegoThreshold:     *stegoThreshold,
-		}))
+		}
+		if !*noFormats {
+			scannerbridge.EnableFormatPasses(fe)
+		}
+		detectors = append(detectors, scannerbridge.FusionDetector(fe))
 	}
 	if len(detectors) == 0 {
 		return fail(stderr, report.ExitUsage, "every detector is disabled")
@@ -328,7 +336,7 @@ func evalReport(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	path := fs.String("report", "", "saved report JSON")
 	format := fs.String("format", "text", "text or json")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *path == "" {
@@ -360,7 +368,7 @@ func evalDiff(args []string, stdout, stderr io.Writer) int {
 	base := fs.String("baseline", "", "baseline report JSON")
 	cand := fs.String("candidate", "", "candidate report JSON")
 	format := fs.String("format", "text", "text or json")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *base == "" && *cand == "" && fs.NArg() == 2 {
@@ -397,7 +405,7 @@ func evalGate(args []string, stdout, stderr io.Writer) int {
 	cand := fs.String("candidate", "", "candidate report JSON")
 	policyPath := fs.String("policy", "", "regression policy JSON (default: built-in policy)")
 	format := fs.String("format", "text", "text or json")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *cand == "" {

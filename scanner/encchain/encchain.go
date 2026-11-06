@@ -15,6 +15,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"os"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // Tunables. Defaults are conservative to keep false positives low; the eval
@@ -336,7 +338,7 @@ func ScanFile(path string, opts Options) *Result {
 		return &Result{FilePath: path, Size: int(min64(fi, 1<<62)), Threshold: opts.threshold(),
 			Skipped: "file over the in-memory size limit"}
 	}
-	data, err := osReadFile(path)
+	data, err := safefs.ReadFile(path, DefaultMaxSize)
 	if err != nil {
 		return &Result{FilePath: path, Threshold: opts.threshold(), Skipped: "read: " + err.Error()}
 	}
@@ -352,8 +354,6 @@ func osStat(p string) (int64, error) {
 	}
 	return fi.Size(), nil
 }
-
-func osReadFile(p string) ([]byte, error) { return os.ReadFile(p) }
 
 func min64(a, b int64) int64 {
 	if a < b {

@@ -31,8 +31,8 @@ EVAL_OUT ?= eval-out
 
 export CGO_ENABLED=1
 
-.PHONY: all build test test-race vet fmt fmt-check lint bench clean install \
-         install-systemd \
+.PHONY: regex-audit eval-lab all build test test-race vet fmt fmt-check lint bench clean install \
+         install-systemd install-logrotate install-config \
          eval eval-validate eval-run eval-gate baseline lint-rules coverage \
          coverage-gate coverage-record fuzz ci build-mcp
 
@@ -69,6 +69,12 @@ fmt-check:
 
 lint: fmt-check vet
 
+# Regex sweep for bug shapes: swallowed errors, memory handling, broken logic and
+# more, over all the code in the tree. Hits are candidates and need reading.
+regex-audit:
+	python3 scripts/regex-audit.py --self-test
+	python3 scripts/regex-audit.py
+
 bench:
 	go test -run '^$$' -bench . -benchmem ./scanner/ ./scanner/static/ ./scanner/stego/
 
@@ -82,18 +88,28 @@ fuzz: build
 	go test ./scanner/static/ -run '^$$' -fuzz '^FuzzParseELF$$' -fuzztime $(FUZZTIME)
 	go test ./scanner/static/ -run '^$$' -fuzz '^FuzzParsePE$$'  -fuzztime $(FUZZTIME)
 	go test ./scanner/static/ -run '^$$' -fuzz '^FuzzAnalyze$$'  -fuzztime $(FUZZTIME)
+	go test ./scanner/static/ -run '^$$' -fuzz '^FuzzParseMachO$$' -fuzztime $(FUZZTIME)
+	go test ./scanner/static/ -run '^$$' -fuzz '^FuzzParseELFDynamic$$' -fuzztime $(FUZZTIME)
 	go test ./scanner/stego/  -run '^$$' -fuzz '^FuzzScan$$'     -fuzztime $(FUZZTIME)
 	go test ./scanner/encchain/ -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
 	go test ./scanner/lnk/    -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
 	go test ./scanner/ole/    -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
 	go test ./scanner/pdf/    -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
 	go test ./scanner/iso/    -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
+	go test ./scanner/linuxpkg/ -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
+	go test ./scanner/chm/    -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
+	go test ./scanner/uefi/   -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
+	go test ./scanner/uefi/   -run '^$$' -fuzz '^FuzzLZMADecode$$' -fuzztime $(FUZZTIME)
+	go test ./scanner/archive/ -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
+	go test ./scanner/tradecraft/ -run '^$$' -fuzz '^FuzzAnalyze$$' -fuzztime $(FUZZTIME)
 	go test ./scanner/        -run '^$$' -fuzz '^FuzzScanHeuristicsData$$' -fuzztime $(FUZZTIME)
 	go test ./internal/peeler/ -run '^$$' -fuzz '^FuzzPeel$$' -fuzztime $(FUZZTIME)
 	go test ./internal/intake/ -run '^$$' -fuzz '^FuzzParse$$' -fuzztime $(FUZZTIME)
 	go test ./internal/release/ -run '^$$' -fuzz '^FuzzParse$$' -fuzztime $(FUZZTIME)
 	go test ./internal/release/ -run '^$$' -fuzz '^FuzzVerifySignature$$' -fuzztime $(FUZZTIME)
 	go test ./internal/updater/ -run '^$$' -fuzz '^FuzzVerify$$' -fuzztime $(FUZZTIME)
+	go test ./internal/bootscan/ -run '^$$' -fuzz '^FuzzAnalyzeDisk$$' -fuzztime $(FUZZTIME)
+	go test ./internal/bootscan/ -run '^$$' -fuzz '^FuzzFirmwareStructures$$' -fuzztime $(FUZZTIME)
 
 # ── Evaluation harness ──────────────────────────────────────────────────────
 
@@ -145,6 +161,28 @@ eval-specificity: build
 		scripts/clean-manifest.sh "$(CLEAN_ROOT)" > $(EVAL_OUT)/specificity-manifest.json; \
 		./$(BINARY) eval run --corpus $(EVAL_OUT)/specificity-manifest.json --rules $(RULES) --out $(EVAL_OUT)/specificity.json; \
 		./$(BINARY) eval report $(EVAL_OUT)/specificity.json; \
+	fi
+
+# Detection rate against real tooling on this host, with no key and no download
+# of live malware: Kali's offensive tools plus msfvenom payloads, against benign
+# files from the same machine. Positives are split by tool, so `heldout` asks
+# about tools the rules were not written from. Author against `dev`; read only
+# the aggregate from `heldout`. Build it once with scripts/build-lab-corpus.py.
+LAB ?= corpus/lab
+eval-lab: build
+	@if [ -f "$(LAB)/manifest-dev.json" ]; then \
+		mkdir -p $(EVAL_OUT)/lab; \
+		reports=""; \
+		for split in dev heldout revshell-dev revshell-heldout catalog; do \
+			if [ -f "$(LAB)/manifest-$$split.json" ]; then \
+				./$(BINARY) eval run --corpus $(LAB)/manifest-$$split.json --rules $(RULES) \
+					--out $(EVAL_OUT)/lab/$$split.json --quiet >/dev/null; \
+				reports="$$reports $(EVAL_OUT)/lab/$$split.json"; \
+			fi; \
+		done; \
+		scripts/lab-summary.py $$reports; \
+	else \
+		echo "eval-lab: run scripts/build-lab-corpus.py generate, then manifest (skipping)"; \
 	fi
 
 # ── Detection content gates ─────────────────────────────────────────────────
@@ -206,8 +244,27 @@ install: build build-mcp
 install-systemd:
 	install -d $(DESTDIR)$(PREFIX)/lib/systemd/system
 	install -m 0644 packaging/systemd/cau-daemon.service $(DESTDIR)$(PREFIX)/lib/systemd/system/
+	install -m 0644 packaging/systemd/cau-defend.service $(DESTDIR)$(PREFIX)/lib/systemd/system/
 	install -m 0644 packaging/systemd/cau-scan.service $(DESTDIR)$(PREFIX)/lib/systemd/system/
 	install -m 0644 packaging/systemd/cau-scan.timer $(DESTDIR)$(PREFIX)/lib/systemd/system/
+
+# Rotation for what the resident daemon writes. This is not optional polish for
+# a service designed to be left running: cau-defend.service appends to
+# /var/log/cau/defend.jsonl forever, so without this the agent eventually fills
+# the disk of the host it is protecting. Installed under /etc, which is why it
+# is its own target rather than part of install-systemd.
+install-logrotate:
+	install -d $(DESTDIR)/etc/logrotate.d
+	install -m 0644 packaging/logrotate/cau $(DESTDIR)/etc/logrotate.d/cau
+
+# The agent configuration. 0644 root-owned on purpose: the agent refuses to read
+# a configuration file that is group- or world-writable, because a file somebody
+# else can rewrite is an input from them rather than configuration. The secret
+# does not live here (see packaging/cau.conf); it goes in /etc/cau/forward.env
+# at 0600, which is created by the operator, not shipped.
+install-config:
+	install -d $(DESTDIR)/etc/cau
+	install -m 0644 packaging/cau.conf $(DESTDIR)/etc/cau/cau.conf
 
 clean:
 	rm -rf $(BINARY) $(BINARY).exe $(EVAL_OUT) coverage.out

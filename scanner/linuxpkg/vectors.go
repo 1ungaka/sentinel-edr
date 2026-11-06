@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/s-b-repo/cau/internal/intel"
+	"github.com/s-b-repo/cau/internal/parallel"
 )
 
 // ── ATT&CK technique ids ───────────────────────────────────────────────────────
@@ -178,34 +179,57 @@ func ScanText(name, body string) []Finding {
 	return scanScripts([]scriptSource{{name: name, body: body}})
 }
 
+// parallelFrom is the amount of text worth spreading across the CPUs. Below it a
+// goroutine costs more than the regexes it would save: the persistence audit calls
+// this once per line, and a whole binary is what makes it take seconds.
+const parallelFrom = 64 << 10
+
 // scanScripts runs every vector over every extracted script and returns one
 // finding per distinct class (first match wins, ordered as scriptVectors). The
 // evidence is a short, single-line, truncated excerpt of the matching text — it
 // never carries the whole script.
+//
+// Each vector's result lands in its own slot and they are merged in table order,
+// so a vector finishing early changes nothing about which one wins a class.
 func scanScripts(scripts []scriptSource) []Finding {
+	size := 0
+	for _, s := range scripts {
+		size += len(s.body)
+	}
+	slots := make([]*Finding, len(scriptVectors))
+	if size >= parallelFrom {
+		parallel.For(len(scriptVectors), 0, func(i int) { slots[i] = firstMatch(scriptVectors[i], scripts) })
+	} else {
+		for i, v := range scriptVectors {
+			slots[i] = firstMatch(v, scripts)
+		}
+	}
+
 	seen := make(map[string]bool, len(scriptVectors))
 	var out []Finding
-	for _, v := range scriptVectors {
-		for _, s := range scripts {
-			loc := v.re.FindStringIndex(s.body)
-			if loc == nil {
-				continue
-			}
-			if seen[v.class] {
-				break
-			}
-			seen[v.class] = true
-			out = append(out, Finding{
+	for _, f := range slots {
+		if f != nil && !seen[f.Class] {
+			seen[f.Class] = true
+			out = append(out, *f)
+		}
+	}
+	return out
+}
+
+// firstMatch returns v's finding in the first script it matches.
+func firstMatch(v vector, scripts []scriptSource) *Finding {
+	for _, s := range scripts {
+		if loc := v.re.FindStringIndex(s.body); loc != nil {
+			return &Finding{
 				Class:     v.class,
 				Score:     v.score,
 				Technique: v.technique,
 				Detail:    v.detail,
 				Evidence:  s.name + ": " + excerpt(s.body, loc[0], loc[1]),
-			})
-			break
+			}
 		}
 	}
-	return out
+	return nil
 }
 
 // excerpt returns a one-line, length-capped slice of body around [start,end),

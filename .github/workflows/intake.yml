@@ -1,0 +1,114 @@
+name: intake
+
+# The weekly intelligence-intake run (PLAN.md, Phase 4).
+#
+# What it does: reads each machine-readable feed the engine consumes, turns it
+# into candidate hash signatures with a provenance record per signature
+# (source, origin, retrieved-at, stated confidence), and runs the candidates
+# through the same evaluation gate every rule change passes.
+#
+# What it never does: commit, push, open a pull request or change the shipped
+# signature database. Nothing from a feed auto-promotes into detection
+# content. The run publishes the candidates and the gate result as an
+# artifact; a human reviews them and promotes through an ordinary pull
+# request, which runs the gates again.
+#
+# It is also the drift check: a feed that parses to zero indicators has moved,
+# changed shape or gone quiet, and the run fails so that somebody looks.
+
+on:
+  schedule:
+    - cron: "17 5 * * 1" # Mondays 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  intake:
+    name: read feeds, gate candidates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OUT: eval-out/intake
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: ./.github/actions/cau-env
+
+      - name: Build
+        run: make build
+
+      # LOLDrivers: known-malicious and known-vulnerable driver hashes, a
+      # public JSON catalog that needs no key. --output writes only what the
+      # shipped database does not already hold; the database is not touched.
+      - name: LOLDrivers
+        run: |
+          mkdir -p "$OUT"
+          ./cau intake --format loldrivers \
+            --url https://www.loldrivers.io/api/drivers.json \
+            --db signatures/hashes.txt \
+            --output "$OUT/loldrivers.txt" \
+            --provenance "$OUT/provenance.jsonl" 2> "$OUT/loldrivers.log"
+          cat "$OUT/loldrivers.log"
+
+      # A TAXII 2.1 collection, when the repository names one. Both values
+      # are optional: without them the step is skipped, not failed.
+      - name: TAXII collection
+        if: ${{ vars.CAU_TAXII_COLLECTION != '' }}
+        env:
+          CAU_INTAKE_AUTH: ${{ secrets.CAU_TAXII_AUTH }}
+          COLLECTION: ${{ vars.CAU_TAXII_COLLECTION }}
+        run: |
+          ./cau intake --taxii "$COLLECTION" \
+            --db signatures/hashes.txt \
+            --output "$OUT/taxii.txt" \
+            --provenance "$OUT/provenance.jsonl" 2> "$OUT/taxii.log"
+          cat "$OUT/taxii.log"
+
+      - name: Drift check (a feed that yields nothing has gone quiet)
+        run: |
+          status=0
+          for log in "$OUT"/*.log; do
+            if grep -q 'parsed 0 indicator(s)' "$log"; then
+              echo "::error::$(basename "$log" .log): the feed parsed to zero indicators"
+              status=1
+            fi
+          done
+          exit $status
+
+      # The candidates face the same gate as any content change: the smoke
+      # corpus scanned with a database that includes them must show no new
+      # false positive and no recall drop against the committed baseline.
+      - name: Gate the candidates
+        run: |
+          cat corpus/smoke/hashes.txt "$OUT"/*.txt > "$OUT/candidate.db"
+          ./cau eval run --corpus corpus/smoke/manifest.json \
+            --db "$OUT/candidate.db" --rules rules \
+            --out "$OUT/report.json"
+          ./cau eval gate --baseline baselines/smoke.json \
+            --candidate "$OUT/report.json" --policy baselines/policy.json
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Intake candidates (not promoted)"
+            for f in "$OUT"/loldrivers.txt "$OUT"/taxii.txt; do
+              [ -f "$f" ] && echo "- \`$(basename "$f")\`: $(wc -l < "$f") new signature(s)"
+            done
+            echo
+            echo "Review the artifact and promote through a pull request."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish candidates, provenance and the gate report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: intake-candidates
+          path: eval-out/intake/
+          retention-days: 30

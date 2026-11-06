@@ -189,3 +189,22 @@ func TestUEFINonFirmwareInert(t *testing.T) {
 		t.Error("IsFirmware true on short junk")
 	}
 }
+
+// edk2 puts a pad file first in every volume that has an extended header, and
+// a pad file's name is all 0xFF. It is a real file: the walk must step over it
+// and inventory what follows, not mistake it for free space and stop.
+func TestUEFIPadFileDoesNotEndTheWalk(t *testing.T) {
+	allFF := make([]byte, 16)
+	for i := range allFF {
+		allFF[i] = 0xff
+	}
+	pad := ffsFile(allFF, 0xF0, make([]byte, 20))
+	driver := ffsFile(guid16(0x42), 0x07, append(section(0x10, []byte("MZ-driver-body")), section(0x15, ucs2le("AfterPad"))...))
+	r := Analyze(buildFirmware(pad, driver), Options{})
+	if r.Parsed == nil || r.Parsed.Modules != 1 {
+		t.Fatalf("the module after the pad file was not inventoried: %+v", r.Parsed)
+	}
+	if m := r.Parsed.Inventory[0]; m.Name != "AfterPad" || !m.HasPE || m.Type != "DRIVER" {
+		t.Errorf("module: %+v", m)
+	}
+}

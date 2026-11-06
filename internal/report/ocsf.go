@@ -48,6 +48,23 @@ const (
 	ocsfStatusNew    = 1
 )
 
+// The same Detection Finding envelope, exported for the forwarders that emit
+// OCSF from something other than a file scan — the defend daemon's correlated
+// incidents, which have no single Document to render. A SIEM should not be able
+// to tell from the envelope which CAU surface produced an event, so these are
+// the one definition both paths read rather than two that can drift apart.
+const (
+	OCSFCategoryUID  = ocsfCategoryUID
+	OCSFCategoryName = ocsfCategoryName
+	OCSFClassUID     = ocsfClassUID
+	OCSFClassName    = ocsfClassName
+	OCSFActivityID   = ocsfActivityID
+	OCSFActivityName = ocsfActivityName
+	OCSFTypeUID      = ocsfTypeUID
+	OCSFTypeName     = ocsfTypeName
+	OCSFStatusNew    = ocsfStatusNew
+)
+
 // OCSFReporter renders Detection Finding objects.
 type OCSFReporter struct {
 	cfg config
@@ -388,6 +405,18 @@ func (c config) ocsfFinding(doc Document, f File, now int64) ocsfFinding {
 		}
 		titleParts = append(titleParts, fmt.Sprintf("chm help %d/%d", ch.Score, ch.Threshold))
 		fi.Unmapped["chm"] = map[string]any{"score": ch.Score, "threshold": ch.Threshold, "classes": classes}
+	}
+	if tc := f.Tradecraft; tc != nil && tc.Detected {
+		sources = append(sources, "tradecraft")
+		var classes []string
+		for _, fd := range tc.Findings {
+			classes = append(classes, fd.Class)
+			if fd.Technique != "" {
+				techs[fd.Technique] = true
+			}
+		}
+		titleParts = append(titleParts, fmt.Sprintf("tradecraft %d/%d", tc.Score, tc.Threshold))
+		fi.Unmapped["tradecraft"] = map[string]any{"score": tc.Score, "threshold": tc.Threshold, "classes": classes}
 	}
 	if fu := f.Fusion; fu != nil {
 		for _, t := range fu.Techniques {

@@ -20,9 +20,11 @@
 //     was corrupted or tampered with fails closed instead of writing wrong
 //     bytes back onto the live path.
 //
-// The store is single-process: the CLI opens it, does one operation, and
-// exits. Index writes are atomic (temp file + rename) so a crash mid-write
-// leaves the previous index intact.
+// The daemon and the CLI are separate processes sharing one store, so index
+// updates hold a file lock: an entry is the only key to its blob and the
+// original is gone once it is stored, so a lost update is lost data. Index
+// writes are atomic (temp file + rename) so a crash mid-write leaves the
+// previous index intact, and readers need no lock.
 package quarantine
 
 import (
@@ -37,12 +39,15 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // indexName is the JSON index at the root of the store; blobSubdir holds the
 // masked file bodies, one per entry, named by entry ID.
 const (
 	indexName  = "index.json"
+	lockName   = "index.lock"
 	blobSubdir = "blobs"
 
 	// indexVersion lets a future format change be detected rather than
@@ -120,22 +125,33 @@ func Open(dir string) (*Store, error) {
 		return nil, fmt.Errorf("quarantine: create store: %w", err)
 	}
 	s := &Store{dir: dir}
-	// Touch the index so a fresh vault is well-formed on disk and subsequent
-	// reads do not have to special-case "no index yet".
-	if _, err := os.Stat(s.indexPath()); errors.Is(err, os.ErrNotExist) {
-		if err := s.writeIndex(&index{Version: indexVersion}); err != nil {
-			return nil, err
+	err := s.withLock(func() error {
+		// Touch the index so a fresh vault is well-formed on disk and subsequent
+		// reads do not have to special-case "no index yet".
+		if _, err := os.Stat(s.indexPath()); errors.Is(err, os.ErrNotExist) {
+			return s.writeIndex(&index{Version: indexVersion})
+		} else if err != nil {
+			return fmt.Errorf("quarantine: stat index: %w", err)
 		}
-	} else if err != nil {
-		return nil, fmt.Errorf("quarantine: stat index: %w", err)
-	} else {
 		// Validate the existing index eagerly so Open is the single place a
 		// corrupt or future-version vault is reported.
-		if _, err := s.readIndex(); err != nil {
-			return nil, err
-		}
+		_, err := s.readIndex()
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
 	return s, nil
+}
+
+// withLock runs fn holding the store's index lock.
+func (s *Store) withLock(fn func() error) error {
+	unlock, err := lockFile(filepath.Join(s.dir, lockName))
+	if err != nil {
+		return fmt.Errorf("quarantine: lock index: %w", err)
+	}
+	defer unlock()
+	return fn()
 }
 
 func (s *Store) indexPath() string         { return filepath.Join(s.dir, indexName) }
@@ -153,17 +169,12 @@ func (s *Store) Quarantine(path, threatName string, keepOriginal bool) (Entry, e
 	if err != nil {
 		return Entry{}, fmt.Errorf("quarantine: resolve path: %w", err)
 	}
-	info, err := os.Lstat(abs)
-	if err != nil {
-		return Entry{}, fmt.Errorf("quarantine: stat %s: %w", abs, err)
-	}
-	if !info.Mode().IsRegular() {
-		return Entry{}, fmt.Errorf("quarantine: %s is not a regular file", abs)
-	}
-	if info.Size() > maxEntrySize {
+	// The path is attacker-writable and this runs privileged: a link swapped in
+	// after an lstat would pull /etc/shadow into the vault. The open refuses it.
+	data, info, err := safefs.ReadFileNoFollow(abs, maxEntrySize)
+	if errors.Is(err, safefs.ErrTooLarge) {
 		return Entry{}, ErrTooLarge
 	}
-	data, err := os.ReadFile(abs)
 	if err != nil {
 		return Entry{}, fmt.Errorf("quarantine: read %s: %w", abs, err)
 	}
@@ -189,7 +200,7 @@ func (s *Store) Quarantine(path, threatName string, keepOriginal bool) (Entry, e
 		ID:            id,
 		OriginalPath:  abs,
 		ThreatName:    threatName,
-		Size:          info.Size(),
+		Size:          int64(len(data)),
 		Mode:          info.Mode().Perm(),
 		SHA256:        hex.EncodeToString(orig[:]),
 		StoredSHA256:  hex.EncodeToString(stored[:]),
@@ -296,27 +307,29 @@ func (s *Store) Get(id string) (Entry, error) { return s.find(id) }
 // expire a vault entry the operator has decided on. Deleting a non-existent ID
 // returns ErrNotFound.
 func (s *Store) Delete(id string) error {
-	idx, err := s.readIndex()
-	if err != nil {
-		return err
-	}
-	kept := idx.Entries[:0:0]
-	found := false
-	for _, e := range idx.Entries {
-		if e.ID == id {
-			found = true
-			continue
+	return s.withLock(func() error {
+		idx, err := s.readIndex()
+		if err != nil {
+			return err
 		}
-		kept = append(kept, e)
-	}
-	if !found {
-		return ErrNotFound
-	}
-	if err := os.Remove(s.blobPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("quarantine: remove blob: %w", err)
-	}
-	idx.Entries = kept
-	return s.writeIndex(idx)
+		kept := idx.Entries[:0:0]
+		found := false
+		for _, e := range idx.Entries {
+			if e.ID == id {
+				found = true
+				continue
+			}
+			kept = append(kept, e)
+		}
+		if !found {
+			return ErrNotFound
+		}
+		if err := os.Remove(s.blobPath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("quarantine: remove blob: %w", err)
+		}
+		idx.Entries = kept
+		return s.writeIndex(idx)
+	})
 }
 
 // ── internals ────────────────────────────────────────────────────────────────
@@ -360,12 +373,14 @@ func (s *Store) find(id string) (Entry, error) {
 }
 
 func (s *Store) appendEntry(e Entry) error {
-	idx, err := s.readIndex()
-	if err != nil {
-		return err
-	}
-	idx.Entries = append(idx.Entries, e)
-	return s.writeIndex(idx)
+	return s.withLock(func() error {
+		idx, err := s.readIndex()
+		if err != nil {
+			return err
+		}
+		idx.Entries = append(idx.Entries, e)
+		return s.writeIndex(idx)
+	})
 }
 
 func (s *Store) readIndex() (*index, error) {

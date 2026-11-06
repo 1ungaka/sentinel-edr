@@ -46,16 +46,30 @@ and compiled in sorted order into one ruleset. Conventions the bundled
 | `meta.mitre_attack` | the ATT&CK technique id (comma-separated for several); the fusion lattice carries it into fused verdicts, `cau coverage` builds the matrix from it, OCSF output names it |
 | `meta.description`, `meta.author`, `meta.in_the_wild` | rendered in the text report and the SARIF rule |
 
-The bundled rules cover WannaCry, Mimikatz, LokiBot, shellcode prologues,
-PowerShell download cradles and ransomware notes. Measured over Kali's
-`/usr/share/windows-resources` and `/usr/bin`, they fire on mimikatz, wce and
-PowerSploit, on one dual-use tool (`ophcrack`, which embeds mimikatz command
-strings), and on nothing else.
+The bundled rules cover WannaCry, Mimikatz, LokiBot, shellcode (a PEB module walk
+beside an export-name hash), PowerShell download cradles, ransomware notes, the
+Windows netcat lineage with its shell relay compiled in, and PEASS scripts wrapped
+into an ELF. Behaviour that names no family belongs to the
+[tradecraft pass](detectors.md#tradecraft), not to a YARA rule: a YARA hit is
+MALICIOUS, which `--quarantine` acts on. `ophcrack`, which embeds mimikatz command
+strings, is a known false positive.
+
+Hash feeds stay an operator's choice. `cau intake --format loldrivers --input
+drivers.json` turns the [LOLDrivers](https://www.loldrivers.io/api/drivers.json)
+catalogue into signatures, 6,682 on 2026-11-06, but most of its entries are
+legitimate vendor drivers that are vulnerable, and a hash hit is MALICIOUS, so the
+database does not ship them.
 
 `cau rules lint` checks all of the above plus compile diagnostics, technique
 id shape, strings under four bytes, hex written as text and trivially true
 conditions; `make lint-rules` runs it in CI and errors fail the build. `cau
 rules list` prints the compiled inventory with level, family and technique.
+
+`--rules` replaces the bundled set rather than adding to it, so to extend it copy
+both into one directory: a directory is walked recursively into one ruleset.
+Measured, [signature-base](https://github.com/Neo23x0/signature-base) beside the
+bundled rules took heldout from about 60 % to 70.4 %; see
+[Evaluation](evaluation.md#the-lab-corpus).
 
 For production coverage, point `--rules` at
 [Neo23x0/signature-base](https://github.com/Neo23x0/signature-base),
@@ -85,6 +99,27 @@ entries apply to every file type.
 The shipped database is empty on purpose: fuzzy content arrives through the
 same measured intake as hashes, never hand-typed. `cau add-fuzzy --file`
 computes every digest a sample yields and appends them.
+
+## Tradecraft catalogues (`scanner/tradecraft/`)
+
+The behavioural pass does not ship a file the operator edits; its catalogue
+is Go source, compiled into the binary, so a change is a review and a build.
+The source projects it draws on are stable public datasets:
+
+| Catalogue | File | Shape of what comes out |
+|---|---|---|
+| [GTFOBins](https://gtfobins.github.io) | `extra_vectors.go` | abuse-shaped shell/`sudo`/setuid breakouts (editor bang-escape, `pty.spawn`, `-exec /bin/sh`, `sh -p`, `chmod +s` on a shell) |
+| [LOLBAS](https://lolbas-project.github.io) | `extra_vectors.go` + `script.go` | Windows system-binary download, proxy-execution, credential-dump and recovery-destroy shapes; a binary's name alone proves nothing, so each vector carries the abusive switches |
+| [LOLC2](https://lolc2.github.io) | `c2_cloud_vectors.go` | 56 abused SaaS services, each with the URL paths the catalogued C2 agents hit (per-agent paths on Firebase, Graph mail / drive / Teams writes, Lambda invoke, Google Apps Script `/macros/s/*/exec`, blockchain RPC endpoints) |
+| [LOLFSaaS](https://lolfsaas.github.io) | `c2_cloud_vectors.go` | 127 trusted cloud fronts (`workers.dev`, `pages.dev`, `azurewebsites.net`, `cloudfront.net`, `s3.amazonaws.com`, `appspot.com`, `herokuapp.com`, `firebaseapp.com`) |
+| [LOTWebhooks](https://lotwebhooks.github.io) | `c2_cloud_vectors.go` + `script.go` | 41 webhook destinations (chat, incident, push, messaging) |
+| [LOTTunnels](https://lottunnels.github.io) | `c2_cloud_vectors.go` + `script.go` | 92 reverse-tunnel and ingress-broker domains |
+| [ArcticFox bypasses](https://github.com/s-b-repo/arcticfox-c3/blob/main/docs/Detection-Bypasses.md) | `bypass_vectors.go` | the twelve detection-bypass primitives catalogued there, each detected on a pairing: `memfd_create` + `execveat`, `prctl(PR_SET_NAME)` + a socket/exec, `/etc/ld.so.preload` written, `pam_exec.so` added to a PAM stack, `systemctl edit --full` on a real unit, `/proc/self/exe` unlink, raw `IPPROTO_ICMP` socket + payload decode, `dns.resolver.resolve(..., 'TXT')` + base64 |
+
+Finding classes and their scores are in `scanner/tradecraft/catalog.go`; the
+ATT&CK technique each one maps to is validated against `internal/attack`'s
+table and gated by `baselines/attack-coverage.txt` (run `cau coverage
+--expect <file> --record` to record an intentional change).
 
 ## Content changes are measured
 

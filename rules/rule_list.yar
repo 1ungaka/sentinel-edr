@@ -87,32 +87,30 @@ rule highly_sus_shellcode
 {
     meta:
         author = "CAU"
-        description = "x86/x64 shellcode stubs: PEB walk and API-hashing prologues"
+        description = "x86/x64 shellcode: PEB module walk with a rotate-and-add export hash"
         family = "shellcode"
         mitre_attack = "T1027.007"
         threat_level = 3
         in_the_wild = true
 
     strings:
-        // The previous version of this rule matched the *text* "0x89,0x00,..."
-        // (a C array rendering) and could never fire on real bytes.
-        $b = { 89 00 00 00 60 89 }
-        $c = { 01 D0 50 8B }
-        $d = { 93 31 C0 66 }
-        $e = { 83 EC 04 EB CE }
-        // mov eax, fs:[30h] / mov ebx, fs:[30h]  (x86 PEB access)
-        $peb32a = { 64 A1 30 00 00 00 }
-        $peb32b = { 64 8B ( 1D | 0D | 15 | 35 | 3D ) 30 00 00 00 }
-        // mov rax, gs:[60h]  (x64 PEB access)
-        $peb64 = { 65 48 8B 04 25 60 00 00 00 }
-        // ror 0x0d API-hashing loop. This 3-byte atom is deliberately broad and
-        // only counts toward "3 of them", never alone. Tightening it (to the
-        // ROR encodings C8-CF) or lengthening it is a recall-affecting change
-        // that needs a shellcode corpus to measure first; see PLAN Phase 1.
-        $ror13 = { C1 C? 0D }
+        // fs:[30h] -> Ldr -> module list, x86, in the three forms it takes.
+        $walk32a = { 64 8B ?? 30 8B ?? 0C 8B ?? ?? }
+        $walk32b = { 64 8B ?? 30 00 00 00 8B ?? 0C 8B ?? ?? }
+        $walk32c = { 64 A1 30 00 00 00 8B ?? 0C 8B ?? ?? }
+        // gs:[60h] -> Ldr -> module list, x64.
+        $walk64a = { 65 48 8B ?? 60 48 8B ?? 18 48 8B ?? ?? }
+        $walk64b = { 65 48 8B ?? 25 60 00 00 00 48 8B ?? 18 48 8B ?? ?? }
+        // ror edi/r9d, 13 then add: the conventional export hash. The Go pass
+        // (scanner/tradecraft) accepts any rotate; this rule stays narrow because
+        // a YARA hit is MALICIOUS. The first version of this rule took any three
+        // of a loose set of short atoms, fired on msdia140.dll and missed every
+        // Metasploit stub in the lab corpus (0/11 raw payloads).
+        $hash32 = { C1 CF 0D (01 | 03) }
+        $hash64 = { 41 C1 C9 0D 41 (01 | 03) }
 
     condition:
-        3 of them
+        1 of ($walk*) and 1 of ($hash*)
 }
 
 rule lokibot_stealer
@@ -170,4 +168,40 @@ rule obfuscated_powershell
             (1 of ($dl*) and (1 of ($iex*) or 1 of ($hid*) or $nop or $byp)) or
             (1 of ($enc*) and 1 of ($iex*) and (1 of ($hid*) or $nop or $byp))
         )
+}
+
+rule windows_netcat_shell_relay
+{
+    meta:
+        author = "CAU"
+        description = "Windows netcat lineage with the -e shell relay compiled in (nc.exe, sbd, dbd)"
+        family = "netcat_backdoor"
+        mitre_attack = "T1059.003"
+        threat_level = 3
+
+    strings:
+        $r1 = "SessionReadShellThreadFn" ascii wide
+        $r2 = "SessionWriteShellThreadFn" ascii wide
+        $s1 = "failed to create shell stdout pipe" ascii wide
+        $s2 = "failed to create shell stdin pipe" ascii wide
+        $s3 = "failed to execute shell" ascii wide
+
+    condition:
+        uint16(0) == 0x5A4D and (1 of ($r*) or 2 of ($s*))
+}
+
+rule linpeas_script_in_binary
+{
+    meta:
+        author = "CAU"
+        description = "PEASS privilege-escalation script wrapped into an ELF by sh2bin"
+        family = "linpeas"
+        mitre_attack = "T1082"
+        threat_level = 3
+
+    strings:
+        $w = "carlospolop/sh2bin" ascii wide
+
+    condition:
+        $w
 }

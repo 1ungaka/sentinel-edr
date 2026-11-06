@@ -1,6 +1,9 @@
 package attack
 
-import "testing"
+import (
+	"sort"
+	"testing"
+)
 
 func TestCatalogConsistent(t *testing.T) {
 	for id, tq := range catalog {
@@ -25,7 +28,7 @@ func TestCatalogConsistent(t *testing.T) {
 	if !ValidID("T1027.002") || ValidID("T102") || ValidID("1027") || ValidID("T1027.02") {
 		t.Error("ValidID shape check broken")
 	}
-	if ids := IDs(); len(ids) != len(catalog) || ids[0] != "T1003" {
+	if ids := IDs(); len(ids) != len(catalog) || !sort.StringsAreSorted(ids) {
 		t.Errorf("IDs() = %v", ids)
 	}
 }

@@ -64,7 +64,12 @@ func TestConcealChild(t *testing.T) {
 	if os.Getenv("CAU_HARDEN_CHILD") != "1" {
 		t.Skip("helper invoked by TestConcealInSubprocess")
 	}
+	// Join copies, so this survives whatever concealment does to argv. Flag
+	// values are substrings of os.Args, so their bytes must survive too: when
+	// they did not, a daemon's --dir became NUL bytes and it scanned nothing.
+	before := strings.Join(os.Args, "\x00")
 	c := ConcealProcess()
+	argsOK := strings.Join(os.Args, "\x00") == before
 	comm, _ := os.ReadFile("/proc/self/comm")
 	cmdline, _ := os.ReadFile("/proc/self/cmdline")
 	first := cmdline
@@ -78,6 +83,7 @@ func TestConcealChild(t *testing.T) {
 		" cmdline0=" + string(first) +
 		" commset=" + btoa(c.CommSet) +
 		" cmdmask=" + btoa(c.CmdlineMasked) +
+		" argsok=" + btoa(argsOK) +
 		" stripped=" + strings.Join(c.EnvStripped, ",") +
 		"\n")
 	os.Exit(0)
@@ -122,6 +128,9 @@ func TestConcealInSubprocess(t *testing.T) {
 	name := kv["name"]
 	if name == "" {
 		t.Fatal("child chose no name")
+	}
+	if kv["argsok"] != "1" {
+		t.Fatal("concealment destroyed the program's own arguments")
 	}
 	if kv["commset"] != "1" {
 		t.Error("comm was not set in child")

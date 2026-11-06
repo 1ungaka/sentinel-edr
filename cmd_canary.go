@@ -63,7 +63,7 @@ func canaryPlant(args []string, stdout, stderr io.Writer) int {
 	dir := fs.String("dir", "", "directory to plant decoys in")
 	manifest := fs.String("manifest", "", "baseline manifest file to write")
 	count := fs.Int("count", 5, "how many decoys to plant")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *dir == "" || *manifest == "" {
@@ -89,7 +89,7 @@ func canaryCheck(args []string, stdout, stderr io.Writer) int {
 	// absolute paths, so it is not required; a mismatch warning would be
 	// misleading. Kept undocumented-as-required, parsed to avoid a usage error.
 	_ = fs.String("dir", "", "directory the decoys live in (informational; manifest paths are authoritative)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *manifest == "" {

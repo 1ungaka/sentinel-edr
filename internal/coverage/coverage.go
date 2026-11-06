@@ -32,6 +32,7 @@ import (
 	"github.com/s-b-repo/cau/scanner/pdf"
 	"github.com/s-b-repo/cau/scanner/static"
 	"github.com/s-b-repo/cau/scanner/stego"
+	"github.com/s-b-repo/cau/scanner/tradecraft"
 	"github.com/s-b-repo/cau/scanner/uefi"
 )
 
@@ -51,6 +52,7 @@ const (
 	SourceLinuxPkg   = "linuxpkg"
 	SourceArchive    = "archive"
 	SourceCHM        = "chm"
+	SourceTradecraft = "tradecraft"
 	SourceUEFI       = "uefi"
 	SourcePeeler     = "peeler"
 )
@@ -291,6 +293,15 @@ func Build(in Inputs) *Matrix {
 		})
 	}
 
+	// Behavioural classes (scripts and payload bytes).
+	for _, c := range tradecraft.Classes() {
+		entries = append(entries, Entry{
+			Source: SourceTradecraft, Label: c.Class, Name: c.Class,
+			Technique: c.Technique, Novel: c.Novel, Weight: c.Weight, Tier: TierSuspicious,
+			Description: c.Description,
+		})
+	}
+
 	// UEFI firmware classes.
 	for _, c := range uefi.Classes() {
 		entries = append(entries, Entry{
@@ -383,7 +394,7 @@ func Build(in Inputs) *Matrix {
 			s.Mapped++
 		}
 	}
-	for _, name := range []string{SourceHash, SourceYara, SourceHeuristic, SourceStatic, SourceSimilarity, SourceStego, SourceEncChain, SourceLNK, SourceOLE, SourcePDF, SourceISO, SourceLinuxPkg, SourcePeeler, SourceArchive, SourceCHM, SourceUEFI} {
+	for _, name := range []string{SourceHash, SourceYara, SourceHeuristic, SourceStatic, SourceSimilarity, SourceStego, SourceEncChain, SourceLNK, SourceOLE, SourcePDF, SourceISO, SourceLinuxPkg, SourcePeeler, SourceArchive, SourceCHM, SourceTradecraft, SourceUEFI} {
 		s := counts[name]
 		if s == nil {
 			s = &SourceSummary{Name: name}

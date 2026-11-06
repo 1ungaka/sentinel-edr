@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/s-b-repo/cau/internal/intel"
 	"github.com/s-b-repo/cau/internal/peeler"
+	"github.com/s-b-repo/cau/internal/safefs"
 	"github.com/s-b-repo/cau/scanner/archive"
 	"github.com/s-b-repo/cau/scanner/chm"
 	"github.com/s-b-repo/cau/scanner/encchain"
@@ -22,6 +24,7 @@ import (
 	"github.com/s-b-repo/cau/scanner/pdf"
 	"github.com/s-b-repo/cau/scanner/static"
 	"github.com/s-b-repo/cau/scanner/stego"
+	"github.com/s-b-repo/cau/scanner/tradecraft"
 )
 
 // DefaultMaxInMemory is the largest file the engine reads into memory once and
@@ -29,6 +32,22 @@ import (
 // YARA memory-maps it, and heuristics are skipped with an explicit reason, so a
 // multi-gigabyte sample can never make the scanner allocate its full size.
 const DefaultMaxInMemory int64 = 64 << 20 // 64 MiB
+
+// detectorAttempts is how many times one detector may run on one file. It is
+// bounded because the file is hostile: a panic that repeats must cost a known
+// amount, not a loop an attacker can hold open.
+const detectorAttempts = 2
+
+// DetectorPanic is a detector that panicked on a file. A crash on crafted input is
+// worth a human's attention even when the retry completes, so it is reported
+// either way. Recovered says the retry finished and the detector's opinion is in
+// the result; when false, the file went without that opinion.
+type DetectorPanic struct {
+	Detector  string
+	Value     string
+	Attempts  int
+	Recovered bool
+}
 
 // Engine runs every configured detector over a file with a single read.
 //
@@ -138,6 +157,16 @@ type Engine struct {
 	// CHMThreshold overrides chm.Threshold (0 = package default).
 	CHMThreshold int
 
+	// Tradecraft enables the behavioural pass over scripts and payload bytes.
+	// Its result rides on ScanResult.Tradecraft.
+	Tradecraft bool
+	// TradecraftThreshold overrides tradecraft.Threshold (0 = package default).
+	TradecraftThreshold int
+
+	// beforeDetector, when set, runs at the start of every detector attempt. It
+	// is how a test makes one panic.
+	beforeDetector func(name string)
+
 	// NoFusion leaves ScanResult.Fusion nil. Fusion is on by default because
 	// it costs nothing: it is a view over results already computed.
 	NoFusion bool
@@ -244,6 +273,13 @@ func (e *Engine) chmThreshold() int {
 	return chm.Threshold
 }
 
+func (e *Engine) tradecraftThreshold() int {
+	if e.TradecraftThreshold > 0 {
+		return e.TradecraftThreshold
+	}
+	return tradecraft.Threshold
+}
+
 // ScanFile runs every configured detector over one file. The heuristic result
 // is nil when heuristics are disabled or the file could not be read.
 func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
@@ -259,6 +295,7 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 		if r := recover(); r != nil {
 			res.Warnings = append(res.Warnings,
 				fmt.Sprintf("scan aborted by an internal panic (likely a malformed file): %v", r))
+			res.Panics = append(res.Panics, DetectorPanic{Detector: "engine", Value: fmt.Sprint(r), Attempts: 1})
 			if res.Verdict == VerdictClean {
 				res.Verdict = VerdictError
 				if res.Error == nil {
@@ -289,17 +326,25 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 	res.Size = fi.Size()
 
 	// ── one read ────────────────────────────────────────
+	// The stat above only routes the file. An attacker writing to the scanned
+	// directory can swap it for a FIFO or a device afterwards, so the read itself
+	// must not be able to block or run away.
 	var data []byte
 	var d digests
 	if fi.Size() <= e.maxInMemory() {
-		data, err = os.ReadFile(path)
-		if err != nil {
+		data, err = safefs.ReadFile(path, e.maxInMemory())
+		switch {
+		case errors.Is(err, safefs.ErrTooLarge):
+			data = nil // it grew past the limit after the stat: a large file now
+		case err != nil:
 			return fail(fmt.Errorf("could not read file: %w", err))
 		}
+	}
+	if data != nil {
+		res.Size = int64(len(data))
 		d = hashBytes(data)
 	} else {
-		d, err = hashFile(path)
-		if err != nil {
+		if d, err = hashFile(path); err != nil {
 			return fail(err)
 		}
 	}
@@ -319,221 +364,324 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 		}
 	}
 
+	// ── every detector at once ─────────────────────────
+	// Each reads the same bytes, which none of them writes, and fills only its
+	// own field of res, last thing, so a panic leaves nothing behind and a retry
+	// starts clean. A detector that panics is run again, and the panic is recorded
+	// either way: it costs that detector's opinion at worst and never the verdicts
+	// of the others. Fusion is the one real dependency, so it runs after the join.
+	var mu sync.Mutex
+	note := func(w string) {
+		mu.Lock()
+		defer mu.Unlock()
+		res.Warnings = append(res.Warnings, w)
+	}
+	attempt := func(name string, detector func()) (panicked any) {
+		defer func() { panicked = recover() }()
+		if e.beforeDetector != nil {
+			e.beforeDetector(name)
+		}
+		detector()
+		return nil
+	}
+	var wg sync.WaitGroup
+	run := func(name string, detector func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			p := DetectorPanic{Detector: name}
+			for p.Attempts < detectorAttempts && !p.Recovered {
+				p.Attempts++
+				if r := attempt(name, detector); r == nil {
+					p.Recovered = true
+				} else if p.Value == "" {
+					p.Value = fmt.Sprint(r)
+				}
+			}
+			if p.Attempts == 1 && p.Recovered {
+				return // it simply ran
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			res.Panics = append(res.Panics, p)
+		}()
+	}
+
 	// ── YARA ───────────────────────────────────────────
 	if e.Yara != nil {
-		var matches []YaraMatch
-		var yerr error
-		if data != nil {
-			matches, yerr = e.Yara.ScanMemYaraStrict(data)
-		} else {
-			matches, yerr = e.Yara.ScanFileYaraStrict(path)
-		}
-		if yerr != nil {
-			// Matches collected before the failure are kept: dropping them
-			// would turn a malicious sample into a clean one.
-			res.Warnings = append(res.Warnings, fmt.Sprintf("YARA: %v", yerr))
-		}
-		if len(matches) > 0 {
-			res.YaraMatches = matches
-			res.Verdict = VerdictMalicious
-		}
+		run("yara", func() {
+			var matches []YaraMatch
+			var yerr error
+			if data != nil {
+				matches, yerr = e.Yara.ScanMemYaraStrict(data)
+			} else {
+				matches, yerr = e.Yara.ScanFileYaraStrict(path)
+			}
+			if yerr != nil {
+				// Matches collected before the failure are kept: dropping them
+				// would turn a malicious sample into a clean one.
+				note(fmt.Sprintf("YARA: %v", yerr))
+			}
+			if len(matches) > 0 {
+				res.YaraMatches = matches
+				res.Verdict = VerdictMalicious
+			}
+		})
 	}
 
 	// ── heuristics ─────────────────────────────────────
 	if e.Heuristics {
-		var hr HeuristicResult
-		if data != nil {
-			hr = ScanHeuristicsData(path, data, HeuristicOptions{Threshold: e.threshold()})
-		} else {
-			hr = HeuristicResult{
-				FilePath:  path,
-				Threshold: e.threshold(),
-				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
-					fi.Size(), e.maxInMemory()),
+		run("heuristics", func() {
+			var hr HeuristicResult
+			if data != nil {
+				hr = ScanHeuristicsData(path, data, HeuristicOptions{Threshold: e.threshold()})
+			} else {
+				hr = HeuristicResult{
+					FilePath:  path,
+					Threshold: e.threshold(),
+					Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+						fi.Size(), e.maxInMemory()),
+				}
 			}
-		}
-		h = &hr
+			h = &hr
+		})
 	}
 
 	// ── static / structural ────────────────────────────
 	if e.Static {
-		if data != nil {
-			res.Static = static.Analyze(data, static.Options{
-				Threshold:       e.staticThreshold(),
-				FuzzyDB:         e.FuzzyDB,
-				NoFuzzy:         e.StaticNoFuzzy,
-				SignerBlocklist: e.SignerBlocklist,
-			})
-			res.Static.FilePath = path
-		} else {
-			res.Static = &static.Result{
-				FilePath:  path,
-				Size:      int(fi.Size()),
-				Threshold: e.staticThreshold(),
-				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
-					fi.Size(), e.maxInMemory()),
+		run("static", func() {
+			if data != nil {
+				res.Static = static.Analyze(data, static.Options{
+					Threshold:       e.staticThreshold(),
+					FuzzyDB:         e.FuzzyDB,
+					NoFuzzy:         e.StaticNoFuzzy,
+					SignerBlocklist: e.SignerBlocklist,
+				})
+				res.Static.FilePath = path
+			} else {
+				res.Static = &static.Result{
+					FilePath:  path,
+					Size:      int(fi.Size()),
+					Threshold: e.staticThreshold(),
+					Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+						fi.Size(), e.maxInMemory()),
+				}
 			}
-		}
+		})
 	}
 
 	// ── stego / invisible codepoints ───────────────────
 	if e.Stego {
-		if data != nil {
-			res.Stego = stego.Scan(data, stego.Options{Threshold: e.stegoThreshold()})
-			res.Stego.FilePath = path
-		} else {
-			res.Stego = &stego.Result{
-				FilePath:  path,
-				Size:      int(fi.Size()),
-				Threshold: e.stegoThreshold(),
-				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
-					fi.Size(), e.maxInMemory()),
+		run("stego", func() {
+			if data != nil {
+				res.Stego = stego.Scan(data, stego.Options{Threshold: e.stegoThreshold()})
+				res.Stego.FilePath = path
+			} else {
+				res.Stego = &stego.Result{
+					FilePath:  path,
+					Size:      int(fi.Size()),
+					Threshold: e.stegoThreshold(),
+					Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+						fi.Size(), e.maxInMemory()),
+				}
 			}
-		}
+		})
 	}
 
 	// ── encoded-executable chain ───────────────────────
 	if e.EncChain {
-		if data != nil {
-			res.EncChain = encchain.Analyze(data, encchain.Options{Threshold: e.encChainThreshold()})
-			res.EncChain.FilePath = path
-		} else {
-			res.EncChain = &encchain.Result{
-				FilePath:  path,
-				Size:      int(fi.Size()),
-				Threshold: e.encChainThreshold(),
-				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
-					fi.Size(), e.maxInMemory()),
+		run("encchain", func() {
+			if data != nil {
+				res.EncChain = encchain.Analyze(data, encchain.Options{Threshold: e.encChainThreshold()})
+				res.EncChain.FilePath = path
+			} else {
+				res.EncChain = &encchain.Result{
+					FilePath:  path,
+					Size:      int(fi.Size()),
+					Threshold: e.encChainThreshold(),
+					Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+						fi.Size(), e.maxInMemory()),
+				}
 			}
-		}
+		})
 	}
 
 	// ── Windows Shell Link (.lnk) ──────────────────────
 	if e.LNK {
-		if data != nil {
-			res.LNK = lnk.Analyze(data, lnk.Options{Threshold: e.lnkThreshold()})
-			res.LNK.FilePath = path
-		} else {
-			res.LNK = &lnk.Result{
-				FilePath:  path,
-				Size:      int(fi.Size()),
-				Threshold: e.lnkThreshold(),
-				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
-					fi.Size(), e.maxInMemory()),
+		run("lnk", func() {
+			if data != nil {
+				res.LNK = lnk.Analyze(data, lnk.Options{Threshold: e.lnkThreshold()})
+				res.LNK.FilePath = path
+			} else {
+				res.LNK = &lnk.Result{
+					FilePath:  path,
+					Size:      int(fi.Size()),
+					Threshold: e.lnkThreshold(),
+					Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+						fi.Size(), e.maxInMemory()),
+				}
 			}
-		}
+		})
 	}
 
 	// ── OLE compound-file (VBA macros) ─────────────────
 	if e.OLE {
-		if data != nil {
-			res.OLE = ole.Analyze(data, ole.Options{Threshold: e.oleThreshold()})
-			res.OLE.FilePath = path
-		} else {
-			res.OLE = &ole.Result{
-				FilePath:  path,
-				Size:      int(fi.Size()),
-				Threshold: e.oleThreshold(),
-				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
-					fi.Size(), e.maxInMemory()),
+		run("ole", func() {
+			if data != nil {
+				res.OLE = ole.Analyze(data, ole.Options{Threshold: e.oleThreshold()})
+				res.OLE.FilePath = path
+			} else {
+				res.OLE = &ole.Result{
+					FilePath:  path,
+					Size:      int(fi.Size()),
+					Threshold: e.oleThreshold(),
+					Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+						fi.Size(), e.maxInMemory()),
+				}
 			}
-		}
+		})
 	}
 
 	// ── PDF malicious-document ─────────────────────────
 	if e.PDF {
-		if data != nil {
-			res.PDF = pdf.Analyze(data, pdf.Options{Threshold: e.pdfThreshold()})
-			res.PDF.FilePath = path
-		} else {
-			res.PDF = &pdf.Result{
-				FilePath:  path,
-				Size:      int(fi.Size()),
-				Threshold: e.pdfThreshold(),
-				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
-					fi.Size(), e.maxInMemory()),
+		run("pdf", func() {
+			if data != nil {
+				res.PDF = pdf.Analyze(data, pdf.Options{Threshold: e.pdfThreshold()})
+				res.PDF.FilePath = path
+			} else {
+				res.PDF = &pdf.Result{
+					FilePath:  path,
+					Size:      int(fi.Size()),
+					Threshold: e.pdfThreshold(),
+					Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+						fi.Size(), e.maxInMemory()),
+				}
 			}
-		}
+		})
 	}
 
 	// ── ISO 9660 malicious-container ───────────────────
 	if e.ISO {
-		if data != nil {
-			res.ISO = iso.Analyze(data, iso.Options{Threshold: e.isoThreshold()})
-			res.ISO.FilePath = path
-		} else {
-			res.ISO = &iso.Result{
-				FilePath:  path,
-				Size:      int(fi.Size()),
-				Threshold: e.isoThreshold(),
-				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
-					fi.Size(), e.maxInMemory()),
+		run("iso", func() {
+			if data != nil {
+				res.ISO = iso.Analyze(data, iso.Options{Threshold: e.isoThreshold()})
+				res.ISO.FilePath = path
+			} else {
+				res.ISO = &iso.Result{
+					FilePath:  path,
+					Size:      int(fi.Size()),
+					Threshold: e.isoThreshold(),
+					Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+						fi.Size(), e.maxInMemory()),
+				}
 			}
-		}
+		})
 	}
 
 	// ── Linux software package (.deb/.rpm/Arch/Flatpak/AppImage) ──
 	if e.LinuxPkg {
-		if data != nil {
-			res.LinuxPkg = linuxpkg.Analyze(data, linuxpkg.Options{Threshold: e.linuxPkgThreshold(), Intel: e.Intel})
-			res.LinuxPkg.FilePath = path
-		} else {
-			res.LinuxPkg = &linuxpkg.Result{
-				FilePath:  path,
-				Size:      int(fi.Size()),
-				Threshold: e.linuxPkgThreshold(),
-				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
-					fi.Size(), e.maxInMemory()),
+		run("linuxpkg", func() {
+			if data != nil {
+				res.LinuxPkg = linuxpkg.Analyze(data, linuxpkg.Options{Threshold: e.linuxPkgThreshold(), Intel: e.Intel})
+				res.LinuxPkg.FilePath = path
+			} else {
+				res.LinuxPkg = &linuxpkg.Result{
+					FilePath:  path,
+					Size:      int(fi.Size()),
+					Threshold: e.linuxPkgThreshold(),
+					Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+						fi.Size(), e.maxInMemory()),
+				}
 			}
-		}
+		})
 	}
 
 	// ── obfuscation-chain peeler ───────────────────────
 	if e.Peel {
-		if data != nil {
-			pr := peeler.New().Peel(context.Background(), data)
-			pr.FilePath = path
-			pr.Threshold = e.peelThreshold()
-			res.Peel = &pr
-		} else {
-			res.Peel = &peeler.Result{
-				FilePath:  path,
-				Size:      int(fi.Size()),
-				Threshold: e.peelThreshold(),
-				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
-					fi.Size(), e.maxInMemory()),
+		run("peel", func() {
+			if data != nil {
+				pr := peeler.New().Peel(context.Background(), data)
+				pr.FilePath = path
+				pr.Threshold = e.peelThreshold()
+				res.Peel = &pr
+			} else {
+				res.Peel = &peeler.Result{
+					FilePath:  path,
+					Size:      int(fi.Size()),
+					Threshold: e.peelThreshold(),
+					Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+						fi.Size(), e.maxInMemory()),
+				}
 			}
-		}
+		})
 	}
 
 	// ── compressed container (archive) ─────────────────
 	if e.Archive {
-		if data != nil {
-			res.Archive = archive.Analyze(data, archive.Options{Threshold: e.archiveThreshold()})
-			res.Archive.FilePath = path
-		} else {
-			res.Archive = &archive.Result{
-				FilePath:  path,
-				Size:      int(fi.Size()),
-				Threshold: e.archiveThreshold(),
-				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
-					fi.Size(), e.maxInMemory()),
+		run("archive", func() {
+			if data != nil {
+				res.Archive = archive.Analyze(data, archive.Options{Threshold: e.archiveThreshold()})
+				res.Archive.FilePath = path
+			} else {
+				res.Archive = &archive.Result{
+					FilePath:  path,
+					Size:      int(fi.Size()),
+					Threshold: e.archiveThreshold(),
+					Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+						fi.Size(), e.maxInMemory()),
+				}
 			}
-		}
+		})
 	}
 
 	// ── Compiled HTML Help (CHM) ───────────────────────
 	if e.CHM {
-		if data != nil {
-			res.CHM = chm.Analyze(data, chm.Options{Threshold: e.chmThreshold()})
-			res.CHM.FilePath = path
-		} else {
-			res.CHM = &chm.Result{
-				FilePath:  path,
-				Size:      int(fi.Size()),
-				Threshold: e.chmThreshold(),
-				Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
-					fi.Size(), e.maxInMemory()),
+		run("chm", func() {
+			if data != nil {
+				res.CHM = chm.Analyze(data, chm.Options{Threshold: e.chmThreshold()})
+				res.CHM.FilePath = path
+			} else {
+				res.CHM = &chm.Result{
+					FilePath:  path,
+					Size:      int(fi.Size()),
+					Threshold: e.chmThreshold(),
+					Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+						fi.Size(), e.maxInMemory()),
+				}
+			}
+		})
+	}
+
+	// ── behaviour: scripts and payload bytes ───────────
+	if e.Tradecraft {
+		run("tradecraft", func() {
+			if data != nil {
+				res.Tradecraft = tradecraft.Analyze(data, tradecraft.Options{Threshold: e.tradecraftThreshold()})
+				res.Tradecraft.FilePath = path
+			} else {
+				res.Tradecraft = &tradecraft.Result{
+					FilePath:  path,
+					Size:      int(fi.Size()),
+					Threshold: e.tradecraftThreshold(),
+					Skipped: fmt.Sprintf("file is %d bytes, over the %d byte in-memory limit",
+						fi.Size(), e.maxInMemory()),
+				}
+			}
+		})
+	}
+
+	wg.Wait()
+	sort.Slice(res.Panics, func(i, j int) bool { return res.Panics[i].Detector < res.Panics[j].Detector })
+	for _, p := range res.Panics {
+		if p.Recovered {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("detector %s panicked (likely a malformed file) and completed on retry: %s", p.Detector, p.Value))
+			continue
+		}
+		res.Warnings = append(res.Warnings, fmt.Sprintf("detector %s gave up after %d attempts on an internal panic (likely a malformed file): %s", p.Detector, p.Attempts, p.Value))
+		if res.Verdict == VerdictClean {
+			res.Verdict = VerdictError
+			if res.Error == nil {
+				res.Error = fmt.Errorf("internal panic in detector %s while scanning %s: %s", p.Detector, path, p.Value)
 			}
 		}
 	}
@@ -559,7 +707,7 @@ func (e *Engine) ScanDirectory(root string, progress func(done, total int, path 
 	}
 	var entries []entry
 
-	walkErr := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	walkErr := filepath.Walk(safefs.WalkRoot(root), func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			entries = append(entries, entry{path: path, err: err})
 			if info != nil && info.IsDir() {

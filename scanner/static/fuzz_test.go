@@ -59,3 +59,25 @@ func FuzzParseELF(f *testing.F) {
 		}
 	})
 }
+
+// FuzzParseMachO reaches the universal and load-command parsers, which only see
+// a Mach-O magic the seeds above never produce.
+func FuzzParseMachO(f *testing.F) {
+	f.Add(machoSegment64(0, 16))
+	f.Add(machoSegment64(1, wrapMax))
+	f.Add([]byte{0xca, 0xfe, 0xba, 0xbf, 0, 0, 0, 1})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = ParseMachO(data)
+	})
+}
+
+// FuzzParseELFDynamic starts from a mapped dynamic section, the path that
+// resolves relocations and symbols through file-supplied strides.
+func FuzzParseELFDynamic(f *testing.F) {
+	const slot = loadVA + elfTagsEnd
+	f.Add(dynELF([][2]uint64{{7, slot + 64}, {8, wrapMax}, {9, 1<<63 - 1}, {25, slot}, {27, 8}}))
+	f.Add(dynELF([][2]uint64{{6, slot}, {5, slot}, {10, 16}, {11, 1<<63 - 1}, {4, slot + 64}}))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = ParseELF(data)
+	})
+}

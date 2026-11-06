@@ -43,6 +43,7 @@ started on install, because this is a scanning tool and should not begin
 walking the filesystem unattended without an operator's decision:
 
   cau-daemon.service   resident interval scanner
+  cau-defend.service   every layer correlated, files scanned as they land
   cau-scan.service     oneshot scan (driven by the timer)
   cau-scan.timer       schedules cau-scan.service
 

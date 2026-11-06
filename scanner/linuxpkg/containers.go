@@ -99,8 +99,8 @@ func Detect(data []byte) Format {
 }
 
 // parse dispatches to the per-format parser. It never returns nil.
-func parse(data []byte) *container {
-	switch Detect(data) {
+func parse(data []byte, format Format) *container {
+	switch format {
 	case FormatDeb:
 		return parseDeb(data)
 	case FormatRPM:
@@ -420,7 +420,7 @@ func readAr(data []byte) ([]arMember, string) {
 		name = strings.TrimSuffix(name, "/") // GNU ar terminates names with '/'
 		size := parseDecimal(string(hdr[48:58]))
 		off += 60
-		if size < 0 || off+int(size) > len(data) {
+		if size < 0 || int64(off)+size > int64(len(data)) { // int64: ten digits overflow a 32-bit int
 			return out, "truncated ar member"
 		}
 		out = append(out, arMember{name: name, data: data[off : off+int(size)]})

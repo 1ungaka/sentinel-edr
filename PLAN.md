@@ -154,6 +154,11 @@ sensor row). Limitations are still published — as `partial` states and the
 follow-up worth taking: widen the expectation to track genuinely-uncovered
 techniques as new published gaps, so the counterfactual stays visible.
 
+**Measured 2026-11-06:** the first recall number that is not synthetic. A local lab
+corpus of real offensive tooling, split by tool, took held-out detection from 25.4 %
+to 61.4 % (`docs/evaluation.md`). Recall against real malware (`make eval-recall`)
+is still unmeasured, so the Phase 1 "real corpus" item stays open.
+
 **Not yet shipped (see phases):** the live intelligence-feed *sync* (the intake
 parsers — STIX / MISP / MalwareBazaar / LOLDrivers — and `cau intake` shipped
 2026-11-02; the TAXII client and scheduled pull remain) and the EU-framework
@@ -417,9 +422,15 @@ score, which offset), `yara_test_rule` (against corpus, returns FP/FN), `generat
   `hashes.txt` filler." Each normalizes to validated hash signatures, dedupes against
   the live DB (never re-labels an existing entry), and appends in the DB's own
   `TYPE|hash|name` format; `--input`/stdin or an explicit `--url` fetch (bounded, never
-  automatic), with `--dry-run`/`--output`. Fixture tests per format. **Open:** a TAXII
-  *client* (polling a collection) and the scheduled/weekly sync, which are ops/network
-  wiring on top of these parsers.
+  automatic), with `--dry-run`/`--output`. Fixture tests per format.
+  **TAXII client and weekly sync shipped 2026-11-06:** `cau intake --taxii <collection>`
+  (`internal/intake/taxii.go`) polls a TAXII 2.1 collection with envelope pagination, a
+  persisted `added_after` cursor (`--taxii-state`), HTTPS-only by default, no cross-host
+  redirect, and bounds on pages, objects and bytes; `.github/workflows/intake.yml` runs
+  weekly. **Open:** the workflow has only been dry-run locally (its steps against a file
+  feed), not yet on a GitHub runner, and the client has been tested against protocol-level
+  fixtures, not a live MISP/OpenCTI TAXII server. MalwareBazaar's API now needs a key, so
+  the weekly run reads LOLDrivers plus an optional configured TAXII collection.
 - [~] Release-channel hash updates: `cau update` fetches the latest signed
   `signatures/hashes.txt` asset from GitHub Releases on a pinned repo
   (`s-b-repo/cau`), and the CI release job publishes that asset per tag.
@@ -510,10 +521,19 @@ the discovery index and the weekly drift check that nothing we consume has gone 
 | WTFBins / LoFP | binaries that behave like malware but are innocent, plus generated FP rule sets — seeds the benign corpus for weak-category retuning |
 | LOLRMM / FileSec / Bootloaders / Persistence-Info / LOLSkills | RMM-tool abuse lists, delivery-file extensions, UEFI loaders, persistence-mechanism cross-checks, and YARA over AI agent skill bundles (ties into Phase 3 MCP scanning) |
 
-- [ ] Intake lives in `internal/intake/`: fetchers, parsers, fixture tests, weekly CI run.
+- [x] Intake lives in `internal/intake/`: fetchers, parsers, fixture tests, weekly CI run.
       Every consumed record carries source, retrieved-at and confidence fields. Nothing
       from a feed auto-promotes into shipped detection content — every item still runs the
       Phase 1 gates before promotion. Feeds cut bookkeeping cost, never undermine FP gates.
+      **Shipped 2026-11-06.** `cau intake --provenance <file>` appends a JSON line per new
+      signature (source, origin, retrieved-at, confidence). Confidence is what the source
+      states (STIX `confidence` on the None/Low/Med/High scale) and `unstated` otherwise;
+      the engine does not invent one. Withdrawn intel is no longer ingested: STIX
+      indicators that are `revoked` or past `valid_until`, MISP attributes with
+      `to_ids: false`. The weekly workflow writes candidates to an artifact, runs them
+      through `cau eval gate` against the smoke baseline, fails when a feed parses to
+      zero indicators (the drift check), and never commits. Of the LOTL table above only
+      LOLDrivers and the lolcerts consumer are wired; the other catalogs remain open.
 
 ---
 
@@ -645,20 +665,43 @@ One event model in, N formats out: every console/sensor sink serializes the same
 internal findings object; per-SIEM payload differences are profiles, not divergent
 schemas. Drift between them is a CI failure.
 
-- [ ] Wazuh — RFC 5424 syslog + CEF, decoder-compatible fielding
-- [ ] Security Onion — ECS-JSON syslog + a STIX 2.1/TAXII feed
-- [ ] OpenSearch Security Analytics — OTLP and ECS bulk over HTTP
-- [ ] OSSIM — CEF/LEEF over syslog
+- [x] Wazuh — direct Wazuh Manager API forwarder (POST /events with JWT),
+      OCSF-identical payload, `cau scan --wazuh-url` et al, free (single-host
+      action, licensing rule: only the multi-agent pane is paid). RFC 5424
+      syslog + CEF framing stay a follow-on for sites that front Wazuh with a
+      log aggregator that prefers them.
+- [~] Security Onion — ECS-JSON syslog + a STIX 2.1/TAXII feed. **ECS-in-syslog shipped
+      2026-11-06**: `--format syslog-ecs` (RFC 5424 frames whose MSG is the ECS document),
+      delivered with `--sink-url tls://…` using RFC 6587 octet counting. **Open:** the
+      outbound STIX 2.1/TAXII feed of findings, and a run against a live Security Onion.
+- [~] OpenSearch Security Analytics — OTLP and ECS bulk over HTTP. **Engine side shipped
+      2026-11-06**: `--format otlp` (OTLP/JSON logs) and `--format ecs`, delivered with
+      `--sink-url https://…` (`/v1/logs`, or `_bulk` with `--sink-index`; a 200 carrying
+      `"errors": true` is reported as a failure). **Open:** tested against protocol-level
+      fixtures only, not a live OpenSearch; OTLP over gRPC/protobuf is not implemented.
+- [~] OSSIM — CEF/LEEF over syslog. **Engine side shipped 2026-11-06**: `--format cef`,
+      `leef`, `syslog-cef`, `syslog-leef`, over `udp://`, `tcp://` or `tls://`.
+      **Open:** a run against a live OSSIM/QRadar parser.
+      All three ride `internal/report/siem.go` (profiles of the one OCSF finding) and
+      `internal/forward/collector` (one-shot delivery at the end of a scan, best-effort).
+      The resident agent's queued forwarder (`internal/forward`) does not yet speak these
+      formats; wiring `forward.Sender` over the collector is the remaining seam.
 - [~] Matano — OCSF-JSON (Apache-2.0, the youngest of the five). Engine side shipped
       2026-10-29: `cau scan --format ocsf` writes OCSF 1.3.0 Detection Findings
-      (`internal/report/ocsf.go`); the console sink and the conformance fixture
-      round-trip remain.
+      (`internal/report/ocsf.go`); the conformance fixture round-trip shipped 2026-11-06
+      (below); the console sink remains.
 - License-honesty footnote: Graylog (SSPL) and Elastic Security (Elastic License 2.0)
   are widely deployed and supported as sinks, but are not OSI-FOSS — the marketing
   never calls them open source, and the matrix above is what the word means here.
-- [ ] Conformance fixtures per standard ship with the schemas: one RFC 5424 frame, one
+- [x] Conformance fixtures per standard ship with the schemas: one RFC 5424 frame, one
   CEF event, one GELF message, one ECS doc, one OCSF object, one OTLP batch — each
   round-trip-parsed in CI so a sink update cannot silently break ingestion.
+  **Shipped 2026-11-06** under `internal/report/testdata/conformance/` (plus one LEEF
+  event). `TestSinkConformanceFixtures` regenerates each, compares byte for byte and
+  parses it back with a reader written against the standard; a hostile-filename fixture
+  proves no line format can be made to emit a second event. Honest limit: the readers
+  are ours, not the vendors' parsers, and the RFC 5424 SD-ID uses the documentation
+  enterprise number (32473) until a PEN is registered.
 
 ---
 
@@ -685,9 +728,17 @@ open EDR must not repeat, this one included. Facts stay class-level:
   bugcheck, SYSTEM-exec, telemetry-bypass — maps into the exploit-attempt ledger as a
   fixture requirement. If the same class exists in this sensor, the anti-tamper and
   fuzzing gates must catch it, and the coverage render states the pairing explicitly.
-- [ ] No-injection build gate: the sensor ships zero injection primitives; CI greps
+- [~] No-injection build gate: the sensor ships zero injection primitives; CI greps
   the sensor source for injection-pattern APIs as a build gate — the pledge is
   enforced by the build, not by prose.
+  **Engine half shipped 2026-11-06** as `TestNoInjectionPrimitives`
+  (`source_gates_test.go`, in the race lane): it parses every non-test Go file of the
+  engine and fails on a use of ptrace, `process_vm_writev`, `init_module`/`finit_module`,
+  `memfd_create`, raw `bpf(2)` or the `plugin` package. It reads the syntax tree, not
+  the text, because the detection content is full of those names as patterns. **Open:**
+  the same gate over the sensor (`cau-kernel`, a separate repository, whose eBPF
+  enforcement legitimately uses `bpf(2)` and needs its own allowlist), and the gate does
+  not see a write to `/proc/<pid>/mem` done through ordinary file calls.
 - [ ] Measured rivalry: when the third-party scoring gate lands, OpenEDR's policy and
   pattern artifacts run through the same Phase 1 fixtures alongside CAU's own —
   published numbers, not opinions.
@@ -724,14 +775,47 @@ command, not part of the per-file `cau scan`. The remaining Phase 8 items below 
   shipped** (FV + FFS file/section parse, module inventory, FV checksum, implant
   blocklist). Still open: feeding each executable section through the YARA ruleset and
   decompressing GUIDed/compressed sections.
-- [ ] UEFI anomaly surfaces: option ROM inventory, WPBT/ACPI table scan (WPBT is a
+  **2026-11-06, three changes, measured on the 11 OVMF images Debian ships:**
+  (1) *Bug fixed:* the file walk treated a pad file (all-0xFF name, which edk2 places
+  first in every volume with an extended header) as free space and stopped, so the
+  inventory was 0-1 modules on every stock image. (2) *LZMA sections are opened*
+  (`scanner/uefi/lzma.go`, an in-tree bounded decoder since the standard library has
+  none; 64 MiB per section, 256 MiB per image, nesting depth 4, fuzzed) and nested
+  volumes are walked, including plain FIRMWARE_VOLUME_IMAGE sections: inventory now
+  91-156 modules on each of the eight code images (the three variable stores hold no
+  drivers), about 0.2 s each. (3) *Executable sections go through the
+  YARA ruleset* in `cau firmware` (`uefi.module-rule-match`, weight 8; `--rules`,
+  `--no-yara`): 0 hits over 1,079 module bodies. **Open:** the EFI/Tiano compression
+  and other GUID-defined encodings (counted and reported as not opened); the bundled
+  rules target OS malware, so "no hit" on firmware says little until firmware-specific
+  rules and the fixture corpus row below exist; the zero-hit figure is one firmware
+  family, not a vendor-firmware FP rate.
+- [~] UEFI anomaly surfaces: option ROM inventory, WPBT/ACPI table scan (WPBT is a
   vendor-approved injection primitive), EFI boot-order/entry tampering (where BlackLotus
   lives), efivarfs read-only inventory, DBX/SBAT/MOK revocation state checked against
   current UEFI Forum revocation releases.
-- [ ] `cau boot-scan` — OSS, strictly read-only: local ESP scan + firmware capsule/EFIVAR
+  **Inventory half shipped 2026-11-06** inside `cau boot-scan`: PCI option ROMs (presence
+  and size only, because sysfs maps a ROM only after a write), the WPBT table and ACPI
+  table names, boot entries and order with dangling/missing-target checks, Secure Boot
+  and setup-mode state, dbx/db/MOK sizes and the SBAT level, and a dbx comparison against
+  an operator-supplied reference file (`--dbx-reference`). **Open:** boot-entry *tamper*
+  detection needs a signed baseline to diff against (none yet); SBAT and MOK are reported
+  but not checked against published revocation levels; the reference dbx is supplied by
+  the operator, never fetched or bundled.
+- [x] `cau boot-scan` — OSS, strictly read-only: local ESP scan + firmware capsule/EFIVAR
   inventory, MBR/VBR/GPT sanity check (Petya-class bootkit coverage). Hard boundary: the
   engine never images or flashes live chips; SPI/eSPI work stays with opt-in operator
   tooling (chipsec-class), documented but not automated.
+  **Shipped 2026-11-06** as `internal/bootscan` + `cmd_bootscan.go`. Disks (`--disk`):
+  MBR, GPT primary and backup headers with both CRC32s, per-partition boot sectors;
+  classes for a boot-area ransom note (the only one that crosses the threshold alone), a
+  destroyed primary GPT with an intact backup, CRC failures, primary/backup disagreement,
+  overlaps, an ESP that is not FAT. ESP: every EFI binary with digest, PE subsystem and
+  signature presence; unsigned binaries score only when Secure Boot is enabled. Read-only
+  is enforced by `TestPackageNeverWrites`, which parses the package source. Two fuzz
+  targets in `make fuzz`. Measured so far only on synthetic images and one real host
+  (0 scored findings); no benign-population FP number yet, and its techniques
+  (T1542.001/.002/.003, T1561.002, T1486, T1553.006) are not yet rows in `cau coverage`.
 - [ ] Firmware-image bulk scanning at the scan node: router/NAS/IoT/vendor images with
   binwalk-style unpack (squashfs, jffs2, cramfs) recursed into the normal detectors —
   LOLDrivers, HijackLibs and bootloaders.io intake already supply the hashes and rules.
@@ -841,10 +925,16 @@ command, not part of the per-file `cau scan`. The remaining Phase 8 items below 
   before cryptography forces the migration, not after.
   **Classical signature chain shipped 2026-11-02:** Ed25519-signed update bundles and
   release `SHA256SUMS` (`cau bundle`/`cau update`/`cau verify-self`), with the air-gapped
-  path (`--from` a signed directory delivered by media) already working. **Open:** the
-  **post-quantum** upgrade (ML-DSA or a hybrid), reproducible builds, and SBOMs — the
-  signing/verify seam is isolated behind the `release`/`updater` packages so swapping in
-  a hybrid scheme is a localized change.
+  path (`--from` a signed directory delivered by media) already working.
+  **SBOMs shipped 2026-11-06:** `cau bundle sbom [--binary <path>]` writes a CycloneDX 1.5
+  document from the build information embedded in the binary (the modules actually
+  linked, with their go.sum hashes), with no timestamp or serial so it is reproducible;
+  the release job writes one per binary before `SHA256SUMS` is signed. It states its own
+  gap: cgo-linked libyara and libc are not Go modules and are not listed.
+  **Open:** the **post-quantum** upgrade (ML-DSA or a hybrid) — the signing/verify seam
+  is isolated behind the `release`/`updater` packages so swapping in a hybrid scheme is a
+  localized change — and a CI check that two builds of one tag are byte-identical
+  (`-trimpath` is set; the comparison is not yet run), plus SLSA provenance attestations.
 - [ ] Parser fuzzing gate: OSS-Fuzz/libFuzzer harnesses for every shipped parser (PE,
   ELF, UEFI, OLE, archives). A scanner that dies on a malformed sample is a
   time-of-scanning liability; fuzz failures block releases with the same honesty as the
@@ -1281,13 +1371,27 @@ Phase 7 #1 attestation pipeline from boot-time to the runtime lifecycle.
 | Hardware monotonic counters | monotonic receipts chained into every event stream; console rejects out-of-order sequences under an EK-certified identity | event-stream replay with stolen keys |
 | Entropy-source health | hardware RNG failures degrade the sensor to software entropy as a labeled alert-posted state, never a silent fallback | quiet weak-entropy degradation of the sensor's own crypto |
 
-- [ ] `internal/hwanchor`: quote capture, DMI snapshot, permanent-MAC divergence check;
+- [~] `internal/hwanchor`: quote capture, DMI snapshot, permanent-MAC divergence check;
   attestation receipts land in the console's fleet/identity surfaces, feeding the
   identity-continuity row's machine-id collision work.
-- [ ] Honest degradation as a first-class state: no TPM, no EEPROM permanent address,
+  **Engine half shipped 2026-11-06** as `internal/hwanchor` + `cau hwid`: a read-only
+  sysfs snapshot (DMI/SMBIOS, NIC address and `addr_assign_type`, TPM presence and
+  PCRs 0-7, the active hardware RNG), `--record` / `--check` against a baseline with
+  typed differences, and `--redact` for a shareable snapshot. The package never writes
+  (enforced by a source test). **Open:** no TPM quote is captured (it needs `/dev/tpm0`
+  and an attestation key; the PCRs here are the kernel's unsigned report); the
+  burned-in MAC is not read (it needs an ethtool ioctl), so the check shows that an
+  address was changed, not from what; the baseline is not signed; receipts to a
+  console are console work.
+- [x] Honest degradation as a first-class state: no TPM, no EEPROM permanent address,
   and hardware crypto offload planes render *unverifiable* — labeled degraded in every
   report and coverage rendering, never silently padded to "verified". The free-reporting
   honesty rule runs on hardware data too.
+  **Shipped 2026-11-06** in `cau hwid`: every field carries a state (`ok`, `absent`,
+  `unreadable`, `placeholder`), the `unverifiable` list names every anchor the host
+  could not prove and is never empty, a comparison only uses fields that are `ok` on
+  both sides, and "could not be re-verified" is a different result from "changed".
+  Crypto-offload planes are not inventoried, so they are not covered by this row yet.
 - [ ] Fleet pivots: duplicate serials and MAC divergences join the Threat Graph — "two
   hosts claim the same hardware identity" is an automatic incident class.
 - [ ] Privacy: DMI/SMBIOS serials are hardware metadata retained under the same
@@ -1345,11 +1449,26 @@ note applies upward: assume the components are discoverable, and make discovery
 pointless by making attacks fail — never by hiding.
 
 **Engine (CLI/library)**
-- [ ] Read-only by construction: scanning never executes or writes sample content; the
+- [x] Read-only by construction: scanning never executes or writes sample content; the
   MCP path is the only sandboxed exception (Phase 3).
-- [ ] Renderer injection closed: file paths, threat names and rule metas are data to
+  **Enforced 2026-11-06** by `TestScanningNeverExecutesOrWritesSamples` and
+  `TestProcessExecutionIsAllowlisted` (`source_gates_test.go`): nothing under `scanner/`
+  or `internal/peeler/` may import `os/exec`, `net`, `net/http` or `plugin`, start a
+  process, or open a file for writing outside two allowlisted functions that append to
+  an operator-named signature database; and every importer of `os/exec` in the engine
+  is listed with what it runs (today: the `cau-kernel` helper from `cau ps`, and
+  nft/iptables from the network blocker). Quarantine moves a file on an explicit
+  `--quarantine`; that is response, outside the scanning packages, and not covered here.
+- [x] Renderer injection closed: file paths, threat names and rule metas are data to
   every report renderer (text/JSON/SARIF) — structured and escaped, never concatenated
   into templates; a fixture with hostile filenames runs in CI.
+  **Closed 2026-11-06** by `TestEveryFormatTreatsAHostileFileNameAsData`
+  (`internal/report/hostile_formats_test.go`): one file name carrying every line
+  format's separators, a newline plus a forged syslog frame, a terminal escape and a
+  bidi override is rendered in all thirteen `--format` values; none gains a result or a
+  line, none emits a raw escape byte, and the JSON formats return it byte for byte. The
+  fixture exercises the file path; threat names and rule metas take the same code
+  paths but are not separately fuzzed with hostile values.
 - [ ] Resource exhaustion pinned: per-run budgets (jobs, memory, time, decompression
   caps) verified against the adversarial fixture corpus from the Phase 9 fuzzing work.
 
@@ -2152,8 +2271,18 @@ axis where open beats installed-agent fleets without needing their scale.
   shows up — the index's value is precisely that it measures everyone who enters.
 - [ ] Co-op governance: the free-reporting privacy rules apply to federation itself; a
   co-op drifting into a data broker is a named failure mode in the governance section.
-- [ ] Honesty-index v0: render coverage, Phase 1 results and selftest health into a
+- [x] Honesty-index v0: render coverage, Phase 1 results and selftest health into a
   single scriptable artifact now; v1 adds the third-party columns.
+  **Shipped 2026-11-06** as `cau honesty` (`internal/honesty`, `cmd_honesty.go`): one
+  JSON / text / markdown document with three sections (coverage against the committed
+  expectation, an evaluation report, the selftest baseline), each with its own state,
+  and a `not_claimed` list. No composite score, by design and by test (the key set is
+  pinned). The smoke corpus is labelled synthetic from its manifest and its recall is
+  called a plumbing check; a missing integrity baseline is `no-baseline`, not a pass;
+  an evaluation report whose totals do not follow from its samples is an `error`.
+  Byte-identical with `--no-timestamp`. On this tree today: coverage matches, the
+  evaluation is the synthetic smoke report, and selftest is `no-baseline` because no
+  `integrity.json` is committed. The index itself is not signed.
 - [ ] Substrate track: an embedding guide plus a stable detection-API contract; the MCP
   surface grows coverage and eval tools next to the scan tools.
 - [ ] Honest boundary: this path's schedule is market-gated, not code-gated — adoption,
@@ -2995,8 +3124,18 @@ commits the code.
   file front-matter, and a staleness gate — a doc more than 6 months since last
   review renders yellow in CI; 12 months red; the owner is responsible for the
   refresh same as a detection content review.
-- [ ] Doc-as-code: every documentation example runs as a test. Code samples that drift
+- [~] Doc-as-code: every documentation example runs as a test. Code samples that drift
   fail CI; command outputs are regenerated by CI, never hand-edited.
+  **Flag-drift half shipped 2026-11-06** as `TestDocsExamplesUseRealFlags`
+  (`cmd_docs_test.go`): every `cau …` line in a fenced block of `README.md`, `docs/**/*.md`
+  and `wiki/*.md` is checked in-process against the real CLI: the command must exist and
+  every flag must be one that subcommand defines (159 lines, 49 subcommand paths, 273
+  flag uses on the first run; it found one stale example, `cau cluster --dir`, now fixed).
+  Vacuity floors and a self-test with synthetic bad examples keep the checker honest.
+  **Open:** the examples are checked, not executed, so a documented *output* can still
+  drift and nothing is regenerated by CI; the man pages and inline code spans are not
+  covered; three paths with no flag set (`eval policy`, `help`, `version`) are logged
+  as not introspectable.
 - [ ] Operator-facing search: the docs site ships with the same query language the
   console uses — one syntax, two surfaces.
 - [ ] The handbooks live under the same MIT license as the engine; the console's
@@ -3130,8 +3269,12 @@ deferred for a stated reason, not forgotten, and will not be padded into
 
 ### Process additions
 
-- [ ] Fold `make fuzz` into a scheduled (not per-PR) CI job with a longer
+- [x] Fold `make fuzz` into a scheduled (not per-PR) CI job with a longer
       `FUZZTIME`, committing any crasher as a seed under `testdata/fuzz/`.
+      **Shipped 2026-11-06:** the nightly scheduled run of the `fuzz` lane uses
+      `FUZZTIME=4m` per target (pushes and pull requests keep 30s). The job has read-only
+      repository access, so a crasher is published as an artifact and the red run is the
+      alert; committing the seed stays a human step.
 - [ ] Extend the detection-robustness harness to every bundled rule as new
       rules are added, so the nocase/wide contract is enforced per rule, not
       per sampled family.
@@ -3148,12 +3291,20 @@ remaining NOVEL-012 surface, each with its own FP gate:
       PowerShell cradle is caught even when the decode is a script, not an
       executable. Gate: measured FP on the benign text population; cap the
       re-scan cost per file.
-- [ ] **Container layers.** gzip/zlib/zip/xz as decode layers alongside
+- [~] **Container layers.** gzip/zlib/zip/xz as decode layers alongside
       base64/hex, with the decompression-bomb caps the plan already requires
       (ratio and absolute-size limits, a global budget shared across layers).
+      Status 2026-11-06: gzip, zlib, raw DEFLATE and bzip2 ship as layers in
+      `internal/peeler` (not in `scanner/encchain`) under one shared per-sample
+      budget. **Open:** zip members and xz as peel layers (xz has no standard-library
+      decoder; the vendoring decision comes first).
 - [ ] **Chain-depth as a signal.** Report the peel depth as its own weighted
       observation (a 4-layer wrapper is suspicious whatever the leaf), with the
       depth distribution measured on the benign population first.
+      Status 2026-11-06: the peeler reports `max_depth` and uses depth to gate its
+      classes (a revealed executable or script counts only at depth >= 2), but there
+      is no class that scores depth alone. That stays open on purpose until the benign
+      depth distribution is measured, which is this row's own gate.
 - [ ] **Provenance reconciliation (console).** An embedded encoded executable
       inside an official package (installer, security tool) is expected; the
       console's provenance DB (Phase 7 #5) attenuates those so the engine's

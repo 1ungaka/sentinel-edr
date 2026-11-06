@@ -3,7 +3,9 @@ package mcp
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 )
 
 // HTTP transport (the MCP "streamable HTTP" transport, JSON subset).
@@ -31,6 +33,10 @@ func (s *Server) HTTPHandler() http.Handler {
 }
 
 func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if !allowedOrigin(r.Header.Get("Origin")) {
+		http.Error(w, "origin not allowed", http.StatusForbidden)
+		return
+	}
 	switch r.Method {
 	case http.MethodPost:
 		s.handleHTTPPost(w, r)
@@ -47,6 +53,30 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", "POST, DELETE")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// allowedOrigin implements the transport's rule that a server must validate
+// Origin. A browser attaches one to every cross-site POST, including one DNS
+// rebinding has aimed at 127.0.0.1, and without this check any page an analyst
+// opens could call add_signature. Agents and SDKs send no Origin at all.
+func allowedOrigin(origin string) bool {
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	return IsLoopbackHost(u.Hostname())
+}
+
+// IsLoopbackHost reports whether host names this machine's loopback interface.
+func IsLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (s *Server) handleHTTPPost(w http.ResponseWriter, r *http.Request) {

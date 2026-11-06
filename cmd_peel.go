@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/s-b-repo/cau/internal/parallel"
 	"github.com/s-b-repo/cau/internal/peeler"
 	"github.com/s-b-repo/cau/internal/report"
 )
@@ -52,49 +56,142 @@ func readStdinCapped(cap int64) ([]byte, error) {
 }
 
 func peelUsage(w io.Writer) {
-	fmt.Fprint(w, `Usage: cau peel [flags] <file>
+	fmt.Fprint(w, `Usage: cau peel [flags] <file>...
 
-Walks the obfuscation-chain tree of a file (NOVEL-012): at each node every
-applicable reversible layer decoder (base64/base32/hex, gzip/zlib/flate/bzip2)
-spawns a child, under a single global per-sample budget wall. Chain *depth* is
-itself a signal, and a branch that hits the wall is reported as 'peel-exhausted'
-— a first-class outcome, never a silent clean. The peeler only decodes; it
-never executes sample content.
+Walks the obfuscation-chain tree of each file (NOVEL-012). At each node every
+reversible layer that applies decodes at once, and each result opens a branch:
+the base encodings (2, 8, 10, 16, 32, 36, 45, 58, 62, 64, 85, 91, 92), every
+rot and Caesar shift, atbash, reversal, UTF-16, gzip, zlib, flate and bzip2, and
+blobs carved out of a surrounding script. Layers chain in any order, under a
+single global per-sample budget wall. Chain *depth* is itself a signal, and a
+branch that hits the wall is reported as 'peel-exhausted', a first-class outcome,
+never a silent clean. The peeler only decodes; it never executes sample content.
 
 Flags:
   --format <fmt>     text or json (default text)
-  --max-depth <n>    deepest any path may peel (default 16)
+  --jobs <n>         files peeled at once (default: one per CPU)
+  --stream           print each layer and chain as it is found
+  --max-depth <n>    deepest any path may peel (default 32)
   --max-nodes <n>    total nodes the tree may visit (default 512)
   --max-output <n>   total decoded bytes across every branch (default 67108864)
-  --max-children <n> transforms attempted per node (default 4)
-  --timeout <dur>    wall-clock ceiling for the whole peel (default 5s)
+  --max-children <n> branches opened per node (default 6)
+  --timeout <dur>    wall-clock ceiling for each file's peel (default 5s)
 
-Exit codes: 0 clean, 1 a chain revealed a payload or the peel was exhausted,
-3 the run failed, 4 usage.
+With --stream --format json the output is JSON lines: one object per event, then
+one per file with kind "result".
+
+Exit codes: 0 clean, 1 any file revealed a payload or was exhausted, 3 the run
+failed, 4 usage.
 `)
+}
+
+// peeledFile is one file's outcome, in the slot of its position on the command
+// line, so the report keeps that order however the files finished.
+type peeledFile struct {
+	path   string
+	result peeler.Result
+	err    error
+}
+
+// peelEvents writes --stream output. Files peel at once, so a line is the unit
+// that has to stay whole.
+type peelEvents struct {
+	mu     sync.Mutex
+	w      io.Writer
+	asJSON bool
+}
+
+func (s *peelEvents) event(path string, e peeler.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.asJSON {
+		line, err := json.Marshal(struct {
+			File string `json:"file"`
+			peeler.Event
+		}{path, e})
+		if err == nil {
+			fmt.Fprintf(s.w, "%s\n", line)
+		}
+		return
+	}
+	chain := strings.Join(e.Path, ">")
+	if e.Kind == peeler.EventChain {
+		fmt.Fprintf(s.w, "[chain] %s  %s -> %s\n", report.TermSafe(path), chain, e.Terminal)
+		return
+	}
+	fmt.Fprintf(s.w, "[layer] %s  %s\n", report.TermSafe(path), chain)
+}
+
+func (s *peelEvents) result(r peeler.Result) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	line, err := json.Marshal(struct {
+		Kind string `json:"kind"`
+		peeler.Result
+	}{"result", r})
+	if err == nil {
+		fmt.Fprintf(s.w, "%s\n", line)
+	}
+}
+
+func peelFile(p *peeler.Peeler, path string, events *peelEvents) peeledFile {
+	data, err := readFileCapped(path, maxInputBytes)
+	if err != nil {
+		return peeledFile{path: path, err: err}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	j := p.Start(ctx, data)
+	if events != nil {
+		for e := range j.Events() {
+			events.event(path, e)
+		}
+	}
+	r := j.Wait()
+	r.FilePath = path
+	return peeledFile{path: path, result: r}
+}
+
+func writePeelText(w io.Writer, f peeledFile) {
+	r := f.result
+	fmt.Fprintf(w, "File        : %s\n", report.TermSafe(f.path))
+	fmt.Fprintf(w, "Outcome     : %s\n", r.Outcome)
+	fmt.Fprintf(w, "Score       : %d\n", r.Score)
+	fmt.Fprintf(w, "Max depth   : %d\n", r.MaxDepth)
+	fmt.Fprintf(w, "Entropy     : %.3f bits/byte\n", r.RootEntropy)
+	fmt.Fprintf(w, "Nodes       : %d\n", r.NodesVisited)
+	fmt.Fprintf(w, "Decoded     : %d bytes\n", r.OutputBytes)
+	if r.Exhausted {
+		fmt.Fprintf(w, "Exhausted   : %s\n", report.TermSafe(r.ExhaustReason))
+	}
+	for _, c := range r.Chains {
+		fmt.Fprintf(w, "Chain       : %s  -> %s (depth %d)\n", c.Signature(), c.Terminal, c.Depth)
+	}
 }
 
 func cmdPeel(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("peel", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.Usage = func() { peelUsage(stderr) }
 	format := fs.String("format", "text", "output format: text or json")
+	jobs := fs.Int("jobs", 0, "files peeled at once (0 = one per CPU)")
+	stream := fs.Bool("stream", false, "print each layer and chain as it is found")
 	maxDepth := fs.Int("max-depth", 0, "deepest any path may peel (0 = default)")
 	maxNodes := fs.Int64("max-nodes", 0, "total nodes the tree may visit (0 = default)")
 	maxOutput := fs.Int64("max-output", 0, "total decoded bytes allowed (0 = default)")
-	maxChildren := fs.Int("max-children", 0, "transforms attempted per node (0 = default)")
-	timeout := fs.Duration("timeout", 0, "wall-clock ceiling (0 = default)")
-	if err := fs.Parse(args); err != nil {
+	maxChildren := fs.Int("max-children", 0, "branches opened per node (0 = default)")
+	timeout := fs.Duration("timeout", 0, "wall-clock ceiling for each file (0 = default)")
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if *format != "text" && *format != "json" {
 		return fail(stderr, report.ExitUsage, "--format must be text or json")
 	}
-	if fs.NArg() != 1 {
-		return fail(stderr, report.ExitUsage, "peel takes exactly one file")
+	if *jobs < 0 {
+		return fail(stderr, report.ExitUsage, "--jobs must not be negative")
 	}
-	data, err := readFileCapped(fs.Arg(0), maxInputBytes)
-	if err != nil {
-		return fail(stderr, report.ExitRunFailed, "%v", err)
+	if fs.NArg() == 0 {
+		return fail(stderr, report.ExitUsage, "peel takes at least one file")
 	}
 
 	p := peeler.New(peeler.WithLimits(peeler.BudgetLimits{
@@ -104,34 +201,64 @@ func cmdPeel(args []string, stdout, stderr io.Writer) int {
 		MaxChildren:    *maxChildren,
 		MaxWallClock:   *timeout,
 	}))
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	r := p.Peel(ctx, data)
+	var events *peelEvents
+	if *stream {
+		events = &peelEvents{w: stdout, asJSON: *format == "json"}
+	}
 
-	if *format == "json" {
-		if err := writeJSON(stdout, r); err != nil {
+	files := fs.Args()
+	peeled := make([]peeledFile, len(files))
+	parallel.For(len(files), *jobs, func(i int) {
+		peeled[i] = peelFile(p, files[i], events)
+		if events != nil && events.asJSON && peeled[i].err == nil {
+			events.result(peeled[i].result)
+		}
+	})
+
+	failed, threat := false, false
+	var results []peeler.Result
+	for _, f := range peeled {
+		if f.err != nil {
+			failed = true
+			fmt.Fprintf(stderr, "[ERROR] %s\n", report.TermSafe(f.err.Error()))
+			continue
+		}
+		// A revealed payload or an exhausted peel is a finding (exit 1); a clean,
+		// fully-explored tree is exit 0.
+		threat = threat || f.result.Outcome != peeler.OutcomeClean
+		results = append(results, f.result)
+	}
+
+	switch {
+	case *stream && *format == "json": // already written, one line per file
+	case *format == "json":
+		var doc interface{} = results
+		if len(files) == 1 && len(results) == 1 {
+			doc = results[0]
+		}
+		if err := writeJSON(stdout, doc); err != nil {
 			return fail(stderr, report.ExitRunFailed, "%v", err)
 		}
-	} else {
-		fmt.Fprintf(stdout, "File        : %s\n", fs.Arg(0))
-		fmt.Fprintf(stdout, "Outcome     : %s\n", r.Outcome)
-		fmt.Fprintf(stdout, "Score       : %d\n", r.Score)
-		fmt.Fprintf(stdout, "Max depth   : %d\n", r.MaxDepth)
-		fmt.Fprintf(stdout, "Entropy     : %.3f bits/byte\n", r.RootEntropy)
-		fmt.Fprintf(stdout, "Nodes       : %d\n", r.NodesVisited)
-		fmt.Fprintf(stdout, "Decoded     : %d bytes\n", r.OutputBytes)
-		if r.Exhausted {
-			fmt.Fprintf(stdout, "Exhausted   : %s\n", r.ExhaustReason)
-		}
-		for _, c := range r.Chains {
-			fmt.Fprintf(stdout, "Chain       : %s  -> %s (depth %d)\n", c.Signature(), c.Terminal, c.Depth)
+	default:
+		first := true
+		for _, f := range peeled {
+			if f.err != nil {
+				continue
+			}
+			if !first {
+				fmt.Fprintln(stdout)
+			}
+			first = false
+			writePeelText(stdout, f)
 		}
 	}
 
-	// A revealed payload or an exhausted peel is a finding (exit 1); a clean,
-	// fully-explored tree is exit 0.
-	if r.Outcome == peeler.OutcomeClean {
-		return report.ExitOK
+	// A finding outranks a failed read: an unreadable file must not hide one.
+	switch {
+	case threat:
+		return report.ExitThreat
+	case failed:
+		return report.ExitRunFailed
 	}
-	return report.ExitThreat
+	return report.ExitOK
 }

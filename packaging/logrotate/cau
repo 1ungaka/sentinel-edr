@@ -1,0 +1,40 @@
+# Rotation for the logs `cau defend` and the scheduled scan units write.
+#
+# This file exists because cau-defend.service is meant to be started once and
+# left running. Its StandardOutput is append:/var/log/cau/defend.jsonl, so
+# without rotation the one thing an always-on agent is guaranteed to do is fill
+# the disk it is protecting — slowly on a quiet host, quickly on a noisy one,
+# and fastest on exactly the host someone is attacking.
+#
+# Install: copy to /etc/logrotate.d/cau (the Debian package and the PKGBUILD
+# install it there for you). `make install-logrotate` does the same.
+#
+# Compression is on with delaycompress, so the newest rotation stays plain text
+# for grep and jq. copytruncate is deliberately NOT used: it races with a
+# process appending to the file and can lose or tear a line. Instead the daemon
+# is signalled, and systemd reopens the append target on restart.
+
+# The globs cover defend.jsonl and the scan units' reports. They are globs
+# rather than named files plus globs: logrotate treats a file matched twice in
+# one stanza as a duplicate entry and refuses the whole config.
+/var/log/cau/*.jsonl
+/var/log/cau/*.sarif
+/var/log/cau/*.log
+{
+    daily
+    rotate 14
+    maxsize 100M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0600 root root
+    su root root
+    sharedscripts
+    # systemd holds the append fd, so the file is reopened by restarting the
+    # unit. `reload-or-restart` keeps this a no-op on a host where the unit is
+    # not installed or not running, which is why it cannot fail the rotation.
+    postrotate
+        /usr/bin/systemctl reload-or-restart cau-defend.service >/dev/null 2>&1 || true
+    endscript
+}

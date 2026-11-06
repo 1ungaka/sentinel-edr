@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: ./.github/actions/cau-env
 
@@ -74,7 +74,7 @@ jobs:
     # reach that budget or a slow runner fails a green tree.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: ./.github/actions/cau-env
 
@@ -86,7 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: ./.github/actions/cau-env
 
@@ -110,7 +110,7 @@ jobs:
       # the failure, so a reviewer should never have to re-run the job to get it.
       - name: Publish the gate reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: eval-and-coverage
           path: |
@@ -130,7 +130,7 @@ jobs:
       # the tree is a review item instead of an artifact nobody opens.
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: ./.github/actions/cau-env
 
@@ -146,14 +146,14 @@ jobs:
         # The guard matters: if the scan step died there is no SARIF to upload,
         # and code scanning keeps the last good set rather than being wiped.
         if: always() && hashFiles('cau.sarif') != ''
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@9418214df1f2c4b8128c770156c409013b07d6b9 # v3
         with:
           sarif_file: cau.sarif
           category: cau-self-scan
 
       - name: Publish the self-scan reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: self-scan
           path: |
@@ -163,26 +163,35 @@ jobs:
   fuzz:
     name: fuzz the untrusted-input parsers
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Two budgets, one job. A push or pull request gets the smoke hunt (30s per
+    # target, about 15 minutes in all). The nightly schedule gets the campaign:
+    # 4 minutes per target across the Makefile's Fuzz* targets, which is where
+    # a deep parser state is actually reached, and it costs no reviewer any
+    # waiting because nothing is waiting on a scheduled run.
+    timeout-minutes: ${{ github.event_name == 'schedule' && 180 || 30 }}
+    env:
+      FUZZTIME: ${{ github.event_name == 'schedule' && '4m' || '30s' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: ./.github/actions/cau-env
 
       - name: Build
         run: make build
 
-      # A smoke hunt, not a campaign. Every seed corpus already runs as a unit
-      # test in the race lane, so the value here is coverage-guided mutation on
-      # top of them: 30s per target catches a freshly-introduced nil deref, and
-      # a crasher it finds is exactly the "commit the seed, fix before merge"
-      # case docs/contributing.md describes.
+      # Every seed corpus already runs as a unit test in the race lane, so the
+      # value here is coverage-guided mutation on top of them: 30s per target
+      # catches a freshly-introduced nil deref, the nightly budget hunts, and
+      # a crasher either finds is exactly the "commit the seed under
+      # testdata/fuzz/, fix before merge" case docs/contributing.md describes.
+      # The job only reads the repository, so the crasher is published as an
+      # artifact for a human to commit; a red nightly run is the alert.
       - name: Coverage-guided hunt over every Fuzz* target
-        run: make fuzz FUZZTIME=30s
+        run: make fuzz FUZZTIME="$FUZZTIME"
 
       - name: Publish the crasher it found
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: fuzz-crashers
           path: |
@@ -205,7 +214,7 @@ jobs:
       # Published as a release asset and used to self-verify before publishing.
       CAU_RELEASE_PUBLIC_KEY: ${{ vars.CAU_RELEASE_PUBLIC_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: ./.github/actions/cau-env
 
@@ -221,6 +230,12 @@ jobs:
           for art in cau cau-mcp; do
             cp "$art" "dist/${art}-${tag}-linux-amd64"
             tar -czf "dist/${art}-${tag}-linux-amd64.tar.gz" "$art" rules signatures LICENSE README.md
+            # A CycloneDX SBOM per binary, read from the build information the
+            # linker embedded in that binary: the modules actually linked, not
+            # a manifest that might differ. It has no timestamp or serial, so
+            # it is reproducible, and it lands in dist/ before SHA256SUMS is
+            # signed, so the SBOM is covered by the release signature.
+            ./cau bundle sbom --binary "$art" --output "dist/${art}-${tag}-linux-amd64.cdx.json"
           done
           # The source tarball, and why it is built here rather than linked.
           # GitHub's /archive/ tarballs are generated per request and are not
@@ -313,7 +328,7 @@ jobs:
           ./cau verify-self --from dist --pubkey dist/release-pubkey.hex \
             --name "cau-${GITHUB_REF_NAME}-linux-amd64"
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/*
           fail_on_unmatched_files: true

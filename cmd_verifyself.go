@@ -50,7 +50,7 @@ func cmdVerifySelf(args []string, stdout, stderr io.Writer) int {
 	url := fs.String("url", "", "base URL to fetch the signed manifest from")
 	pubkeyFile := fs.String("pubkey", "", "trusted Ed25519 public key file (hex)")
 	nameOverride := fs.String("name", "", "the binary's name in SHA256SUMS (default: the running executable)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
 	if (*from == "") == (*url == "") {

@@ -592,7 +592,7 @@ func (e *ELF) parseSections(data []byte, shstrndx int) {
 	r := e.order
 	if n == 0 {
 		// SHN_UNDEF: the real count is in section 0's sh_size.
-		if e.shoff+uint64(e.shent) <= uint64(len(data)) {
+		if size := uint64(len(data)); e.shoff <= size && uint64(e.shent) <= size-e.shoff { // subtraction: shoff can wrap
 			b := data[e.shoff:]
 			var real uint64
 			if e.is64 {
@@ -950,10 +950,10 @@ func (e *ELF) gnuHashSymbolCount(data []byte, va uint64) int {
 	}
 	chainsOff := bucketsOff + nbuckets*4
 	for steps := 0; steps < maxELFDynSyms; steps++ {
-		p := chainsOff + (maxIdx-symoffset)*4
-		if p+4 > len(data) {
+		if maxIdx-symoffset >= (len(data)-chainsOff)/4 { // division: the product can wrap a 32-bit int
 			return -1
 		}
+		p := chainsOff + (maxIdx-symoffset)*4
 		if r.Uint32(data[p:])&1 != 0 {
 			break
 		}
@@ -966,6 +966,12 @@ func (e *ELF) gnuHashSymbolCount(data []byte, va uint64) int {
 func (e *ELF) readSymbols(data []byte, off, ent, count int, name func(uint32) string) {
 	r := e.order
 	seenImp := map[string]bool{}
+	// A stride larger than the file keeps p+ent below from wrapping past the
+	// guard; d_val and sh_entsize are both attacker-supplied.
+	if ent > len(data) {
+		e.warn("symbol entry size %d is larger than the file", ent)
+		return
+	}
 	for i := 0; i < count; i++ {
 		p := off + i*ent
 		if p+ent > len(data) {
@@ -1049,7 +1055,7 @@ func (e *ELF) parseSymbols(data []byte) {
 		if !ok {
 			continue
 		}
-		if int(s.Link) >= len(e.Sections) {
+		if uint64(s.Link) >= uint64(len(e.Sections)) {
 			e.warn(".symtab links to string table %d which does not exist", s.Link)
 			return
 		}
@@ -1065,7 +1071,7 @@ func (e *ELF) parseSymbols(data []byte) {
 			count = maxELFDynSyms
 		}
 		e.readSymbols(data, off, ent, count, func(n uint32) string {
-			if int(n) >= len(tab) {
+			if uint64(n) >= uint64(len(tab)) {
 				return ""
 			}
 			return cstring(tab, int(n), maxNameLen)
@@ -1231,11 +1237,10 @@ func moduleSignatureSize(data []byte) int {
 	}
 	hdr := data[len(data)-mk-12 : len(data)-mk]
 	sigLen := int(binary.BigEndian.Uint32(hdr[8:]))
-	total := mk + 12 + sigLen
-	if sigLen <= 0 || total > len(data) {
+	if sigLen <= 0 || sigLen > len(data)-mk-12 { // subtraction: the sum can wrap a 32-bit int
 		return mk + 12
 	}
-	return total
+	return mk + 12 + sigLen
 }
 
 // ── overlay ──────────────────────────────────────────────────────────────────

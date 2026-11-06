@@ -5,13 +5,16 @@
 //
 // It walks the candidate tree — at each node every applicable layer decoder
 // spawns a child — under a single global per-sample budget wall (see Budget),
-// so an attacker who adds layers adds latency, never total spend. A branch that
+// so an attacker who adds layers adds latency, never total spend. The decoders at
+// a node run together, branches run together, and results rejoin in rank order,
+// so a report does not depend on which goroutine finished first. A branch that
 // hits the wall yields a first-class `peel-exhausted` outcome, rendered and
 // scored, never silently reported clean: an over-budget sample is a finding
 // about the budget, not a clean bill of health.
 //
-// Scope discipline: the peeler only *decodes* reversible layers (base64/base32/
-// hex, gzip/zlib/flate/bzip2). It never executes or emulates sample content;
+// Scope discipline: the peeler only *decodes* reversible layers (the base
+// encodings, rot and Caesar substitutions, gzip/zlib/flate/bzip2). It never
+// executes or emulates sample content;
 // the emulation-sidecar fallback named in the plan is a separate, later,
 // isolated component. What ships here is "what to catch and how to catch it".
 //
@@ -22,12 +25,18 @@
 package peeler
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
+	"fmt"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/s-b-repo/cau/internal/parallel"
 )
 
 func itoa(n int) string { return strconv.Itoa(n) }
@@ -53,8 +62,25 @@ type Chain struct {
 	Transforms []string `json:"transforms"`
 	// Terminal is what the bottom of this chain was (executable or script).
 	Terminal Outcome `json:"terminal"`
-	// Depth is len(Transforms): the number of layers peeled to reach it.
+	// Depth is the number of layers peeled to reach it. A carve is in Transforms
+	// but not in Depth: see layerCount.
 	Depth int `json:"depth"`
+}
+
+// qualifies reports whether a reveal counts as obfuscation rather than packaging.
+// One layer of compression or base64 is normal software, so a chain needs depth,
+// but no packager writes a substitution: one of those is deliberate on its own.
+func (c Chain) qualifies() bool {
+	return c.Depth >= minChainDepth || c.hasCipher()
+}
+
+func (c Chain) hasCipher() bool {
+	for _, step := range c.Transforms {
+		if isCipher(step) {
+			return true
+		}
+	}
+	return false
 }
 
 // Signature renders the chain as a stable string, e.g. "base64>gzip>base64".
@@ -176,8 +202,9 @@ func WithLimits(l BudgetLimits) Option { return func(p *Peeler) { p.limits = l }
 // WithUnwrappers replaces the layer-decoder registry.
 func WithUnwrappers(u []Unwrapper) Option { return func(p *Peeler) { p.unwrappers = u } }
 
-// WithParallelism sets the max in-flight unwrap goroutines (default 4). Values
-// below 1 are treated as 1 (serial).
+// WithParallelism sets the max in-flight goroutines across the whole tree, decoders
+// and branches alike (default: one per CPU, up to 8). Values below 1 are treated
+// as 1 (serial).
 func WithParallelism(n int) Option { return func(p *Peeler) { p.parallelism = n } }
 
 // New builds a Peeler with the default unwrappers and limits.
@@ -185,7 +212,7 @@ func New(opts ...Option) *Peeler {
 	p := &Peeler{
 		unwrappers:  DefaultUnwrappers(),
 		limits:      DefaultLimits(),
-		parallelism: 4,
+		parallelism: min(runtime.GOMAXPROCS(0), maxDefaultParallelism),
 	}
 	for _, o := range opts {
 		o(p)
@@ -196,14 +223,19 @@ func New(opts ...Option) *Peeler {
 	return p
 }
 
+// maxDefaultParallelism caps the default. A scan already runs one peel per worker,
+// so this multiplies, and most nodes have only a few decoders to run.
+const maxDefaultParallelism = 8
+
 // peel is the mutable per-sample state shared across the walk.
 type peel struct {
 	p      *Peeler
 	ctx    context.Context
 	budget *Budget
+	emit   func(Event) // nil unless the peel is being watched
 
-	// sem bounds in-flight child goroutines. A slot that cannot be acquired
-	// without blocking means the child runs inline on the current goroutine —
+	// sem bounds in-flight goroutines across the tree. A slot that cannot be
+	// acquired without blocking means the work runs on the current goroutine —
 	// the standard deadlock-free pattern for bounded parallel recursion.
 	sem chan struct{}
 
@@ -223,6 +255,10 @@ func (st *peel) recordRootEntropy(e float64) {
 // Peel walks the obfuscation tree rooted at data and returns the verdict.
 // It always terminates within the budget and never executes sample content.
 func (p *Peeler) Peel(ctx context.Context, data []byte) Result {
+	return p.run(ctx, data, nil)
+}
+
+func (p *Peeler) run(ctx context.Context, data []byte, emit func(Event)) Result {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -230,13 +266,42 @@ func (p *Peeler) Peel(ctx context.Context, data []byte) Result {
 		p:      p,
 		ctx:    ctx,
 		budget: NewBudget(p.limits),
+		emit:   emit,
 		sem:    make(chan struct{}, p.parallelism),
 		seen:   make(map[[32]byte]struct{}),
 	}
-	st.walk(data, nil, 0)
+	st.sem <- struct{}{} // this goroutine is the first of the N
+	st.guardedWalk(data, nil, 0)
 
 	exhausted, reason := st.budget.Exhausted()
 	return st.finish(exhausted, reason)
+}
+
+// guardedWalk is walk with a panic barrier. ScanFile's recover covers only its
+// own goroutine, so a decoder panic on one spawned here would end the process
+// and every other file's result with it. A contained panic leaves the peel
+// incomplete, and it is reported as such rather than as clean.
+func (st *peel) guardedWalk(blob []byte, path []string, depth int) {
+	defer func() {
+		if r := recover(); r != nil {
+			st.budget.trip(fmt.Sprintf("decoder panic: %v", r))
+		}
+	}()
+	st.walk(blob, path, depth)
+}
+
+// layerCount is how many layers of obfuscation a path peeled, which is what gets
+// scored. A carve decodes nothing: it finds a blob in the text around it, and
+// one base64 blob in a script is the same ordinary packaging as one base64 file.
+// The budget still counts it, through depth, so carving buys no extra walk.
+func layerCount(path []string) int {
+	n := len(path)
+	for _, step := range path {
+		if step == carveStep {
+			n--
+		}
+	}
+	return n
 }
 
 // walk explores one node: classify, and if not terminal, spawn a child per
@@ -261,15 +326,16 @@ func (st *peel) walk(blob []byte, path []string, depth int) {
 		return
 	}
 	st.seen[h] = struct{}{}
-	if depth > st.maxDepth {
-		st.maxDepth = depth
+	layers := layerCount(path)
+	if layers > st.maxDepth {
+		st.maxDepth = layers
 	}
 	st.mu.Unlock()
 
 	// Terminal? A revealed executable or script ends this branch: there is no
 	// point peeling a payload we have already identified.
 	if term, ok := classify(blob); ok && depth > 0 {
-		st.record(Chain{Transforms: append([]string(nil), path...), Terminal: term, Depth: depth})
+		st.record(Chain{Transforms: append([]string(nil), path...), Terminal: term, Depth: layers})
 		return
 	}
 
@@ -283,33 +349,96 @@ func (st *peel) walk(blob []byte, path []string, depth int) {
 		st.recordRootEntropy(prof.entropy)
 	}
 
-	// Spawn a bounded child per applicable layer, up to the frontier width.
+	// Every applicable layer decodes at once, then the results rejoin in rank
+	// order: the width and output walls are spent the same way on every run, so
+	// a report does not depend on which decoder happened to finish first.
+	// Deferred so a panic below still joins the children already running.
 	var wg sync.WaitGroup
+	defer wg.Wait()
 	children := 0
-	for _, u := range frontier {
-		if children >= st.budget.maxChildren {
-			break
-		}
-		out, err := u.Unwrap(blob, st.budget.remainingOutput())
-		if err != nil {
-			if err == errBombCap {
-				st.budget.trip("output ceiling (decompression-bomb cap)")
-			}
-			continue
-		}
-		if len(out) == 0 || !st.budget.chargeOutput(len(out)) {
-			continue
-		}
-		// Require real progress: a transform that returns its own input (or a
-		// no-op) must not spawn an identical child and loop.
-		if len(out) == len(blob) && string(out) == string(blob) {
-			continue
-		}
-		children++
-		childPath := append(append([]string(nil), path...), u.Name())
-		st.spawn(&wg, out, childPath, depth+1)
+	decoded := st.decodeFrontier(frontier, blob)
+	outputs := 0
+	for _, ds := range decoded {
+		outputs += len(ds)
 	}
-	wg.Wait()
+	siblings := make(map[[32]byte]bool, outputs)
+	for _, ds := range decoded {
+		for _, d := range ds {
+			// Two layers can agree on the output (rot13 and rot18 over text with
+			// no digits). Settled here, in rank order, the winner is stable.
+			if len(d.Data) == 0 || bytes.Equal(d.Data, blob) {
+				continue
+			}
+			if outputs > 1 {
+				id := sha256.Sum256(d.Data)
+				if siblings[id] {
+					continue
+				}
+				siblings[id] = true
+			}
+			if children >= st.budget.maxChildren {
+				st.budget.trip("frontier width")
+				return
+			}
+			if !st.budget.chargeOutput(len(d.Data)) {
+				continue
+			}
+			children++
+			childPath := append(append([]string(nil), path...), d.Label)
+			st.notify(Event{Kind: EventLayer, Path: childPath, Depth: layerCount(childPath)})
+			st.spawn(&wg, d.Data, childPath, depth+1)
+		}
+	}
+}
+
+// decodeFrontier runs every layer against blob at once and returns the outputs in
+// frontier order. It borrows whatever slots are free rather than waiting for one,
+// so a chain many layers deep still cannot deadlock on its own ancestors. The
+// caller's own slot covers the first worker, because it blocks until they finish.
+func (st *peel) decodeFrontier(frontier []Unwrapper, blob []byte) [][]Decoded {
+	results := make([][]Decoded, len(frontier))
+	extra := 0
+borrow:
+	for extra < len(frontier)-1 {
+		select {
+		case st.sem <- struct{}{}:
+			extra++
+		default:
+			break borrow
+		}
+	}
+	defer func() {
+		for range extra {
+			<-st.sem
+		}
+	}()
+	limit := st.budget.remainingOutput()
+	parallel.For(len(frontier), extra+1, func(i int) {
+		results[i] = st.decode(frontier[i], blob, limit)
+	})
+	return results
+}
+
+// decode runs one layer. A panic stops at this decoder: its siblings are looking
+// at the same blob and may be the ones that recognise it.
+func (st *peel) decode(u Unwrapper, blob []byte, limit int64) (out []Decoded) {
+	defer func() {
+		if r := recover(); r != nil {
+			out = nil
+			st.budget.trip(fmt.Sprintf("decoder panic: %v", r))
+		}
+	}()
+	if st.ctx.Err() != nil || st.budget.timedOut() {
+		return nil
+	}
+	out, err := unwrapLayer(u, blob, limit)
+	if err != nil {
+		if errors.Is(err, errBombCap) {
+			st.budget.trip("output ceiling (decompression-bomb cap)")
+		}
+		return nil
+	}
+	return out
 }
 
 // spawn runs a child either on a new goroutine (if a semaphore slot is free) or
@@ -321,10 +450,10 @@ func (st *peel) spawn(wg *sync.WaitGroup, blob []byte, path []string, depth int)
 		go func() {
 			defer wg.Done()
 			defer func() { <-st.sem }()
-			st.walk(blob, path, depth)
+			st.guardedWalk(blob, path, depth)
 		}()
 	default:
-		st.walk(blob, path, depth)
+		st.guardedWalk(blob, path, depth)
 	}
 }
 
@@ -332,6 +461,13 @@ func (st *peel) record(c Chain) {
 	st.mu.Lock()
 	st.chains = append(st.chains, c)
 	st.mu.Unlock()
+	st.notify(Event{Kind: EventChain, Path: c.Transforms, Depth: c.Depth, Terminal: c.Terminal})
+}
+
+func (st *peel) notify(e Event) {
+	if st.emit != nil {
+		st.emit(e)
+	}
 }
 
 // finish assembles the Result: orders chains deepest-first, picks the outcome
@@ -343,7 +479,14 @@ func (st *peel) finish(exhausted bool, reason string) Result {
 	rootEntropy := st.rootEntropy
 	st.mu.Unlock()
 
-	sort.SliceStable(chains, func(i, j int) bool { return chains[i].Depth > chains[j].Depth })
+	// Branches finish in any order, so the signature breaks ties: the primary
+	// chain of a report has to be the same one on every run.
+	sort.SliceStable(chains, func(i, j int) bool {
+		if chains[i].Depth != chains[j].Depth {
+			return chains[i].Depth > chains[j].Depth
+		}
+		return chains[i].Signature() < chains[j].Signature()
+	})
 
 	r := Result{
 		MaxDepth:      maxDepth,
@@ -386,7 +529,7 @@ func (st *peel) finish(exhausted bool, reason string) Result {
 func buildFindings(r Result) []Finding {
 	var out []Finding
 	for _, c := range r.Chains {
-		if c.Depth < minChainDepth {
+		if !c.qualifies() {
 			continue
 		}
 		switch c.Terminal {
@@ -415,7 +558,7 @@ func buildFindings(r Result) []Finding {
 // terminal matches a finding outcome. chains is already sorted deepest-first.
 func primaryChainSignature(chains []Chain, outcome Outcome) (string, bool) {
 	for _, c := range chains {
-		if c.Depth >= minChainDepth && c.Terminal == outcome {
+		if c.qualifies() && c.Terminal == outcome {
 			return c.Signature(), true
 		}
 	}
@@ -441,6 +584,13 @@ func score(r Result) int {
 			s = 30
 		}
 	}
+	// A substitution counts as one more layer: it reads as deliberate at any depth.
+	for _, c := range r.Chains {
+		if c.Terminal == r.Outcome && c.hasCipher() {
+			s += 15
+			break
+		}
+	}
 	if s > 100 {
 		s = 100
 	}
@@ -452,7 +602,7 @@ func score(r Result) int {
 // compression/encoding layer is normal packaging, not an obfuscation chain.
 func hasChainTerminal(chains []Chain, t Outcome) bool {
 	for _, c := range chains {
-		if c.Depth >= minChainDepth && c.Terminal == t {
+		if c.qualifies() && c.Terminal == t {
 			return true
 		}
 	}
@@ -468,6 +618,8 @@ func classify(blob []byte) (Outcome, bool) {
 	case len(blob) >= 4 && blob[0] == 0x7f && blob[1] == 'E' && blob[2] == 'L' && blob[3] == 'F':
 		return OutcomeRevealedExecutable, true
 	case len(blob) >= 2 && blob[0] == '#' && blob[1] == '!':
+		return OutcomeRevealedScript, true
+	case scriptLike(window(blob)):
 		return OutcomeRevealedScript, true
 	}
 	return "", false

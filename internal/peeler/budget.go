@@ -48,8 +48,8 @@ func DefaultLimits() BudgetLimits {
 	return BudgetLimits{
 		MaxNodes:       512,
 		MaxOutputBytes: 64 << 20, // 64 MiB of decoded output, total
-		MaxDepth:       16,
-		MaxChildren:    4,
+		MaxDepth:       32,
+		MaxChildren:    6,
 		MaxWallClock:   5 * time.Second,
 	}
 }

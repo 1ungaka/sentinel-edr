@@ -17,10 +17,13 @@ Own bounds-checked PE, ELF and Mach-O parsers read sections or segments, entry
 point, imports, build record, Authenticode/code-signature presence, overlay,
 packer markers, dynamic table and kernel-module info. ELF deep-resolution
 resolves `.init_array` constructor targets through the relocations, reads symbol
-versions, and flags a raw-syscall libc interposer. Each observation is a labeled
-class with a weight and a capped category; the threshold (8) needs several
-independent things to be wrong. TLSH, ssdeep, imphash and telfhash are matched
-against the fuzzy database as a separate `similarity` source.
+versions, and flags a raw-syscall libc interposer. The `elf.tiny-loader` class
+fires on hand-built ELF stubs: a handful of substantive imports, a tiny code
+footprint and the entry point's own loader shape — the pattern packed shellcode
+droppers and NOVEL-012-style multistage loaders leave behind. Each observation
+is a labeled class with a weight and a capped category; the threshold (8) needs
+several independent things to be wrong. TLSH, ssdeep, imphash and telfhash are
+matched against the fuzzy database as a separate `similarity` source.
 
 ## Technical Context
 Packed is not malicious: a recognised packer weighs less because the report

@@ -34,6 +34,7 @@ import (
 	"os"
 
 	"github.com/s-b-repo/cau/internal/intel"
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // DefaultThreshold is the shipped score at which a package is reported
@@ -120,10 +121,11 @@ func (r *Result) Detected() bool {
 // bundle-level and script-level findings are summed into Result.Score.
 func Analyze(data []byte, opts Options) *Result {
 	r := &Result{Size: len(data), Threshold: opts.threshold()}
-	if Detect(data) == FormatUnknown {
+	format := Detect(data)
+	if format == FormatUnknown {
 		return r
 	}
-	c := parse(data)
+	c := parse(data, format)
 	r.Findings = append(r.Findings, c.findings...)
 	r.Findings = append(r.Findings, scanScripts(c.scripts)...)
 	r.Findings = append(r.Findings, matchIntel(opts.Intel, c.scripts)...)
@@ -149,7 +151,7 @@ func ScanFile(path string, opts Options) *Result {
 	if fi.Size() > DefaultMaxSize {
 		return &Result{FilePath: path, Threshold: opts.threshold(), Skipped: "file over the in-memory size limit"}
 	}
-	data, err := os.ReadFile(path)
+	data, err := safefs.ReadFile(path, DefaultMaxSize)
 	if err != nil {
 		return &Result{FilePath: path, Threshold: opts.threshold(), Skipped: "read: " + err.Error()}
 	}

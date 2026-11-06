@@ -23,6 +23,8 @@ import (
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // ── ATT&CK technique ids ───────────────────────────────────────────────────────
@@ -223,7 +225,7 @@ func ScanFile(path string, opts Options) *Result {
 		return &Result{FilePath: path, Size: int(min64(fi.Size(), 1<<62)), Threshold: opts.threshold(),
 			Skipped: "file over the in-memory size limit"}
 	}
-	data, err := os.ReadFile(path)
+	data, err := safefs.ReadFile(path, DefaultMaxSize)
 	if err != nil {
 		return &Result{FilePath: path, Threshold: opts.threshold(), Skipped: "read: " + err.Error()}
 	}

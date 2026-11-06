@@ -16,8 +16,13 @@ cau \- transparent, open-source malware detection engine
 is a malware detection and triage engine written in Go. Detectors read every
 file once: hash signatures, YARA rules, string and API heuristics, a static
 structural pass (entropy, packer detection, section and entry-point anomalies,
-TLSH/ssdeep/imphash similarity) and a steganography pass (zero-width and other
-invisible codepoints in text and code).
+TLSH/ssdeep/imphash similarity), a steganography pass (zero-width and other
+invisible codepoints in text and code), and a behavioural tradecraft pass that
+asks what a file does rather than what it is called \(em web shells, network
+shells, in-memory loaders, LOLBAS and GTFOBins abuse, trusted-SaaS command
+channels (the lolol.farm catalogue) and EDR-bypass primitives (ArcticFox
+detection-bypass catalogue). Document, archive, CHM, ISO and Linux software
+package passes read structured files with the same contract.
 .PP
 Every finding is explained with a labeled class and a MITRE ATT&CK technique,
 and every report is machine-readable with CI-friendly exit codes. A fusion
@@ -64,15 +69,44 @@ Vault flagged files in a protected store and restore them deliberately.
 .B cau canary \fR<\fBplant\fP|\fBcheck\fP\fR\fP\fR
 Plant decoy files and detect tampering with them.
 .TP
-.B cau peel \fR[\fPflags\fR] \fP<\fBfile\fR\fP\fR
+.B cau peel \fR[\fPflags\fR] \fP<\fBfile\fR\fP...\fR
 Walk an obfuscation chain, reporting depth as a signal in its own right.
 .TP
 .B cau firmware \fR[\fPflags\fR] \fP<\fBimage\fR\fP\fR
 Parse a UEFI firmware image: firmware-volume and file inventory, integrity and
 an implant blocklist.
 .TP
+.B cau boot\-scan \fR[\fPflags\fR]
+Read the boot chain, strictly read-only: the MBR, GPT and partition boot
+sectors of disks named with \fB\-disk\fR, the EFI System Partition, Secure
+Boot state and boot entries, the WPBT table and PCI option ROMs.
+.TP
 .B cau ps \fR[\fPflags\fR]
-Scan the live process table for fileless, masquerade and injection indicators.
+Scan the live process table for fileless, masquerade, injection and network
+shell indicators; \fB\-\-respond\fR stops or kills confirmed processes.
+.TP
+.B cau net \fR[\fPflags\fR] | \fR<\fBblock\fP|\fBunblock\fP|\fBblocks\fP|\fBclear\fR\fP\fR
+Scan the network plane, read entirely from /proc and /etc: every socket the
+kernel holds, per network namespace, attributed to the process and the
+executable behind it, plus the resolver configuration and the neighbour table.
+Reports fileless egress and bind shells, known-bad peers from the abuse-intel
+feed, handler ports, DNS-plane escape, connect sweeps, beaconing cadence and
+default-gateway MAC churn. \fB\-\-respond block\fR drops a confirmed finding's
+peers in cau's own nftables table or iptables chains; the block expires
+(\fB\-\-block\-ttl\fR, 1h by default) and never covers loopback, this host's own
+addresses, its gateways or its resolvers. The subcommands manage blocks by hand;
+\fBclear\fR removes exactly what cau created.
+.TP
+.B cau defend \fR[\fPflags\fR]
+Chain every detection layer: correlate process, file, network, persistence,
+kernel, canary and package findings into incidents, take in telemetry from other
+hosts and sensors with \fB\-\-ingest\fR, scan new files as they land, and respond
+to confirmed attacks with \fB\-\-respond\fR, \fB\-\-quarantine\fR and
+\fB\-\-netblock\fR.
+.TP
+.B cau persist \fR[\fPflags\fR]
+Audit the host for persistence: preload, cron, systemd, rc files, autostart,
+SSH keys, accounts, sudoers, PAM and set-uid programs in writable directories.
 .TP
 .B cau installed \fR[\fPflags\fR]
 Audit installed-package maintainer scripts (dpkg and pacman) for root-level
@@ -118,7 +152,15 @@ The YARA rules directory.
 .TP
 .BR \-format " " "\fBtext\fP|\fBjson\fP|\fBsarif\fP|\fBocsf\fR"
 Output format. Machine formats never write the banner to stdout, so stdout is
-always valid for a parser.
+always valid for a parser. The SIEM sink formats \fBecs\fR, \fBcef\fR,
+\fBleef\fR, \fBgelf\fR, \fBsyslog\fR, \fBsyslog\-ecs\fR, \fBsyslog\-cef\fR,
+\fBsyslog\-leef\fR and \fBotlp\fR carry the same findings as \fBocsf\fR.
+.TP
+.BR \-sink\-url " " "\fIurl\fR"
+Forward the findings to a collector after the scan: \fBudp://\fR,
+\fBtcp://\fR, \fBtls://\fR\fIhost:port\fR or \fBhttps://\fR\fIhost/path\fR.
+\fB\-sink\-format\fR picks the sink format sent. Delivery is best-effort and
+never changes the exit code.
 .TP
 .BR \-fail\-on " " "\fBclean\fP|\fBheuristic\fP|\fBmalicious\fP|\fBnone\fR
 The findings tier that makes the run exit non-zero.

@@ -19,5 +19,7 @@ func Classes() []Class {
 			"a firmware-volume header fails its 16-bit checksum: a hand-built or tampered volume"},
 		{"uefi.known-implant-guid", techPreOSBoot, "", scoreImplant,
 			"a module GUID matches the operator-supplied implant blocklist (empty by default; no implant truth set ships with the engine)"},
+		{"uefi.module-rule-match", techPreOSBoot, "", scoreRuleMatch,
+			"a firmware module's executable body (PE32/TE section, including inside LZMA-compressed volumes) matches a detection rule; emitted by `cau firmware` when rules are loaded, not by the per-file scan"},
 	}
 }

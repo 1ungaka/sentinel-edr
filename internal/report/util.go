@@ -2,11 +2,13 @@ package report
 
 import (
 	"encoding/hex"
+	"fmt"
 	"net/url"
 	"os"
 	"path"
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -74,6 +76,49 @@ func preview(b []byte, maxBytes int) string {
 		}
 	}
 	return sb.String()
+}
+
+// TermSafe renders untrusted text for a terminal or a line-oriented log, showing
+// control characters as visible escapes. A file name, process title or package
+// field is whatever the attacker wants, and written raw it can erase its own
+// report line, print a forged verdict after it, conceal the rest of the output,
+// or set the clipboard. Newlines would forge a whole line. Bidi controls reorder
+// what the analyst reads, so "evil\u202etxt.exe" displays as something else.
+//
+// The structured formats do not need this: their encoders escape already, and
+// their consumers need the exact bytes.
+func TermSafe(s string) string {
+	if utf8.ValidString(s) && strings.IndexFunc(s, unsafeRune) < 0 {
+		return s
+	}
+	var sb strings.Builder
+	sb.Grow(len(s) + 8)
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && n == 1: // some terminals act on a bare 0x9b as CSI
+			fmt.Fprintf(&sb, `\x%02x`, s[i])
+		case r == '\n':
+			sb.WriteString(`\n`)
+		case r == '\r':
+			sb.WriteString(`\r`)
+		case r == '\t':
+			sb.WriteString(`\t`)
+		case r < 0x100 && unsafeRune(r):
+			fmt.Fprintf(&sb, `\x%02x`, r)
+		case unsafeRune(r):
+			fmt.Fprintf(&sb, `\u%04x`, r)
+		default:
+			sb.WriteRune(r)
+		}
+		i += n
+	}
+	return sb.String()
+}
+
+// unsafeRune reports a rune that changes how the surrounding text is displayed.
+func unsafeRune(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) || unicode.In(r, unicode.Zl, unicode.Zp)
 }
 
 // boundedMessage is truncateString with the configured free-text cap.

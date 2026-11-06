@@ -53,6 +53,7 @@ const textGolden = ` [!] DETECTED (Hash) — samples/wannacry.exe
  Chain-peel detections : 0
  Archive detections    : 0
  CHM detections        : 0
+ Tradecraft detections : 0
  Fused-only detections : 0
  Errors                : 0
  Exit code             : 1 (exit 1: 1 file(s) matched a hash signature or YARA rule)
@@ -141,5 +142,8 @@ func TestTextHostileNamesStayPrintable(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "\xff") {
 		t.Error("invalid UTF-8 leaked into text output")
+	}
+	if strings.Contains(buf.String(), "\x1b") {
+		t.Error("an escape sequence leaked into text output")
 	}
 }

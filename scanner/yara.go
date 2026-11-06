@@ -11,6 +11,8 @@ import (
 	"time"
 
 	yara "github.com/hillu/go-yara/v4"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // DefaultScanTimeout is the per-scan wall-clock budget handed to libyara when
@@ -421,7 +423,10 @@ func (ys *YaraScanner) ScanFileYaraStrict(path string) ([]YaraMatch, error) {
 		return ys.scanFileInPlace(path)
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := safefs.ReadFile(path, ys.maxScanSz)
+	if errors.Is(err, safefs.ErrTooLarge) {
+		return ys.scanFileInPlace(path) // it grew since the size check
+	}
 	if err != nil {
 		return nil, fmt.Errorf("could not read %s for YARA scanning: %w", path, err)
 	}
@@ -499,6 +504,13 @@ func (ys *YaraScanner) scanMem(data []byte, origin string) ([]YaraMatch, error) 
 // scanFileInPlace hands the file to libyara, which memory-maps it. Used for
 // files larger than the in-memory scan limit.
 func (ys *YaraScanner) scanFileInPlace(path string) ([]YaraMatch, error) {
+	// By descriptor: libyara's own open would block on a FIFO swapped in here.
+	f, _, err := safefs.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("could not open %s for YARA scanning: %w", path, err)
+	}
+	defer f.Close()
+
 	var collected yara.MatchRules
 
 	sc, err := ys.newScanScanner(&collected)
@@ -507,7 +519,7 @@ func (ys *YaraScanner) scanFileInPlace(path string) ([]YaraMatch, error) {
 	}
 	defer sc.Destroy()
 
-	scanErr := sc.ScanFile(path)
+	scanErr := sc.ScanFileDescriptor(f.Fd())
 	matches := convertMatches(collected, nil)
 	if scanErr != nil {
 		return matches, fmt.Errorf("yara scan of %s: %w", path, describeScanError(scanErr, ys.timeout))

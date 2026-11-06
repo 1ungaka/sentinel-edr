@@ -16,7 +16,7 @@ func dropperELFSpec() elfSpec {
 	s.sections[0].pflags = pfR | pfW | pfX
 	hi := make([]byte, 4096) // high-entropy executable segment (unpack target)
 	for i := range hi {
-		hi[i] = byte((i*2654435761 + 7) >> 8)
+		hi[i] = byte((uint64(i)*2654435761 + 7) >> 8)
 	}
 	s.sections[0].data = hi
 	s.interp = "/tmp/.x/ld.so"
@@ -33,7 +33,7 @@ func TestStaticDetectionRobustness(t *testing.T) {
 	lowOverlay := bytes.Repeat([]byte("benign license text. "), 400)
 	highOverlay := make([]byte, 8192)
 	for i := range highOverlay {
-		highOverlay[i] = byte((i*2654435761 + 13) & 0xff)
+		highOverlay[i] = byte((uint64(i)*2654435761 + 13) & 0xff)
 	}
 	transforms := []struct {
 		name string

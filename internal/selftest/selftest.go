@@ -31,10 +31,25 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // ManifestSchema guards the on-disk format.
-const ManifestSchema = 1
+// ManifestSchema 2 added Pins. A manifest read from disk keeps the schema it
+// was written with, and SigningBytes emits pins only when there are any, so a
+// signature made over a v1 manifest still verifies byte for byte.
+const ManifestSchema = 2
+
+// Pin names. A pin is signed configuration that is not a file digest.
+const (
+	// PinSIEM is the address incidents are forwarded to. It is pinned because
+	// the file that configures it is the one an attacker would rewrite to do
+	// two things at once: stop the real SIEM hearing about the intrusion, and
+	// have the agent deliver its findings to them instead. With the address
+	// signed, editing the config on disk can no longer redirect the stream.
+	PinSIEM = "siem"
+)
 
 // Errors a caller can branch on.
 var (
@@ -66,9 +81,69 @@ type Manifest struct {
 	Schema    int     `json:"schema"`
 	CreatedAt string  `json:"created_at,omitempty"`
 	Entries   []Entry `json:"entries"`
+	// Pins are signed values that are not file digests: settings an attacker
+	// could change on disk to redirect or silence the agent without touching
+	// any detection content. A pin says what the value was when the baseline
+	// was recorded, so a caller can both detect the edit and keep working from
+	// the authentic value instead of the one now on disk.
+	Pins map[string]string `json:"pins,omitempty"`
 	// Signature is the hex Ed25519 signature over SigningBytes(), or "" when the
 	// manifest is unsigned.
 	Signature string `json:"signature,omitempty"`
+}
+
+// Pin returns a pinned value and whether it was recorded.
+func (m Manifest) Pin(name string) (string, bool) {
+	v, ok := m.Pins[name]
+	return v, ok
+}
+
+// Lookup returns the baseline entry for a resource name.
+func (m Manifest) Lookup(name string) (Entry, bool) {
+	for _, e := range m.Entries {
+		if e.Name == name {
+			return e, true
+		}
+	}
+	return Entry{}, false
+}
+
+// Digest computes a resource's digest the same way Compute does, so a caller
+// can check one resource without re-reading every other one. A directory is
+// reduced to a single canonical digest over its contents.
+func Digest(path string) (sum string, isDir bool, files int, err error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", false, 0, err
+	}
+	if info.IsDir() {
+		sum, files, err = digestTree(path)
+		return sum, true, files, err
+	}
+	sum, err = digestFile(path)
+	return sum, false, 1, err
+}
+
+// VerifyOne checks a single named resource against the baseline. It reports the
+// drift, if any, and whether the baseline covers that name at all — a resource
+// the baseline never recorded cannot be said to have drifted, and the caller
+// decides whether that absence is itself a problem.
+func VerifyOne(baseline Manifest, name string) (drift Drift, covered bool, err error) {
+	want, ok := baseline.Lookup(name)
+	if !ok {
+		return Drift{}, false, nil
+	}
+	got, _, _, err := Digest(want.Path)
+	if errors.Is(err, os.ErrNotExist) {
+		return Drift{Name: name, Reason: "resource missing on disk: " + want.Path}, true, nil
+	}
+	if err != nil {
+		return Drift{}, true, err
+	}
+	if got != want.SHA256 {
+		return Drift{Name: name, Reason: "content changed since the baseline"}, true, nil
+	}
+	return Drift{}, true, nil
 }
 
 // Compute digests every resource and returns a manifest (unsigned). A resource
@@ -116,14 +191,29 @@ func digestFile(path string) (string, error) {
 
 // digestTree reduces a directory to one canonical digest over its regular files
 // in sorted relative-path order, binding each file's path and content, so any
-// add / remove / edit / rename changes the result. Returns the digest and the
-// count of regular files.
+// add / remove / edit / rename changes the result. A symlink is bound by its
+// target: the rule loader follows one, so skipping it would let a link to an
+// attacker's rule file through unnoticed. Returns the digest and the count of
+// entries bound.
 func digestTree(root string) (string, int, error) {
 	type fileDigest struct{ rel, sum string }
 	var files []fileDigest
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(safefs.WalkRoot(root), func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			target, rerr := os.Readlink(p)
+			if rerr != nil {
+				return rerr
+			}
+			rel, rerr := filepath.Rel(root, p)
+			if rerr != nil {
+				return rerr
+			}
+			sum := sha256.Sum256([]byte("symlink\x00" + target))
+			files = append(files, fileDigest{rel: filepath.ToSlash(rel), sum: hex.EncodeToString(sum[:])})
+			return nil
 		}
 		if d.IsDir() || !d.Type().IsRegular() {
 			return nil
@@ -163,6 +253,19 @@ func (m Manifest) SigningBytes() []byte {
 	fmt.Fprintf(&b, "cau-selftest/v%d\n", m.Schema)
 	for _, e := range entries {
 		fmt.Fprintf(&b, "%s|%s|%t\n", e.Name, e.SHA256, e.IsDir)
+	}
+	// Pins are emitted only when present, so the bytes signed for a manifest
+	// without any are exactly what they were before pins existed and an older
+	// signature still verifies.
+	if len(m.Pins) > 0 {
+		names := make([]string, 0, len(m.Pins))
+		for k := range m.Pins {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		for _, k := range names {
+			fmt.Fprintf(&b, "pin|%s|%s\n", k, m.Pins[k])
+		}
 	}
 	return []byte(b.String())
 }

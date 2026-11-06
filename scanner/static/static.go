@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // DefaultMaxSize is the largest file AnalyzeFile reads into memory.
@@ -226,7 +228,7 @@ func AnalyzeFile(path string, opts Options) *Result {
 		r.Size = int(fi.Size())
 		return r
 	}
-	data, err := os.ReadFile(path)
+	data, err := safefs.ReadFile(path, max)
 	if err != nil {
 		r.Error = fmt.Errorf("could not read file: %w", err)
 		return r

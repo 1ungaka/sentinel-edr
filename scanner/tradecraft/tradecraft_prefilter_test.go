@@ -55,6 +55,13 @@ func TestEveryExpressionCompiles(t *testing.T) {
 				t.Errorf("%s: %v", vec.class, err)
 			}
 		}
+		// An exception compiles lazily too, so a typo in one would otherwise
+		// surface as a panic on the first file that reached it.
+		if vec.except != nil {
+			if _, err := regexp.Compile(vec.except.String()); err != nil {
+				t.Errorf("%s exception: %v", vec.class, err)
+			}
+		}
 	}
 }
 

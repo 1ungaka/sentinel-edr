@@ -30,7 +30,7 @@ func walkStrings(v any, fn func(string)) {
 }
 
 func TestEveryFormatTreatsAHostileFileNameAsData(t *testing.T) {
-	jsonDocument := map[string]bool{"json": true, "sarif": true, "ocsf": true, "otlp": true}
+	jsonDocument := map[string]bool{"json": true, "sarif": true, "ocsf": true, "otlp": true, "stix": true}
 	jsonLines := map[string]bool{"ecs": true, "gelf": true}
 	// Formats that carry the path as a plain string a consumer reads back
 	// byte for byte. SARIF carries it as a percent-encoded URI instead.
@@ -105,7 +105,7 @@ func TestEveryFormatTreatsAHostileFileNameAsData(t *testing.T) {
 			}
 		})
 	}
-	if len(Formats) < 13 {
+	if len(Formats) < 14 {
 		t.Fatalf("only %d formats checked", len(Formats))
 	}
 }

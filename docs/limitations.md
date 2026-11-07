@@ -42,7 +42,7 @@ gives every finding a process and a file to act on. The cost of that choice:
 | No payload, ever | `/proc` carries metadata, not bytes | no protocol inspection, no JA3/JA4 or TLS fingerprinting, no content signatures on traffic. A C2 channel inside ordinary HTTPS to an unlisted address is invisible to this plane |
 | A sample, not a stream | each scan is a point-in-time read | a connection that opens and closes between two samples is never seen. A beacon with a 5-second check-in and a 30-second interval will be caught only by luck. `cau net --interval` and `cau defend` narrow the window; they do not close it |
 | No byte counts | `/proc/net/*` queue columns are instantaneous, not cumulative | volumetric exfiltration is not detected on this plane at all |
-| Attribution needs privilege | `/proc/<pid>/fd` is readable by the owner and root | without root most sockets are reported as unattributed. They are still scored and still counted; nothing is guessed |
+| Attribution needs privilege | `/proc/<pid>/fd` is readable by the owner and root | without root most sockets are reported as unattributed. They are still scored and still counted; nothing is guessed. Measured on a stock desktop: 40 of 48 sockets attributed as root, against 13 of 33 as an ordinary user. This is not only a visibility difference — an unattributed socket has no executable to group by, so several weak signals about one daemon never meet, and an unprivileged run is therefore **quieter than it should be** rather than merely less informative. The one real false positive this sensor has had was invisible until it was read as root |
 | A kernel rootkit can lie | the socket tables are the kernel's own answer | a hidden socket is hidden from this sensor too. That is what `cau-kernel`'s integrity checks are for |
 | Beaconing confuses schedulers with implants | both check in regularly | a binary a package installed scores 3 for a cadence, not 6, so update agents and time sync corroborate rather than alert. A jittered implant above 25 % relative spread is missed on purpose: below that, a person's browsing is indistinguishable from a schedule |
 | One host cannot verify a fabric | ARP and gateway state is this host's view | a MAC that moved is reported and never treated as live state; a router failover and a VRRP pair look the same from here. Fleet corroboration (several hosts seeing one MAC claim the gateway) is not implemented |
@@ -107,15 +107,49 @@ the agent binary, and signs a pin for the SIEM address. Each file is then
 checked for how it sits on disk and against that baseline, the feed on every
 reload. What that does **not** buy:
 
+Several things that were limitations here are now closed, and are described with
+the rest of the behaviour under `cau defend` and `cau selftest` in the
+[CLI reference](cli.md) rather than left as caveats here:
+an unsigned baseline no longer silently satisfies a build that pins a key; a
+signing key left on the host is detected and reported; the CA bundle that
+decides who may answer at the SIEM address is baselined alongside the address
+itself; an override from a flag or the environment still wins but is raised as
+`defend.weak.siem-pin-overridden`; and TLS verification turned off is raised as
+`defend.weak.siem-tls-unverified`; the signing key can be linked into a build
+you compiled yourself (`make build SELFTEST_PUBKEY=…`), not only into a release;
+and `siem-cert-pin` pins the manager's public key, so a certificate from any CA
+the host happens to trust is no longer enough to receive incidents. What follows
+is what remains true after all of that.
+
 | Limitation | Why | What it means |
 |---|---|---|
-| An unsigned baseline stops only the careless | the manifest is a file on the same host | an attacker who can edit `cau.conf` or the feed can usually also run `cau selftest --record` and rebaseline their own version. Unsigned integrity checking catches a change nobody covered their tracks for, which is most of them, and nothing more. `--sign-key` is the version that resists this, and only because the key is somewhere else |
-| A signed baseline needs the key to stay off the host | the signature is only unforgeable while the private key is | a signing key left in `/etc/cau` alongside the manifest reduces the signed case to the unsigned one exactly |
-| Root can do all of it anyway | every check here runs as a userspace process reading files root owns | against an attacker who already has root the checks are tamper-*evident*, not tamper-proof: they can patch the running binary's memory, replace it and rebaseline, or stop the unit. What raises the cost is the signed pin and the kernel guard, not these digests |
-| The pin protects the destination, not the delivery | pinning the SIEM address stops a config edit redirecting the stream | it does nothing about the network in between. A host that cannot reach the manager still buffers and then drops; TLS verification is what stops an interception, and `--wazuh-insecure` turns that off |
-| Drift says what changed, never who or when | a digest comparison has no history | the baseline records one state. It cannot distinguish an operator's legitimate `cau feed update` from an attacker's rewrite, which is why a legitimate change means re-recording, and why every drift is reported rather than judged |
-| A failed check never stops the agent | refusing to run on a bad digest would be a one-file off switch for the defence | a tampered resource is refused and the last trustworthy value stays live. The attacker can therefore freeze the intel layer at its last good state, loudly, and that is the intended worst case rather than an oversight |
-| `--siem` and `CAU_SIEM` are not covered | only a file's contents can be digested | an address given on the command line or in the environment overrides the pin by design, since it comes from whoever started the process. Anyone who can change the unit file or its `EnvironmentFile` can therefore redirect the stream without tripping the pin |
+| Root can do all of it anyway | every check here runs as a userspace process reading files root owns | against an attacker who already has root these checks are tamper-*evident*, not tamper-proof: they can patch the running binary's memory, replace the binary along with the key pinned into it, or just stop the unit. Nothing in userspace fixes this, and a document that claimed otherwise would be the most dangerous page in this repository. What raises the cost is the signed baseline, the key being elsewhere, `cau-kernel`'s guards and a SIEM that notices the agent went quiet — not these digests |
+| Verified delivery still rests on a trusted CA, unless pinned | the agent is an HTTPS client | `siem-cert-pin` closes this: the manager's public key must match, in addition to the chain verifying, so a certificate from any of the CAs in the host's trust store is no longer enough. Set it and the residual limit is only that `--wazuh-insecure` can still disable verification entirely — reported, but permitted, because lab managers with self-signed certificates exist. Leave it unset and the old limit stands in full |
+| Drift says what changed, not who changed it | a digest comparison has no actor | *when* is recorded — every drift is a timestamped incident in `/var/log/cau/defend.jsonl` — but attributing it to a user or a process needs the kernel's own audit trail, which this agent does not read. It also cannot distinguish an operator's legitimate `cau feed update` from an attacker's rewrite by inspection, which is why a legitimate change means re-recording and why every drift is reported rather than judged |
+| A failed check never stops the agent | refusing to run on a bad digest would be a one-file off switch for the defence | a tampered resource is refused and the last trustworthy value stays live. An attacker can therefore freeze the intel layer at its last good state, loudly. This one is a **deliberate trade, not an oversight**: the alternative hands anyone who can corrupt a single file the ability to disable the whole defence, which is a worse outcome than running on content one revision stale. It is listed here because it is a real consequence, not because it should be changed |
+| Surviving a broken file costs what that file gave | the agent keeps running rather than refusing, so the broken file's job goes undone until it is repaired | with the signature database broken there is no hash detection; with the key or baseline broken no pin is enforced, so the SIEM address comes from `cau.conf`; with `cau.conf` broken the built-in defaults apply, and those act, so a host that depends on report-only should set `--report-only` on the command line. Each case raises a top-score `defend.tamper.*` incident, and the daemon stays up. |
+| An override is reported, not prevented | a flag or an environment variable comes from whoever started the process | `--siem` and `$CAU_SIEM` still take precedence over the pinned address, deliberately: an operator moving their SIEM must not need a re-recorded baseline before the agent will talk to it. Anyone who can edit the unit file or its `EnvironmentFile` can therefore still redirect the stream — they just cannot do it quietly any more |
+
+## Obfuscation-chain peeler
+
+- **It reverses, it does not crack.** Encodings and fixed substitutions are undone.
+  Anything keyed is not, and that includes single-byte XOR.
+- **A rot or Caesar layer is judged on its first 4 KiB,** so a rotated payload behind 4 KiB of
+  filler that reveals nothing is missed. Text under 96 bytes tries every shift; longer
+  text picks by letter frequency, which is a statistic and can be wrong on unusual
+  input.
+- **Whole-number bases stop at 64 KiB.** Base 36, 58 and 62 decode in quadratic time,
+  so a longer blob in those alphabets is left alone.
+- **Carving reads one run at a time.** A run needs 64 characters, the 64 longest in a
+  file are tried, and a payload split into short strings and joined at run time is
+  not reassembled.
+- **The budget is a wall, not a horizon.** Past 512 nodes, 64 MiB, depth 32, six
+  branches per node or 5 seconds a peel reports `peel.exhausted`. That is a finding,
+  and what lay beyond it stays unseen.
+- **The false-positive number comes from a Kali host.** Over 116,885 benign files it
+  flagged 10, all real payloads in offensive tooling. It has not been measured on an
+  ordinary host. Rotation and carving add time: that set took 65 s against 44 s
+  before, about 0.2 ms more on a small text file.
 
 ## Detection robustness (measured)
 
@@ -198,9 +232,9 @@ too.
   operator-supplied implant blocklist. It ships **no implant truth set**:
   firmware is overwhelmingly legitimate PEI/DXE/SMM drivers, so scoring module
   shapes would be a false-positive machine, and the only scored signals are a
-  checksum failure (a genuine tamper tell) and a blocklist match (empty by
-  default, loaded with `--implants`). Module bodies are inventoried, not
-  disassembled; GUIDed/compressed sections are not decompressed; the Intel flash
+  checksum failure (a genuine tamper tell), a blocklist match (empty by default,
+  loaded with `--implants`) and a YARA rule matching a module body. Module bodies are inventoried, not
+  disassembled; LZMA sections are opened and module bodies run through the YARA rules, but other compressed sections are not; the Intel flash
   descriptor's region layout is detected but not fully parsed; NVRAM, signatures
   and boot policy are not analysed. This is the Phase-8 wedge with a small-n
   truth set, stated as such rather than oversold.
@@ -238,6 +272,18 @@ too.
   benign maintainer script that legitimately does something unusual can score,
   and a malicious payload that avoids the scored patterns can score low.
   Threshold 8, SUSPICIOUS tier only.
+- **Update rollback on a first install.** `cau update` refuses a bundle older than the
+  one recorded in `<db>.manifest`, but with no record there is nothing to compare, so
+  the first install takes the bundle it is given. Anyone who can write beside the
+  database can edit the record, and could rewrite the database just as easily.
+- **`cau persist` reads links by name.** A link at an audited path is judged by where
+  it points and the target is never opened, so a link into a system tree is taken at
+  face value. A root attacker can hide content there.
+- **PID reuse.** `cau ps --respond` compares the start time, name and executable
+  immediately before signalling. A window a few system calls wide remains.
+- **32-bit builds.** CI releases 64-bit only. The parsers are tested as real 386
+  binaries, but `debian/control` says `Architecture: any` and no 32-bit package is
+  built or smoke-tested here.
 - **Unpacking.** Packed samples are identified, and a bounded peeler plus the
   encoded-executable pass now unwrap obfuscation trees and embedded encoded
   binaries (NOVEL-012). The emulation fallback for layers the bounded peeler

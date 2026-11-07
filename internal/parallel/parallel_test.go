@@ -92,3 +92,59 @@ func TestDoCarriesAPanicToo(t *testing.T) {
 	}()
 	Do(func() {}, func() { panic("boom") })
 }
+
+func TestShareVisitsEveryIndexOnce(t *testing.T) {
+	const n = 10000
+	hits := make([]atomic.Int32, n)
+	Share(n, func(i int) { hits[i].Add(1) })
+	for i := range hits {
+		if hits[i].Load() != 1 {
+			t.Fatalf("index %d visited %d times", i, hits[i].Load())
+		}
+	}
+}
+
+// Nested Share must finish with no helpers left, which is what stops a For inside a
+// For from multiplying: the inner one simply runs on the goroutine it was called on.
+func TestShareNestsWithoutDeadlock(t *testing.T) {
+	var total atomic.Int64
+	Share(64, func(int) {
+		Share(64, func(int) {
+			Share(16, func(int) { total.Add(1) })
+		})
+	})
+	if total.Load() != 64*64*16 {
+		t.Fatalf("got %d", total.Load())
+	}
+}
+
+func TestShareNeverExceedsTheCPUs(t *testing.T) {
+	var cur, peak atomic.Int32
+	Share(500, func(int) {
+		c := cur.Add(1)
+		for {
+			p := peak.Load()
+			if c <= p || peak.CompareAndSwap(p, c) {
+				break
+			}
+		}
+		time.Sleep(100 * time.Microsecond)
+		cur.Add(-1)
+	})
+	if p := int(peak.Load()); p > cap(spare)+1 {
+		t.Fatalf("%d ran at once, %d helpers plus the caller is the limit", p, cap(spare))
+	}
+}
+
+func TestSharePanicReachesTheCaller(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("the panic was lost")
+		}
+	}()
+	Share(100, func(i int) {
+		if i == 50 {
+			panic("boom")
+		}
+	})
+}

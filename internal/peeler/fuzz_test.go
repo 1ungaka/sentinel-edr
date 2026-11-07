@@ -28,6 +28,8 @@ func FuzzPeel(f *testing.F) {
 	f.Add([]byte("<~,9\\^LBl5SFBF86lEblk3FEDI_0/#(71G1@60ekI:3A5V\"Hm!KD$3~>"))
 	f.Add(append([]byte{0xff, 0xfe}, bytes.Repeat([]byte{'a', 0}, 32)...))
 	f.Add([]byte("A=\"" + string(encodeLayer("base64", largeELF())) + "\"\nB=\"" + string(encodeLayer("hex", largeELF())) + "\"\n"))
+	f.Add(zipOf(zipEntry{name: "a", body: compose(fakeELF, "base64", "gzip")}, zipEntry{name: "b", body: prose, stored: true}))
+	f.Add(compose(zipOf(zipEntry{name: "a", body: harmlessScript}), "base64"))
 
 	// Tight limits keep each fuzz iteration fast while still exercising every
 	// wall (nodes, output, depth, wall-clock).
@@ -40,13 +42,27 @@ func FuzzPeel(f *testing.F) {
 	}))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		done := make(chan Result, 1)
-		go func() { done <- p.Peel(context.Background(), data) }()
+		type verdict struct {
+			r  Result
+			st *peel
+		}
+		done := make(chan verdict, 1)
+		go func() {
+			r, st := p.inspect(context.Background(), data, nil)
+			done <- verdict{r, st}
+		}()
 		select {
-		case r := <-done:
-			// The output accounting must never exceed the declared cap.
-			if r.OutputBytes > (1<<20)+int64(len(r.Chains)) {
-				t.Fatalf("output %d exceeded the budget", r.OutputBytes)
+		case v := <-done:
+			// Neither wall may be passed, and the task graph must have stayed
+			// inside its bounds: workers, branches per node, bytes held.
+			if v.r.OutputBytes > 1<<20 || v.r.NodesVisited > 128 {
+				t.Fatalf("%d bytes, %d nodes: over the budget", v.r.OutputBytes, v.r.NodesVisited)
+			}
+			if broken := v.st.gauges.violation.Load(); broken != nil {
+				t.Fatal(*broken)
+			}
+			if v.r.Exhausted && v.r.Outcome == OutcomeClean {
+				t.Fatalf("exhausted (%s) and reported clean", v.r.ExhaustReason)
 			}
 		case <-time.After(10 * time.Second):
 			// A peel that outlives its 2s wall clock by this margin is a

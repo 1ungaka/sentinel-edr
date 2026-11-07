@@ -116,6 +116,14 @@ var classCatalog = []Class{
 	{"dynamic.preload-interposer-known", CatInfo, 0, "", fmtELF, "a known interposer (sanitizers, fakeroot, libeatmydata, ...) named at weight 0 (informational)"},
 	{"static.linked", CatInfo, 0, "", fmtELF, "statically linked; import analytics do not apply (informational)"},
 
+	// Content of the loadable image (ELF): what a compiled binary carries.
+	{"content.direct-syscalls", CatImports, 2, techNativeAPI, fmtELF, "dynamically linked image whose code loads sensitive system-call numbers (execve, memfd_create, ptrace, socket, ...) and traps directly instead of calling libc"},
+	{"content.ssh-authorized-key", CatPersist, 3, techSSHKeys, fmtELF, "an authorized_keys path together with a complete embedded OpenSSH public key"},
+	{"content.sshd-config-edit", CatPersist, 3, techSSHKeys, fmtELF, "the sshd_config path together with a login-widening directive written with its value (PermitRootLogin yes, ...)"},
+	{"content.cron-job", CatPersist, 3, techCron, fmtELF, "a crontab location or crontab invocation together with a crontab line (five schedule fields or @reboot, then a command)"},
+	{"content.systemd-unit", CatPersist, 2, techSystemdUnit, fmtELF, "a persistent systemd unit directory together with a whole unit-file body"},
+	{"content.autostart-multi", CatPersist, 3, techAutostart, fmtELF, "three or more autostart mechanisms named (systemd, cron, init scripts, XDG autostart, shell start-up files, ld.so.preload), at least one with the body to install"},
+
 	// Kernel modules (ELF).
 	{"module.kernel", CatInfo, 0, "", fmtELF, "Linux kernel module identified (informational)"},
 	{"module.unsigned", CatModule, 1, techRootkit, fmtELF, "kernel module without an appended signature"},

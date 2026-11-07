@@ -140,15 +140,16 @@ Detection content is written against `dev` only. From `heldout` only aggregates
 are read, and only to report: per-sample misses and false positives there are
 never looked at, because fixing them would turn the number into a tuning score.
 
-Measured 2026-11-06 on detection sources fingerprinted `eab3cc2e7091f08b`. Numbers
-describe that build: re-run `make eval-lab` after changing detection content.
+Measured 2026-11-07 against the working tree; the lab reports identify the build
+only as `0.1.0-dev`. The wide benign sweep was re-run on the current tree the same
+day, 38/25,000 again with the same hits. Numbers describe that build: re-run `make eval-lab` after changing detection content.
 
 | Split | Detected | False positives |
 |---|---|---|
 | dev, before | 70/222 (31.5 %) | 5/2,357 (0.21 %) |
 | dev, after | 166/222 (74.8 %) | 3/2,357 (0.13 %) |
 | **heldout, before** | **71/280 (25.4 %)** | **5/2,431 (0.21 %)** |
-| **heldout, after** | **172/280 (61.4 %)** | **6/2,431 (0.25 %)** |
+| **heldout, after** | **171/280 (61.1 %)** | **6/2,431 (0.25 %)** |
 | wide benign sweep | n/a | 38/25,000 (0.15 %) |
 
 Heldout by class:
@@ -160,7 +161,7 @@ Heldout by class:
 | Metasploit raw shellcode | 0/11 | 11/11 |
 | Metasploit script and source formats | 10/34 | 32/34 |
 | Windows hacktools | 9/13 | 9/13 |
-| Offensive PowerShell | 44/181 | 91/181 |
+| Offensive PowerShell | 44/181 | 90/181 |
 | Web shells | 0/17 | 7/17 |
 | UPX-packed hacktools | 0/2 | 0/2 |
 
@@ -182,11 +183,11 @@ Read these numbers for what they are:
 - **Some positives cannot be detected, and stay in the denominator.** A module
   loader or a joke script carries no malicious behaviour, and several Laudanum
   files never execute anything. Nothing was relabelled to improve a number.
-- **Windows specificity is thin.** The benign set is a Linux host's: about 900 PE
-  files and fewer than 100 PowerShell scripts. A Windows estate's admin scripts
-  have not been measured, so treat `tradecraft.script.*` false-positive rates there
-  as unknown.
-- **Heldout was read twice**, baseline and final, aggregates only.
+- **Windows specificity is measured separately**, below: the lab's benign set is a
+  Linux host's, with about 900 PE files and fewer than 100 PowerShell scripts.
+- **Heldout has been read about ten times**, aggregates only: baseline, finals as
+  each build settled, and one run to isolate a rule change. Nothing was changed in
+  response to a heldout number.
 
 The wide sweep's 4 `tradecraft` hits are all genuine offensive material shipped by
 Kali packages: two `davtest` web shells, the `webacoo` generator and the `dploot`
@@ -204,6 +205,21 @@ this corpus cannot measure. It stays opt-in: a YARA hit is MALICIOUS, which
 `--quarantine` acts on, so a large external rule set is an operator's decision, and
 it costs compile time at start and scan time per file. Heldout has now been read
 six times, aggregates only, with nothing changed in response.
+
+**Windows admin scripts.** 5,701 unique scripts from 17 public repositories
+(PowerShell, Pester, dbatools, Chocolatey packages, PowerCLI examples, Azure
+quickstart templates, Microsoft CSS-Exchange, DSC resources, winget, vcpkg and
+others) gave **1.03 %** false positives, seven times the Linux rate, and 15 were
+MALICIOUS-tier YARA hits that `cau defend` would quarantine unasked. Two causes:
+`obfuscated_powershell` fired on `powershell`, a download call and `-NoProfile`
+anywhere in a file, and Chocolatey's own bootstrap line is a real download-and-
+execute. The rule now needs execution and download on one line, or a hidden window
+launching a download, and exact trusted installer URLs are excused one line at a
+time. That took Windows false positives to **0.63 %** and MALICIOUS-tier hits from
+15 to 4, at a cost of **one heldout detection**: 172 to 171, with the same binary
+and only the rule changed. With response on by default a false MALICIOUS verdict is
+a quarantine, so the trade was taken. 36 false positives remain, mostly
+`download-exec` on lines that fetch from a variable rather than a literal URL.
 
 Four catalogues measure **coverage, never a detection rate**, because the
 content was written from them and much of what they list is harmless alone:

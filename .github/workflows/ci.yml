@@ -197,10 +197,45 @@ jobs:
           path: |
             **/testdata/fuzz/**
 
+  reproducible:
+    name: reproducible build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: ./.github/actions/cau-env
+
+      # The Makefile claims the build is reproducible (-trimpath, a version
+      # taken from the tag). This lane holds it to that: the same checkout,
+      # copied to two directories of different depth and built independently,
+      # must produce byte-identical binaries. A difference means a build path,
+      # a timestamp or an unordered input has leaked into the artifact, and a
+      # release whose bytes a second builder cannot reproduce cannot be
+      # audited against its source.
+      - name: Same source, two directories, identical binaries
+        run: |
+          set -euo pipefail
+          a="$RUNNER_TEMP/build-a/cau"
+          b="$RUNNER_TEMP/build-b/some/other/depth/cau"
+          mkdir -p "$a" "$b"
+          cp -a . "$a/"
+          cp -a . "$b/"
+          for d in "$a" "$b"; do
+            (cd "$d" && make build build-mcp VERSION=repro-check)
+          done
+          (cd "$a" && sha256sum cau cau-mcp) > "$RUNNER_TEMP/a.sum"
+          (cd "$b" && sha256sum cau cau-mcp) > "$RUNNER_TEMP/b.sum"
+          cat "$RUNNER_TEMP/a.sum"
+          if ! diff "$RUNNER_TEMP/a.sum" "$RUNNER_TEMP/b.sum"; then
+            echo "::error::the two builds differ: the build is not reproducible"
+            exit 1
+          fi
+
   release:
     name: build and sign release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [lint, test, gates, selfscan, fuzz]
+    needs: [lint, test, gates, selfscan, fuzz, reproducible]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

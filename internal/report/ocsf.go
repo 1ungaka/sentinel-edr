@@ -441,6 +441,15 @@ func (c config) ocsfFinding(doc Document, f File, now int64) ocsfFinding {
 			titleParts = append(titleParts, fmt.Sprintf("fused %.2f/%.2f", fu.Score, fu.Threshold))
 		}
 	}
+	if p := f.Provenance; p != nil {
+		// Context on the finding, never a source: the verdict that made this
+		// a finding came from the detectors above. A modified package-owned
+		// executable adds its technique so the SIEM sees the T1554 shape.
+		fi.Unmapped["provenance"] = p
+		if p.Finding != nil && p.Finding.Technique != "" {
+			techs[p.Finding.Technique] = true
+		}
+	}
 	if len(sources) == 0 {
 		sources = []string{"engine"}
 		titleParts = []string{"detection"}

@@ -16,12 +16,14 @@ package mcp
 
 import (
 	"bufio"
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"io"
 	"sync"
 
 	"github.com/s-b-repo/cau/scanner"
+	"github.com/s-b-repo/cau/scanner/static"
 )
 
 // ProtocolVersion is the MCP revision this server implements. When a client
@@ -51,10 +53,23 @@ type Deps struct {
 	Engine    *scanner.Engine
 	Yara      *scanner.YaraScanner // engine.Yara, kept for rule enumeration/testing
 	SigDB     *scanner.SignatureDB // engine.DB, kept for listing/adding signatures
+	FuzzyDB   *static.FuzzyDB      // engine.FuzzyDB, for the coverage matrix's content counts
 	Sandbox   *Sandbox
 	Info      ServerInfo
 	RulesPath string // directory the ruleset was loaded from, for cau://rules
 	SigDBPath string // signature DB path, for add_signature persistence
+
+	// The honesty index reads these. They are operator configuration (set on
+	// the command line like --db and --rules), never client-supplied: the
+	// honesty_index tool takes no path argument, so the sandbox stays the
+	// only way a client reaches a file.
+	ExpectPath   string            // coverage expectation file; "" = no baseline
+	EvalPath     string            // evaluation report (cau eval run --out); "" = not measured
+	ManifestPath string            // integrity baseline; "" = integrity.json next to SigDBPath
+	PubKey       ed25519.PublicKey // key to verify the baseline's signature; nil = not checked
+	// PubKeyErr is set when a key was supplied but could not be used, so the
+	// index can say the signature was not checked and why.
+	PubKeyErr string
 }
 
 // Server serves MCP requests over a line-delimited JSON-RPC transport.
@@ -242,9 +257,12 @@ func (s *Server) onInitialize(json.RawMessage) (interface{}, *rpcError) {
 		},
 		ServerInfo: s.deps.Info,
 		Instructions: "CAU malware-detection engine. Tools scan files, directories and " +
-			"hashes, explain verdicts, test and draft YARA rules, and report ATT&CK " +
-			"coverage. File access is confined to the configured scan roots; results " +
-			"are bounded summaries, not raw dumps.",
+			"hashes, explain verdicts, test and draft YARA rules, peel obfuscation " +
+			"chains, inventory UEFI firmware images, boot chains and hardware identity, " +
+			"summarise evaluation reports, and report ATT&CK coverage and the honesty " +
+			"index. Every tool is read-only analysis: nothing here executes, quarantines, " +
+			"blocks or kills. File access is confined to the configured scan roots; " +
+			"results are bounded summaries, not raw dumps, and every cut is reported.",
 	}, nil
 }
 

@@ -49,7 +49,7 @@ _cau() {
                     sub=(block unblock blocks clear)
                     ;;
                 bundle)
-                    sub=(update checksums)
+                    sub=(update checksums sbom keygen)
                     ;;
                 *)
                     _files

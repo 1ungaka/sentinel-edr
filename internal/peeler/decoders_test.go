@@ -412,7 +412,9 @@ func TestChainsPastTheOldDepthLimit(t *testing.T) {
 		layers = append(layers, cycle...)
 	}
 	layers = layers[:24]
-	r := peelDefault(composeAny(fakeELF, layers...))
+	// Depth is the point here, not speed: a loaded machine under the race
+	// detector must not turn twenty-four layers into a deadline.
+	r := New(WithLimits(BudgetLimits{MaxWallClock: time.Minute})).Peel(context.Background(), composeAny(fakeELF, layers...))
 	if r.Outcome != OutcomeRevealedExecutable || r.MaxDepth < 24 {
 		t.Fatalf("outcome %s, depth %d, exhausted %q", r.Outcome, r.MaxDepth, r.ExhaustReason)
 	}

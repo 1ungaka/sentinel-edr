@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -62,6 +63,32 @@ const (
 	tamperFeed           = "defend.tamper.feed"
 	tamperSIEMRemoved    = "defend.tamper.siem-removed"
 	tamperSIEMRedirected = "defend.tamper.siem-redirected"
+	tamperIntegrity      = "defend.tamper.integrity-unverifiable"
+	tamperConfig         = "defend.tamper.config-unusable"
+	tamperForward        = "defend.tamper.siem-unusable"
+	tamperCanary         = "defend.tamper.canary-unusable"
+	// tamperContent is a prefix: each resource has its own class, because one
+	// fingerprint per class would let a second fault hide behind the first.
+	tamperContent = "defend.tamper.content-unusable."
+)
+
+// startFault is something the daemon needed from disk and could not use.
+//
+// Nothing on disk may stop this daemon; only a mistake on its own command line
+// can. Refusing to start over a file is an off switch for whoever can plant one:
+// the unit fails, systemd retries into the same fault, and the host has no EDR
+// while the attacker has the machine to themselves. So each of these runs without
+// what it lost and raises tamper, which is what keeps it from being the quiet
+// fallback that refusing was meant to prevent: the daemon's state is reported at
+// the top score, not inferred from a log line that looks healthy.
+type startFault struct{ class, reason, detail string }
+
+// Weakness classes: a guarantee the operator likely believes is in force but
+// is not. Alerts for a human, never confirmation of an attack.
+const (
+	weakSigningKeyOnHost = "defend.weak.signing-key-on-host"
+	weakSIEMOverridden   = "defend.weak.siem-pin-overridden"
+	weakSIEMInsecureTLS  = "defend.weak.siem-tls-unverified"
 )
 
 const (
@@ -75,6 +102,25 @@ const (
 	// defendAttempts is how many times a daemon task runs before it waits for its
 	// next trigger, so a repeating panic can't spin.
 	defendAttempts = 2
+	// defendResponseRetries is how many more times a response that failed is tried,
+	// and defendRetryBase the wait before the first of them, doubling each time. A
+	// vault on a full disk may recover; one that never does must not loop for ever.
+	defendResponseRetries = 3
+	defendRetryBase       = 5 * time.Second
+	// defendLineQueue is how many finished reports wait for a slow consumer before
+	// the oldest is dropped, and defendFlushWait how long shutdown gives it to catch
+	// up. Detection must never depend on someone reading its output.
+	defendLineQueue = 4096
+	defendFlushWait = 2 * time.Second
+	// defendStopWait is how long a stop waits for scans in progress. A scan can't be
+	// interrupted, and one large file can take a minute under load, so past this it
+	// exits without them, and without closing the rules they are using.
+	defendStopWait = 5 * time.Second
+	// defendMemoryLimit is the heap the runtime tries to stay under, unless GOMEMLIMIT
+	// says otherwise. It only changes when memory is collected: a large file would
+	// otherwise leave the heap at twice its peak until much later, and past this
+	// the collector works harder rather than the scan failing.
+	defendMemoryLimit = 768 << 20
 	// defendMaxExternal bounds how much telemetry from elsewhere is held for
 	// correlation. Remote evidence is kept rather than consumed, because its
 	// whole value is being there when this host's own layers find the other
@@ -353,6 +399,10 @@ type defender struct {
 	selftestManifest string
 	selftestInterval time.Duration
 	selftestPubKey   selftestKey
+	selftestKeyFile  string
+	// selftestKeyErr is why a key that was asked for could not be used. It is
+	// retried on every selftest cycle, so a repair needs no restart.
+	selftestKeyErr error
 
 	action     procscan.Action
 	quarantine bool
@@ -392,6 +442,18 @@ type defender struct {
 	wakeNetwork, wakeIngest                                                                    wakeup
 
 	outMu sync.Mutex
+	// lines carries finished reports to the writer while the daemon runs, so a
+	// consumer that stops reading costs the reports it isn't reading and nothing
+	// else. It is nil in a synchronous run, which writes directly.
+	lines     chan []byte
+	unwritten atomic.Int64
+	flushWait time.Duration
+	// stopWait is defendStopWait, and abandoned says a stop gave up waiting on a
+	// scan, which then still holds the engine.
+	stopWait  time.Duration
+	abandoned atomic.Bool
+	// retryBase is the wait before a failed response is tried again.
+	retryBase time.Duration
 
 	// Owned by one layer's goroutine, which never runs twice at once.
 	lastPackage time.Time
@@ -407,6 +469,8 @@ type defender struct {
 	views    map[layerID][]correlate.Signal
 	events   []correlate.Signal // once-only evidence, consumed by the next join
 	seen     map[string]bool
+	seenOld  map[string]bool // the generation before seen, see markRaised
+	retries  map[string]int  // failed responses tried again, by fingerprint
 	// tamperMemo is the last reason raised per tamper class, so a resource that
 	// stays bad is reported when its state changes rather than on every check.
 	tamperMemo map[string]string
@@ -418,11 +482,16 @@ type defender struct {
 // ready sets up everything a defender needs to run, in either mode.
 func (d *defender) ready() *defender {
 	d.queue = newFileQueue(defendMaxPending, defendRecheck)
-	d.workers = max(2, min(runtime.NumCPU(), defendMaxScans))
+	d.workers = max(2, min(runtime.GOMAXPROCS(0), defendMaxScans)) // respects a CPU quota
 	d.slots = make(chan struct{}, d.workers)
+	if d.engine != nil {
+		d.engine.IntelSource = d.feed.Load // the engine sees a reloaded feed too
+	}
 	d.vault = make(chan struct{}, 1)
 	d.sweepEvery = defendSweepEvery
 	d.kernelSeen = map[string]bool{}
+	d.seenOld, d.retries = map[string]bool{}, map[string]int{}
+	d.retryBase, d.flushWait, d.stopWait = defendRetryBase, defendFlushWait, defendStopWait
 	d.wakeProcess, d.wakePersistence, d.wakeCanary, d.wakeSweep, d.wakeCorrelate =
 		newWakeup(), newWakeup(), newWakeup(), newWakeup(), newWakeup()
 	d.wakeSelftest, d.wakeFeed = newWakeup(), newWakeup()
@@ -541,6 +610,9 @@ func (d *defender) verdict(name, read string, stamp fileStamp) fileEntry {
 	defer func() { <-d.slots }()
 	res, h := d.engine.ScanFile(read)
 	sig, hit := fileSignal(name, res, h)
+	if !hit {
+		sig = correlate.Signal{} // nothing reads it, and tens of thousands are kept
+	}
 	return fileEntry{stamp: stamp, signal: sig, hit: hit}
 }
 
@@ -598,6 +670,18 @@ func (d *defender) record(name string, e fileEntry) {
 		for k, old := range d.files {
 			if !old.hit {
 				delete(d.files, k)
+			}
+		}
+	}
+	if e.hit && !was && len(d.hits) >= defendMaxFiles {
+		// Flagged files can be made faster than anyone reads them, and each one has
+		// already been raised. What goes is one of those, never a running process's
+		// verdict, whose bytes can't be scanned twice.
+		for k := range d.hits {
+			if !strings.HasPrefix(k, runningPrefix) {
+				delete(d.hits, k)
+				delete(d.files, k)
+				break
 			}
 		}
 	}
@@ -974,9 +1058,14 @@ func (d *defender) canarySignals() []correlate.Signal {
 	}
 	m, err := canary.ReadManifest(d.canaryManifest)
 	if err != nil {
+		// Without the manifest no canary can trip, and a line on stderr is not
+		// what anyone is watching for that.
 		d.warn("[WARN] canary manifest: %s", report.TermSafe(err.Error()))
+		d.tamper(tamperCanary, err.Error(),
+			"the canary manifest cannot be read, so no canary on this host can raise an alert: "+err.Error())
 		return nil
 	}
+	d.clearTamper(tamperCanary)
 	var out []correlate.Signal
 	for _, r := range canary.Tripped(canary.Check(m)) {
 		rewritten := r.Status == canary.StatusModified || r.Status == canary.StatusDeleted
@@ -1052,6 +1141,7 @@ func (d *defender) packageLayer() {
 // the defender is attesting to its own integrity. A missing manifest disables
 // the layer rather than crashing the daemon.
 func (d *defender) selftestLayer() {
+	d.recheckTrust()
 	if d.selftestManifest == "" {
 		return
 	}
@@ -1099,6 +1189,38 @@ func (d *defender) selftestLayer() {
 	d.publish(viewSelftest, out)
 }
 
+// recheckTrust retries a broken chain of trust. The daemon keeps running through
+// one, so this is how it comes back: repairing the key or the baseline takes
+// effect on the next cycle, without a restart that would be a window with no EDR.
+func (d *defender) recheckTrust() {
+	if d.selftestKeyErr == nil && d.guard.Fault() == nil {
+		return
+	}
+	// The key is read again even if the last read worked: a valid key that did
+	// not sign this baseline is a fault too, and the repair for it is a new key.
+	key, err := defendPubkey(d.selftestKeyFile)
+	d.selftestKeyErr = err
+	if err != nil {
+		d.distrust(err)
+		return
+	}
+	d.selftestPubKey = key
+	if err := d.guard.Recover(key.key); err != nil {
+		d.distrust(err)
+		return
+	}
+	d.clearTamper(tamperIntegrity)
+	d.warn("[*] the integrity baseline can be checked again: %s", integrityState(d.guard))
+	d.wakeFeed.fire()
+}
+
+// distrust raises the integrity fault. A new reason is news, so a repair that
+// only moved the problem is said again.
+func (d *defender) distrust(fault error) {
+	d.tamper(tamperIntegrity, fault.Error(),
+		"the integrity baseline cannot be checked, so nothing the agent reads is verified against it: "+fault.Error())
+}
+
 // feedLayer re-reads the abuse-intel feed from disk and publishes the new
 // pointer, so a `cau feed update` on the host is picked up without restarting
 // the daemon. A feed with no path, or one that could not be read, is a quiet
@@ -1118,6 +1240,13 @@ func (d *defender) selftestLayer() {
 // freeze it at its last trustworthy state, loudly.
 func (d *defender) feedLayer() {
 	if d.feedPath == "" {
+		return
+	}
+	// With no baseline to believe, a feed already in use stays frozen. With none
+	// loaded this is startup, and freezing would mean no intel at all: an
+	// unverified feed still detects where an absent one does not, and the
+	// integrity alert already says it is unverified.
+	if d.guard.Fault() != nil && d.feed.Load() != nil {
 		return
 	}
 	// Re-read the baseline first, so an operator who updated the feed and then
@@ -1192,7 +1321,35 @@ func (d *defender) tamper(class, reason, detail string) {
 	// This incident's fingerprint is the same for every raise of this class, so
 	// the join's once-only memory has to be cleared or the new reason never
 	// reaches anybody.
-	delete(d.seen, tamperFingerprint(sig))
+	d.unraise(tamperFingerprint(sig))
+	d.events = append(d.events, sig)
+	d.mu.Unlock()
+	d.wakeCorrelate.fire()
+}
+
+// weakness reports that a guarantee the operator probably believes they have is
+// not actually in force — a signing key left on the host, TLS verification
+// turned off, a pinned address overridden from the environment.
+//
+// It is deliberately not tamper(): none of these is evidence of an attack, and
+// scoring them as live state would confirm an incident and arm a response
+// against a misconfiguration. They are alerts for a human at a score that
+// corroborates but never confirms on its own, which is the same treatment any
+// single non-live observation gets. The point is that these stop being silent:
+// a hollow guarantee that nobody is told about is worse than no guarantee,
+// because it is budgeted for.
+func (d *defender) weakness(class, reason, detail string) {
+	sig := correlate.Signal{
+		Layer: correlate.LayerSelf, Class: class, Score: 5,
+		Technique: "T1562.001", Detail: report.TermSafe(detail),
+	}
+	d.mu.Lock()
+	if d.tamperMemo[class] == reason {
+		d.mu.Unlock()
+		return
+	}
+	d.tamperMemo[class] = reason
+	d.unraise(tamperFingerprint(sig))
 	d.events = append(d.events, sig)
 	d.mu.Unlock()
 	d.wakeCorrelate.fire()
@@ -1208,7 +1365,7 @@ func (d *defender) clearTamper(class string) {
 		return
 	}
 	delete(d.tamperMemo, class)
-	delete(d.seen, tamperFingerprint(correlate.Signal{
+	d.unraise(tamperFingerprint(correlate.Signal{
 		Layer: correlate.LayerSelf, Class: class, Score: 10,
 		Technique: "T1562.001", Live: true,
 	}))
@@ -1244,12 +1401,67 @@ func (d *defender) alertCrash(task string) {
 	inc := correlate.Build([]correlate.Signal{sig})[0]
 	fp := inc.Fingerprint()
 	d.mu.Lock()
-	raised := d.seen[fp]
-	d.seen[fp] = true
+	already := d.raised(fp)
+	d.markRaised(fp)
 	d.mu.Unlock()
-	if !raised {
+	if !already {
 		d.emit(inc, nil)
 	}
+}
+
+// raised reports whether an incident has been raised. The caller holds mu.
+func (d *defender) raised(fp string) bool {
+	if d.seen[fp] {
+		return true
+	}
+	if d.seenOld[fp] {
+		d.markRaised(fp) // still live, so it must outlast the next rotation
+		return true
+	}
+	return false
+}
+
+// markRaised remembers an incident. The caller holds mu. The memory is bounded in
+// two generations rather than wiped when full: a wipe forgets every live incident at
+// once, and the next join raises all of them again.
+func (d *defender) markRaised(fp string) {
+	if len(d.seen) >= defendMaxSeen {
+		d.seenOld, d.seen = d.seen, map[string]bool{}
+	}
+	d.seen[fp] = true
+}
+
+// unraise forgets an incident, so the same evidence raises it again. The caller
+// holds mu.
+func (d *defender) unraise(fp string) {
+	delete(d.seen, fp)
+	delete(d.seenOld, fp)
+}
+
+// retryLater raises an incident again after a wait, because its response failed:
+// the file is still there or the peer still reachable, so saying so once is not
+// the end of it. Going back through the join means the retry acts on the evidence
+// as it stands then, and through PlanFor like everything else. It is bounded per
+// incident, and each attempt reports its own outcome.
+func (d *defender) retryLater(inc correlate.Incident) {
+	fp := inc.Fingerprint()
+	d.mu.Lock()
+	n := d.retries[fp]
+	if n >= defendResponseRetries {
+		d.mu.Unlock()
+		return
+	}
+	if len(d.retries) >= defendMaxSeen {
+		d.retries = map[string]int{}
+	}
+	d.retries[fp] = n + 1
+	d.mu.Unlock()
+	time.AfterFunc(d.retryBase<<n, func() {
+		d.mu.Lock()
+		d.unraise(fp)
+		d.mu.Unlock()
+		d.wakeCorrelate.fire()
+	})
 }
 
 func (d *defender) packageDue() bool {
@@ -1336,13 +1548,10 @@ func (d *defender) join() ([]correlate.Incident, *procscan.Result) {
 	var fresh []correlate.Incident
 	for _, inc := range incidents {
 		fp := inc.Fingerprint()
-		if d.seen[fp] {
+		if d.raised(fp) {
 			continue
 		}
-		if len(d.seen) >= defendMaxSeen {
-			d.seen = map[string]bool{}
-		}
-		d.seen[fp] = true
+		d.markRaised(fp)
 		fresh = append(fresh, inc)
 	}
 	return fresh, ps
@@ -1377,6 +1586,7 @@ func (d *defender) act(fresh []correlate.Incident, ps *procscan.Result, inOrder 
 func (d *defender) respond(inc correlate.Incident, ps *procscan.Result) []string {
 	plan := correlate.PlanFor(inc)
 	var steps []func() []string
+	var failed atomic.Bool
 	if d.action != "" && len(plan.Stop) > 0 && ps != nil {
 		// MinScore 1: correlate has already confirmed this incident.
 		ro := procscan.RespondOptions{Action: d.action, MinScore: 1, ProcRoot: d.procRoot}
@@ -1438,6 +1648,7 @@ func (d *defender) respond(inc correlate.Incident, ps *procscan.Result) []string
 		steps = append(steps, func() []string {
 			what, err := d.blocker.Block(peer, "incident "+inc.ID+": "+inc.Why)
 			if err != nil {
+				failed.Store(true)
 				return []string{"not blocked: " + err.Error()}
 			}
 			return []string{what}
@@ -1446,10 +1657,17 @@ func (d *defender) respond(inc correlate.Incident, ps *procscan.Result) []string
 	for _, f := range plan.Quarantine {
 		switch {
 		case d.quarantine:
-			steps = append(steps, func() []string { return []string{d.quarantineFile(f, inc)} })
+			steps = append(steps, func() []string {
+				outcome := d.quarantineFile(f, inc)
+				if strings.HasPrefix(outcome, "quarantine failed") {
+					failed.Store(true)
+				}
+				return []string{outcome}
+			})
 		case d.blockExe:
 			steps = append(steps, func() []string {
 				if err := kernelBlock(d.kernelBin, f); err != nil {
+					failed.Store(true)
 					return []string{"kernel block failed: " + err.Error()}
 				}
 				return []string{"kernel refuses " + f}
@@ -1471,6 +1689,9 @@ func (d *defender) respond(inc correlate.Incident, ps *procscan.Result) []string
 	})
 	if crashed.Load() {
 		d.alertCrash("response")
+	}
+	if failed.Load() {
+		d.retryLater(inc)
 	}
 	return slices.Concat(done...)
 }
@@ -1510,7 +1731,7 @@ func (d *defender) quarantineFile(path string, inc correlate.Incident) string {
 	// This incident is over. Its fingerprint is about the path, so left in place it
 	// would silence the same file written there again, which is a new attack.
 	d.mu.Lock()
-	delete(d.seen, inc.Fingerprint())
+	d.unraise(inc.Fingerprint())
 	d.mu.Unlock()
 	// A scan in flight would put the verdict back. Queued behind it, this one
 	// finds nothing there and clears it.
@@ -1526,12 +1747,37 @@ func (d *defender) quarantineFile(path string, inc correlate.Incident) string {
 func (d *defender) emit(inc correlate.Incident, actions []string) {
 	var w bytes.Buffer
 	d.format(&w, inc, actions)
-	d.outMu.Lock()
-	_, _ = d.out.Write(w.Bytes())
-	d.outMu.Unlock()
+	d.write(w.Bytes())
 
 	if d.sink != nil {
 		d.sink.Offer(forward.OCSFIncident(inc, d.product, time.Now()))
+	}
+}
+
+// write hands a finished report to the output. While the daemon runs it never
+// blocks: a consumer that stops reading must not stop the responses, the SIEM or
+// the shutdown waiting behind it, so the oldest waiting report is dropped instead,
+// and said to have been on stderr, which is a different consumer.
+func (d *defender) write(line []byte) {
+	if d.lines == nil {
+		d.outMu.Lock()
+		defer d.outMu.Unlock()
+		_, _ = d.out.Write(line)
+		return
+	}
+	for {
+		select {
+		case d.lines <- line:
+			return
+		default:
+		}
+		select {
+		case <-d.lines:
+			if d.unwritten.Add(1) == 1 {
+				d.warn("[WARN] output is not being read: dropping the oldest reports to keep the defence running")
+			}
+		default:
+		}
 	}
 }
 
@@ -1598,19 +1844,51 @@ func (d *defender) run(w *watch.Watcher, interval time.Duration, stop <-chan str
 			_ = sdnotify.Watchdog()
 		}
 	}
-	var wg sync.WaitGroup
-	start := func(fn func()) {
-		wg.Add(1)
+	// Scan something harmless before taking work. Filters are built on first use, and
+	// that must not be paid by the first file to land, which may be the attack.
+	d.engine.ScanFile("/proc/self/status")
+
+	// The channel is never closed: a scan abandoned at shutdown can still report
+	// something after the writer has gone, and that must be a line nobody reads
+	// rather than a send on a closed channel.
+	d.lines = make(chan []byte, defendLineQueue)
+	flush, flushed := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(flushed)
+		for {
+			select {
+			case line := <-d.lines:
+				_, _ = d.out.Write(line)
+			case <-flush:
+				for {
+					select {
+					case line := <-d.lines:
+						_, _ = d.out.Write(line)
+					default:
+						return
+					}
+				}
+			}
+		}
+	}()
+
+	// Three groups, because a stop treats them differently. Scanning work can be
+	// left behind, the correlator can't start anything once it has gone, and a
+	// response is always seen through: a half-done quarantine is worse than a late
+	// exit, and the helpers it runs have timeouts of their own.
+	var wg, correlator, responses sync.WaitGroup
+	startIn := func(group *sync.WaitGroup, fn func()) {
+		group.Add(1)
 		go func() {
-			defer wg.Done()
+			defer group.Done()
 			fn()
 		}()
 	}
-	// loop runs fn now, then on every tick and every wake until stop. A pass in
-	// progress is never interrupted, and shutdown waits for it: the engine it may
-	// be using is closed as soon as run returns.
-	loop := func(task string, every time.Duration, wake wakeup, fn func()) {
-		start(func() {
+	start := func(fn func()) { startIn(&wg, fn) }
+	// loopIn runs fn now, then on every tick and every wake until stop. A pass in
+	// progress is never interrupted.
+	loopIn := func(group *sync.WaitGroup, task string, every time.Duration, wake wakeup, fn func()) {
+		startIn(group, func() {
 			guarded(task, defendAttempts, fn)
 			var tick <-chan time.Time
 			if every > 0 {
@@ -1629,12 +1907,18 @@ func (d *defender) run(w *watch.Watcher, interval time.Duration, stop <-chan str
 			}
 		})
 	}
+	loop := func(task string, every time.Duration, wake wakeup, fn func()) {
+		loopIn(&wg, task, every, wake, fn)
+	}
 
 	for i := range d.workers {
 		start(func() {
 			for finished := false; !finished; {
 				guarded("scan", defendAttempts, func() {
-					d.scanWorker(i == 0)
+					// Half the workers never touch the sweep: it is background work
+					// and must not take every core, while what just landed may use
+					// all of them.
+					d.scanWorker(i%2 == 0)
 					finished = true
 				})
 			}
@@ -1645,9 +1929,9 @@ func (d *defender) run(w *watch.Watcher, interval time.Duration, stop <-chan str
 	act := func(fresh []correlate.Incident, ps *procscan.Result) {
 		guarded("response", 1, func() { d.act(fresh, ps, false) })
 	}
-	loop("correlate", 0, d.wakeCorrelate, func() {
+	loopIn(&correlator, "correlate", 0, d.wakeCorrelate, func() {
 		if fresh, ps := d.join(); len(fresh) > 0 {
-			start(func() { act(fresh, ps) })
+			startIn(&responses, func() { act(fresh, ps) })
 		}
 	})
 	loop("sweep", d.sweepEvery, d.wakeSweep, func() {
@@ -1666,7 +1950,7 @@ func (d *defender) run(w *watch.Watcher, interval time.Duration, stop <-chan str
 	if d.packageInterval > 0 {
 		loop("package", d.packageInterval, nil, d.packageLayer)
 	}
-	if d.selftestInterval > 0 && d.selftestManifest != "" {
+	if d.selftestInterval > 0 && (d.selftestManifest != "" || d.guard.Fault() != nil) {
 		loop("selftest", d.selftestInterval, d.wakeSelftest, d.selftestLayer)
 	}
 	if d.feedInterval > 0 && d.feedPath != "" {
@@ -1689,11 +1973,35 @@ func (d *defender) run(w *watch.Watcher, interval time.Duration, stop <-chan str
 
 	<-stop
 	d.queue.close()
-	wg.Wait()
+	correlator.Wait() // nothing starts a response after this
+	settled := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(settled)
+	}()
+	select {
+	case <-settled:
+	case <-time.After(d.stopWait):
+		d.abandoned.Store(true)
+		status("[WARN] exiting with a scan still running: it can't be interrupted, and nothing depends on it")
+	}
+	responses.Wait()
 	// Whatever finished during the shutdown is still worth reporting.
 	fresh, ps := []correlate.Incident(nil), (*procscan.Result)(nil)
 	guarded("correlate", 1, func() { fresh, ps = d.join() })
 	act(fresh, ps)
+
+	// A consumer that has stopped reading gets a moment and no more: this is the
+	// last thing between a stop request and exiting.
+	close(flush)
+	select {
+	case <-flushed:
+	case <-time.After(d.flushWait):
+		status("[WARN] output is not being read: exiting with %d report(s) unwritten", len(d.lines))
+	}
+	if n := d.unwritten.Load(); n > 0 {
+		status("[WARN] %d report(s) were dropped because output was not being read", n)
+	}
 }
 
 func cmdDefend(args []string, stdout, stderr io.Writer) int {
@@ -1760,12 +2068,16 @@ func cmdDefend(args []string, stdout, stderr io.Writer) int {
 	status := func(f string, a ...interface{}) { fmt.Fprintf(stderr, f+"\n", a...) }
 
 	cfg, cfgErr := trust.LoadConfig(*configPath)
+	var faults []startFault
 	if cfgErr != nil {
-		// A configuration file that exists but cannot be trusted is refused
-		// rather than skipped: falling back to defaults is what an attacker who
-		// made it unsafe would be hoping for, and it would look like a healthy
-		// start.
-		return fail(stderr, report.ExitRunFailed, "%v", cfgErr)
+		// A configuration file that exists but cannot be trusted is not believed
+		// and not silently skipped: falling back to defaults without a word is
+		// what an attacker who made it unsafe would be hoping for, and it would
+		// look like a healthy start. Tamper is what stops it looking healthy.
+		status("[TAMPER] running on built-in defaults: %s", report.TermSafe(cfgErr.Error()))
+		faults = append(faults, startFault{tamperConfig, cfgErr.Error(),
+			"the configuration cannot be trusted, so the agent is running on built-in defaults: " + cfgErr.Error()})
+		cfg = trust.Config{}
 	}
 	if cfg.Path != "" {
 		status("[*] configuration: %s", cfg.Path)
@@ -1807,11 +2119,28 @@ func cmdDefend(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	engine, closeEngine, err := defendEngine(*rulesFlag, *dbFlag, *fuzzyFlag, status)
-	if err != nil {
-		return fail(stderr, report.ExitRunFailed, "%v", err)
+	// A fixture /proc describes processes that do not exist, but a signal has
+	// only one kernel to go to: identity is checked against the fixture and the
+	// signal lands on whatever really holds that PID. Measured the hard way —
+	// a scenario built around a made-up PID 900 stopped this host's real
+	// process 900 — so an armed response against an overridden root says so
+	// before it runs rather than afterwards.
+	if *procRoot != "" && *procRoot != "/proc" {
+		if armed := armedActions(action, *quarantineFlag, *netblockOn, *blockExe); armed != "" {
+			status("[WARN] --proc-root is %s, not /proc, so process identity is read from a fixture while "+
+				"signals still reach this kernel: %s will act on whatever really holds the PIDs that fixture names",
+				*procRoot, armed)
+		}
 	}
-	defer closeEngine()
+
+	engine, closeEngine, contentFaults := defendEngine(*rulesFlag, *dbFlag, *fuzzyFlag, status)
+	faults = append(faults, contentFaults...)
+	var engineInUse atomic.Bool // a scan abandoned at stop is still reading the rules
+	defer func() {
+		if !engineInUse.Load() {
+			closeEngine()
+		}
+	}()
 
 	roots := []string(watchDirs)
 	if len(roots) == 0 {
@@ -1839,21 +2168,18 @@ func cmdDefend(args []string, stdout, stderr io.Writer) int {
 		status("[*] kernel exec-blocking unavailable (%s not found): the other responses still act", *kernelBin)
 		*blockExe = false
 	}
-	// A pinned key that cannot be used is a refusal to start, not a silent
+	// A pinned key that cannot be used is neither a refusal to start nor a silent
 	// downgrade to digest-only checking. This daemon runs for weeks, so the
-	// difference between "signature verified" and "nobody checked" has to be
-	// decided once, out loud, rather than inferred from a log line that looks
-	// the same either way.
-	selftestPub, err := resolveSelftestPubkey(*selftestPubKeyFile)
-	if err != nil {
-		return fail(stderr, report.ExitRunFailed, "%v", err)
-	}
+	// difference between "signature verified" and "nobody checked" is said out
+	// loud, as tamper, below; see startFault for why it does not stop here.
+	selftestPub, keyErr := defendPubkey(*selftestPubKeyFile)
 	d := &defender{
 		engine: engine, procRoot: *procRoot, persistRoot: *persistRoot,
 		feedPath: resolvedFeed, feedInterval: *feedInterval,
 		process: !*noProcess, persistence: !*noPersistence, kernelEvents: kernelPath, canaryManifest: canaryPath,
 		packageInterval:  *packageInterval,
 		selftestManifest: stManifest, selftestInterval: *selftestInterval, selftestPubKey: selftestPub,
+		selftestKeyFile: *selftestPubKeyFile, selftestKeyErr: keyErr,
 		dpkgInfo: *dpkgInfo, pacmanDir: *pacmanDir,
 		action: action, quarantine: *quarantineFlag, store: *store, blockExe: *blockExe, kernelBin: *kernelBin,
 		network: !*noNetwork, etcRoot: *etcRoot,
@@ -1888,18 +2214,37 @@ func cmdDefend(args []string, stdout, stderr io.Writer) int {
 	// file still the one somebody trusted" goes through it, including the feed
 	// reload while the daemon runs.
 	guard, gerr := trust.NewGuard(stManifest, d.selftestPubKey.key)
-	if gerr != nil {
-		// A baseline that is present but unreadable, unsafe or badly signed is
-		// a refusal to start. Continuing would mean running with every
-		// integrity check silently answering "fine".
-		return fail(stderr, report.ExitRunFailed, "%v", gerr)
+	switch {
+	case keyErr != nil:
+		guard = trust.Distrusted(stManifest, nil, keyErr)
+	case gerr != nil:
+		guard = trust.Distrusted(stManifest, d.selftestPubKey.key, gerr)
 	}
 	d.guard = guard
+	for _, f := range faults {
+		d.tamper(f.class, f.reason, f.detail)
+	}
 	switch {
+	case guard.Fault() != nil:
+		// Running with every integrity check silently answering "fine" is the
+		// danger here, so nothing is checked against this baseline and the
+		// reason goes out as tamper. It is retried on every selftest cycle.
+		status("[TAMPER] the integrity baseline cannot be checked: %s", report.TermSafe(guard.Fault().Error()))
+		d.distrust(guard.Fault())
 	case !guard.Loaded():
 		status("[*] no integrity baseline: content and configuration cannot be verified (record one with 'cau selftest --record')")
 	case guard.Signed():
 		status("[*] integrity baseline %s verified against the pinned key", guard.Path())
+		// A signed baseline is only worth more than an unsigned one while the
+		// private key is somewhere this host is not. Left in /etc/cau beside
+		// the manifest it signed, it reduces the signed case to the unsigned
+		// one exactly, and nothing about the running daemon would look wrong.
+		if keys := trust.SigningKeysNearby(filepath.Dir(guard.Path()), filepath.Dir(trust.DefaultConfigPath)); len(keys) > 0 {
+			status("[WARN] what looks like a signing key is on this host (%s): an attacker who can rewrite the content can sign their own baseline over it, which makes the signature worth no more than a digest. Keep it elsewhere.",
+				strings.Join(keys, " "))
+			d.weakness(weakSigningKeyOnHost, strings.Join(keys, " "),
+				"a signing key appears to be stored on the host it signs for ("+strings.Join(keys, " ")+"), so the baseline's signature can be forged locally")
+		}
 	default:
 		status("[*] integrity baseline %s loaded, unsigned (pin a key with --selftest-pubkey to resist a rewrite of the baseline itself)", guard.Path())
 	}
@@ -1932,9 +2277,20 @@ func cmdDefend(args []string, stdout, stderr io.Writer) int {
 	if cfg.SIEMPasswordEnv != "" && !given["wazuh-password-env"] {
 		forwardOpts.passwordEnv = cfg.SIEMPasswordEnv
 	}
+	forwardOpts.certPins = d.resolveCertPins(cfg, status)
 	closeSink, err := d.startForward(forwardOpts, status)
 	if err != nil {
-		return fail(stderr, report.ExitUsage, "%v", err)
+		// A forwarder named on the command line that cannot work is a mistake to
+		// report now. One that came from a file or the environment is the same
+		// off switch as any other planted file: `siem =` in the configuration
+		// with no password to go with it would stop the daemon.
+		if given["wazuh-url"] || given["siem"] {
+			return fail(stderr, report.ExitUsage, "%v", err)
+		}
+		status("[TAMPER] incidents are only being reported locally: %s", report.TermSafe(err.Error()))
+		d.tamper(tamperForward, err.Error(),
+			"the configured SIEM forwarder cannot run, so incidents are only being reported locally: "+err.Error())
+		closeSink = func() {}
 	}
 	defer closeSink()
 
@@ -1947,6 +2303,9 @@ func cmdDefend(args []string, stdout, stderr io.Writer) int {
 		return report.ExitOK
 	}
 
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(defendMemoryLimit)
+	}
 	status("[*] %s", harden.Apply().Summary())
 	var w *watch.Watcher
 	if !*noWatch {
@@ -2004,10 +2363,30 @@ func cmdDefend(args []string, stdout, stderr io.Writer) int {
 	status("[*] response: respond=%q quarantine=%v block-exe=%v netblock=%v | integrity=%s | selftest=%s feed-reload=%s forward=%s",
 		*respond, *quarantineFlag, *blockExe, d.blocker != nil, integrityState(d.guard), selftestState, feedState, forwardState)
 	d.run(w, *interval, stop, status)
+	engineInUse.Store(d.abandoned.Load())
 	if sdnotify.Enabled() {
 		_ = sdnotify.Stopping()
 	}
 	return report.ExitOK
+}
+
+// armedActions names the responses that are switched on, for the warning a
+// fixture root deserves. It returns "" when nothing would act.
+func armedActions(action procscan.Action, quarantine, netblock, blockExe bool) string {
+	var on []string
+	if action != "" {
+		on = append(on, "--respond "+string(action))
+	}
+	if quarantine {
+		on = append(on, "--quarantine")
+	}
+	if netblock {
+		on = append(on, "--netblock")
+	}
+	if blockExe {
+		on = append(on, "--block-exe")
+	}
+	return strings.Join(on, ", ")
 }
 
 // blockTTLValue translates the flag's meaning into the package's: on the
@@ -2093,6 +2472,8 @@ func discoverSelftestManifest(dbFlag string) string {
 // things to be reading in a log a week later.
 func integrityState(g *trust.Guard) string {
 	switch {
+	case g.Fault() != nil:
+		return "UNVERIFIED"
 	case g.Signed():
 		return "signed+verified"
 	case g.Loaded():
@@ -2123,11 +2504,20 @@ const envSIEM = "CAU_SIEM"
 // can edit the configuration can usually also re-record an unsigned baseline,
 // which is exactly why the key belongs off the host.
 func (d *defender) resolveSIEM(flagVal string, flagGiven bool, cfg trust.Config, status func(string, ...interface{})) string {
-	if flagGiven && strings.TrimSpace(flagVal) != "" {
-		return strings.TrimSpace(flagVal)
-	}
-	if env := strings.TrimSpace(os.Getenv(envSIEM)); env != "" {
-		return env
+	// An override still wins, but it no longer does so silently. A flag or an
+	// environment variable is the one way left to send this agent's incidents
+	// somewhere other than the baselined address without the config digest
+	// changing, and whoever can edit the unit file or its EnvironmentFile can
+	// use it. Honouring operator intent and reporting it are not in conflict:
+	// the override is applied, and a human is told the pin was set aside.
+	if override := d.overrideSIEM(flagVal, flagGiven); override != "" {
+		if pinned, ok := d.guard.Pin(selftest.PinSIEM); ok && strings.TrimSpace(pinned) != override {
+			status("[WARN] the SIEM address was overridden to %q, setting aside the baselined %s", override, pinned)
+			d.weakness(weakSIEMOverridden, override,
+				"the baselined SIEM address "+pinned+" was overridden to "+override+
+					" from the command line or the environment, which the integrity baseline cannot cover")
+		}
+		return override
 	}
 	onDisk := strings.TrimSpace(cfg.SIEM)
 	pinned, hasPin := d.guard.Pin(selftest.PinSIEM)
@@ -2145,6 +2535,41 @@ func (d *defender) resolveSIEM(flagVal string, flagGiven bool, cfg trust.Config,
 	}
 	status("[WARN] configured SIEM address does not match the signed baseline: using the baselined %s, not %q", pinned, onDisk)
 	return pinned
+}
+
+// resolveCertPins decides which public-key pins the forwarder enforces, and
+// prefers the signed ones over what is on disk now.
+//
+// This is the address pin's other half. Pinning where incidents go says nothing
+// about who answers there, and "TLS verifies it" holds only while every CA the
+// host trusts does. So the manager's key is pinned too — and because an
+// attacker who could edit that pin would just substitute their own collector's,
+// the pin itself is signed into the baseline and the signed value wins.
+func (d *defender) resolveCertPins(cfg trust.Config, status func(string, ...interface{})) []string {
+	onDisk := strings.Join(cfg.SIEMCertPins, ",")
+	pinned, hasPin := d.guard.Pin(selftest.PinSIEMCert)
+	pinned = strings.TrimSpace(pinned)
+	if !hasPin || pinned == onDisk {
+		return cfg.SIEMCertPins
+	}
+	if onDisk == "" {
+		d.tamper("defend.tamper.siem-cert-pin-removed",
+			"removed",
+			"the SIEM certificate pin was removed from "+cfgOrigin(cfg)+", which would let any certificate the host trusts receive incidents; the baselined pin is being used instead")
+	} else {
+		d.tamper("defend.tamper.siem-cert-pin-changed", onDisk,
+			"the SIEM certificate pin in "+cfgOrigin(cfg)+" was changed, which would let a different server receive incidents; the baselined pin is being used instead")
+	}
+	status("[WARN] the configured SIEM certificate pin does not match the signed baseline: using the baselined pin")
+	return strings.Split(pinned, ",")
+}
+
+// overrideSIEM returns the address given outside any file, or "" if none was.
+func (d *defender) overrideSIEM(flagVal string, flagGiven bool) string {
+	if flagGiven && strings.TrimSpace(flagVal) != "" {
+		return strings.TrimSpace(flagVal)
+	}
+	return strings.TrimSpace(os.Getenv(envSIEM))
 }
 
 // cfgOrigin names the configuration file for a message, including the case
@@ -2235,6 +2660,10 @@ type defendForward struct {
 	insecure                   bool
 	timeout                    time.Duration
 	queue                      int
+	// certPins additionally require the manager's public key to match, so a
+	// certificate from any CA the host trusts is not enough to receive these
+	// incidents.
+	certPins []string
 }
 
 // defendForwardGrace bounds how long shutdown waits for queued incidents to
@@ -2262,6 +2691,10 @@ func (d *defender) startForward(o defendForward, status func(string, ...interfac
 	client, err := wazuh.New(wazuh.Options{
 		URL: o.url, User: o.user, Password: password,
 		CAFile: o.ca, Insecure: o.insecure, Timeout: o.timeout,
+		CertPins: o.certPins,
+		ObservePin: func(pin string) {
+			status("[WARN] the SIEM presented public key %s, which matches no configured pin; if that is really your manager, set siem-cert-pin to it and re-record the baseline", pin)
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("wazuh forwarder: %w", err)
@@ -2276,6 +2709,15 @@ func (d *defender) startForward(o defendForward, status func(string, ...interfac
 	})
 	d.sink.Start()
 	status("[*] forwarding incidents to %s as OCSF %s Detection Findings (queue %d)", o.url, report.OCSFVersion, o.queue)
+	// Pinning where incidents go says nothing about who answers at that
+	// address. TLS verification is the half that does, so turning it off
+	// reopens the redirect the pin was meant to close — this time on the
+	// network rather than on disk.
+	if o.insecure {
+		status("[WARN] TLS verification is off for %s: the pinned address no longer guarantees who receives these incidents", o.url)
+		d.weakness(weakSIEMInsecureTLS, o.url,
+			"incidents are forwarded to "+o.url+" without verifying its TLS certificate, so anything that can answer at that address receives them")
+	}
 	return func() {
 		st := d.sink.Close(defendForwardGrace)
 		status("[*] forward: %d offered, %d delivered, %d dropped, %d failed", st.Offered, st.Delivered, st.Dropped, st.Failed)
@@ -2284,33 +2726,59 @@ func (d *defender) startForward(o defendForward, status func(string, ...interfac
 
 // defendEngine builds the same engine `cau scan` runs by default. YARA and hash
 // content are optional here: a host with neither still has the other layers.
-func defendEngine(rules, db, fuzzyPath string, status func(string, ...interface{})) (*scanner.Engine, func(), error) {
+//
+// A resource that cannot be loaded is a startFault and not an error: the layers
+// that do not need it keep running, and the ones that do are in the state they
+// are in on a host that never had it.
+func defendEngine(rules, db, fuzzyPath string, status func(string, ...interface{})) (*scanner.Engine, func(), []startFault) {
 	e := &scanner.Engine{Heuristics: true, Static: true, Stego: true, EncChain: true, LNK: true, OLE: true, PDF: true,
 		ISO: true, LinuxPkg: true, Peel: true, Archive: true, CHM: true, Tradecraft: true}
 	closer := func() {}
+	var faults []startFault
+	unusable := func(class, what string, err error) {
+		status("[TAMPER] running without the %s: %s", what, report.TermSafe(err.Error()))
+		faults = append(faults, startFault{tamperContent + class, err.Error(),
+			"the " + what + " could not be loaded, so the agent is running without it: " + err.Error()})
+	}
 	if p, _ := findResource(db, envSignatures, relSignatures); p != "" {
-		sigs, err := scanner.LoadSignatures(p)
-		if err != nil {
-			return nil, closer, err
+		if sigs, err := scanner.LoadSignatures(p); err != nil {
+			unusable("signatures", "signature database", err)
+		} else {
+			e.DB = sigs
 		}
-		e.DB = sigs
 	}
 	if p, _ := findResource(rules, envRules, relRules); p != "" {
-		ys, _, err := scanner.LoadYaraRules(p)
-		if err != nil {
-			return nil, closer, err
+		if ys, _, err := scanner.LoadYaraRules(p); err != nil {
+			unusable("rules", "YARA rules", err)
+		} else {
+			e.Yara = ys
+			closer = func() { _ = ys.Close() }
 		}
-		e.Yara = ys
-		closer = func() { _ = ys.Close() }
 	} else {
 		status("[WARN] no YARA rules found: known-bad content will not be identified")
 	}
 	if p, _ := findResource(fuzzyPath, envFuzzy, relFuzzy); p != "" {
-		fz, err := static.LoadFuzzyDB(p)
-		if err != nil {
-			return nil, closer, err
+		if fz, err := static.LoadFuzzyDB(p); err != nil {
+			unusable("fuzzy", "fuzzy database", err)
+		} else {
+			e.FuzzyDB = fz
 		}
-		e.FuzzyDB = fz
 	}
-	return e, closer, nil
+	return e, closer, faults
+}
+
+// defendPubkey is resolveSelftestPubkey for a daemon, with one more question:
+// who can replace this file? A key is only worth checking against if the host's
+// other users cannot swap it, and with it the baseline it vouches for. So it has
+// to sit as safely as what it protects, and a key that does not is reported the
+// same way as one that cannot be read, not believed. That also rules out a pipe:
+// this path is re-read on every retry, and $CAU_SELFTEST_PUBKEY is the way to
+// supply a key with no file.
+func defendPubkey(file string) (selftestKey, error) {
+	if file != "" {
+		if err := trust.CheckFile(file); err != nil {
+			return selftestKey{}, fmt.Errorf("the pinned public key cannot be relied on: %w", err)
+		}
+	}
+	return resolveSelftestPubkey(file)
 }

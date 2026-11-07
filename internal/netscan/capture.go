@@ -82,6 +82,16 @@ func parsePacketTable(text string) []Socket {
 // package installed scores low enough to need corroboration while one no
 // package installed does not. A packet socket bound to a single ethertype is
 // how a DHCP client works and is barely worth a mention.
+//
+// Provenance weighs more than the kind of socket here, and that was measured
+// rather than assumed. These classes first shipped scoring the socket: a raw
+// socket was 3 and a filtered packet socket 2 whoever held them. On a stock
+// host read as root, NetworkManager holds one of each — a raw socket for
+// ICMPv6 and a packet socket for ARP — and those two add up to exactly the
+// reporting threshold, so a system daemon doing its job was a reported finding.
+// Unprivileged runs had hidden it, because an unattributed socket has no
+// executable to group by. The scores below put the weight on who holds the
+// socket, which is the discriminator the rest of this package already uses.
 func captureFindings(s Socket) []Finding {
 	exe := TrimDeleted(s.Exe)
 	system := exe == "" || procscan.SystemPath(exe)
@@ -105,8 +115,15 @@ func captureFindings(s Socket) []Finding {
 	switch s.Proto {
 	case protoPacket:
 		if s.Local.Port != ethPAll {
+			// Inventory, for a packaged binary: address configuration is what
+			// these are for. Measured on a stock host, NetworkManager and
+			// wpa_supplicant hold three between them.
+			score := 1
+			if !system {
+				score = 3
+			}
 			return append(out, at(Finding{
-				Class: "netscan.capture.packet-socket-filtered", Score: 2, Technique: techSniffing,
+				Class: "netscan.capture.packet-socket-filtered", Score: score, Technique: techSniffing,
 				Detail: fmt.Sprintf("%s holds a packet socket bound to ethertype 0x%04x, which is how address "+
 					"configuration and ARP tools work", s.procName(), s.Local.Port),
 				Evidence: fmt.Sprintf("AF_PACKET proto 0x%04x", s.Local.Port),
@@ -124,9 +141,9 @@ func captureFindings(s Socket) []Finding {
 		}))
 	case protoRaw, protoRaw6:
 		// A raw IP socket builds its own packets, which is a covert channel's
-		// requirement and also how ping and traceroute work where the kernel's
-		// unprivileged ICMP sockets are unavailable.
-		score := 3
+		// requirement — and also how ping, traceroute and every network
+		// management daemon work. For a packaged binary this is inventory.
+		score := 2
 		if !system {
 			score = 6
 		}

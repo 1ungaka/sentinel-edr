@@ -240,9 +240,16 @@ func FuzzFirmwareStructures(f *testing.F) {
 	f.Add(sigList(1, 2))
 	f.Add(loadOption(true, "debian", `\EFI\debian\shimx64.efi`))
 	f.Add(pe(10, true, true))
+	f.Add([]byte("sbat,1,2024010900\nshim,4\n"))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		parseSignatureLists(data)
 		parseLoadOption(data)
+		if db := signatureVar(data); db == nil || len(db.SHA256) != 64 {
+			t.Fatal("a signature variable always has a digest")
+		}
+		if info := parseSBATLevel(data); info == nil || len(info.Entries) > maxSBATEntries || (info.Unparsed && info.Entries != nil) {
+			t.Fatalf("SBAT level out of bounds: %+v", info)
+		}
 		var bin EFIBinary
 		parsePEHeader(bytes.NewReader(data), int64(len(data)), &bin)
 	})

@@ -1,8 +1,8 @@
 # Output formats
 
-`cau scan` writes one report per run in one of three formats. The text format
-is for people; JSON and SARIF are for machines. Both machine formats are
-written even when the run fails (with `run_error` set and exit code 3), so a
+`cau scan` writes one report per run in one of thirteen formats: text, JSON,
+SARIF, OCSF and the nine [SIEM sink formats](#siem-sink-formats). The text format
+is for people; the rest are for machines. JSON and SARIF are written even when the run fails (with `run_error` set and exit code 3), so a
 pipeline always gets a document, and the stderr banner never enters them.
 
 Rules that apply to every format:
@@ -47,14 +47,14 @@ code with its reason.
 ## JSON
 
 `--format json` writes a single self-describing document.
-`schema_version` is `1.11.0` and follows a strict contract: a patch bump
+`schema_version` is `1.13.0` and follows a strict contract: a patch bump
 changes nothing a consumer sees; a minor bump adds optional fields or enum
 values; only a major bump removes, renames or retypes anything. Consumers
 should ignore unknown fields.
 
 ```jsonc
 {
-  "schema_version": "1.11.0",
+  "schema_version": "1.13.0",
   "tool": { "name": "CAU EDR", "version": "0.1.0-dev", "tagline": "..." },
   "generated_at": "2026-10-25T09:47:00Z",
   "root": "./dist",                      // present when --dir was the only target
@@ -106,6 +106,11 @@ pass failed on it, `malicious` on a hash or YARA hit, `suspicious` on a
 heuristic, static or stego breach or a corroborated fused verdict, else
 `clean`. The summary verdict is the strongest per-file verdict, with `error`
 reserved for a run that could not execute.
+
+Archive findings that came from inside a member (an Office document's
+`vbaProject.bin`, a `settings.xml.rels`) carry `via` naming that member, and the
+`archive` object carries `vba_member` and `embedded_vba` (the OLE pass's result
+over the project, module table included) since schema 1.13.0.
 
 ## SARIF
 
@@ -216,6 +221,38 @@ batch). The test suite regenerates each, compares it byte for byte and parses
 it back with a reader written against the standard, so a change to a profile
 is a visible fixture diff. `--sink-url` delivers these formats to a collector;
 see [cli.md](cli.md#siem-sink-formats-and-forwarding-free).
+
+## STIX
+
+`--format stix` writes one STIX 2.1 bundle for the run, for intel platforms and
+anything that reads STIX (MISP, OpenCTI, Security Onion). It holds the same
+findings as OCSF:
+
+- one `identity` for the producer, referenced by every other object;
+- an `indicator` per finding that has a digest: a hash-only pattern
+  (`[file:hashes.'SHA-256' = '…' OR …]`), `indicator_types` of
+  `malicious-activity` (malicious) or `anomalous-activity` (suspicious),
+  detector names as `detector:<name>` labels, and a `confidence` only when the
+  fused verdict states one;
+- deduplicated `attack-pattern` objects for the ATT&CK techniques, with
+  `mitre-attack` external references;
+- a `malware` object only for a named hash-signature threat or a YARA rule's
+  `family`; fuzzy-hash resemblance does not get one;
+- `indicates` relationships from each indicator.
+
+The file path is attacker-controlled and never goes into a pattern; it appears
+only in the description. A finding with no usable digest gets no indicator.
+Object ids are UUIDv5 over a pinned namespace, so the same finding has the same
+id in every run. Two limits follow from being a stateless scanner: rescanning a
+file re-issues its indicator under the same id with a new `created`, which a
+strict STIX version check will notice; and the reference objects (identity,
+attack patterns, malware) carry a fixed creation time for the same reason. A
+run with no findings is a bundle holding only the identity.
+
+It is a document, not a stream, so `--sink-url` does not send it; a TAXII
+server is not part of the engine. `cau intake --format stix` reads the bundle
+back, and takes only the `malicious-activity` indicators: a suspicion is not
+promoted into a hash signature by passing through a feed.
 
 ## Exit-code policy
 

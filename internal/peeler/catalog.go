@@ -23,5 +23,7 @@ func Classes() []Class {
 			"a script revealed at the bottom of a multi-layer (depth >= 2) chain, or behind a single substitution"},
 		{"peel.exhausted", Technique, Novel, 30,
 			"a layer chain that outlived the per-sample budget wall — rendered first-class as peel-exhausted, never silent-clean"},
+		{"peel.deep-chain", Technique, Novel, 30,
+			"four or more layers peeled, whatever is at the bottom — 15 a layer past the second, so it flags alone from six"},
 	}
 }

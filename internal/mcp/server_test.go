@@ -102,13 +102,19 @@ func TestInitializeAndToolsList(t *testing.T) {
 	}
 	b, _ = json.Marshal(resp[2].Result)
 	json.Unmarshal(b, &list)
-	if len(list.Tools) != 9 {
-		t.Errorf("tools = %d, want 9", len(list.Tools))
+	if len(list.Tools) != 15 {
+		t.Errorf("tools = %d, want 15", len(list.Tools))
 	}
-	// evasion_report must not be exposed (scope note).
+	// evasion_report must not be exposed (scope note), and nothing that acts
+	// on the host: the surface is analysis only.
 	for _, tl := range list.Tools {
-		if strings.Contains(tl.Name, "evasion") {
-			t.Errorf("evasion tool %q must not be exposed", tl.Name)
+		for _, banned := range []string{"evasion", "defend", "quarantine", "kill", "block", "net_"} {
+			if strings.Contains(tl.Name, banned) {
+				t.Errorf("tool %q must not be exposed", tl.Name)
+			}
+		}
+		if len(tl.InputSchema) == 0 || !json.Valid(tl.InputSchema) {
+			t.Errorf("tool %q: input schema is not valid JSON", tl.Name)
 		}
 	}
 }
@@ -251,8 +257,8 @@ func TestPromptsHaveNoEvasion(t *testing.T) {
 		Prompts []promptDesc `json:"prompts"`
 	}
 	json.Unmarshal(b, &out)
-	if len(out.Prompts) != 2 {
-		t.Errorf("prompts = %d, want 2", len(out.Prompts))
+	if len(out.Prompts) != 3 {
+		t.Errorf("prompts = %d, want 3", len(out.Prompts))
 	}
 	for _, p := range out.Prompts {
 		if strings.Contains(p.Name, "evasion") {

@@ -91,6 +91,53 @@ type IOC struct {
 	// Origin is where the bytes came from: a URL, a TAXII collection, a file
 	// path or "stdin". Set by Stamp.
 	Origin string
+	// MISPClusters are the MISP galaxy-cluster tags the source attached to
+	// the indicator or its event (`misp-galaxy:<galaxy>="<value>"`), kept
+	// verbatim: actor, tool and family tagging in the CIRCL vocabulary.
+	MISPClusters []string
+	// MalpediaFamily is the Malpedia family name, when the source tagged one
+	// (`misp-galaxy:malpedia="<family>"`). Empty otherwise: the engine does
+	// not map a feed's own free-text label onto a Malpedia name.
+	MalpediaFamily string
+}
+
+// maxClusterTags and maxTagLen bound what a feed can attach to one indicator.
+const (
+	maxClusterTags = 16
+	maxTagLen      = 160
+)
+
+// galaxyTag matches a MISP galaxy-cluster tag and captures the galaxy and the
+// cluster value.
+var galaxyTag = regexp.MustCompile(`^misp-galaxy:([a-z0-9\-]+)="([^"]{1,140})"$`)
+
+// applyTags records the galaxy-cluster tags among names on the IOC. Tags that
+// are not galaxy clusters (TLP markings, workflow state, free text) are not
+// kept: they are not a naming scheme a consumer can pivot on.
+func (i *IOC) applyTags(names []string) {
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if len(name) > maxTagLen || strings.ContainsAny(name, "\r\n\t|") {
+			continue
+		}
+		m := galaxyTag.FindStringSubmatch(name)
+		if m == nil {
+			continue
+		}
+		dup := false
+		for _, have := range i.MISPClusters {
+			if have == name {
+				dup = true
+				break
+			}
+		}
+		if !dup && len(i.MISPClusters) < maxClusterTags {
+			i.MISPClusters = append(i.MISPClusters, name)
+		}
+		if m[1] == "malpedia" && i.MalpediaFamily == "" {
+			i.MalpediaFamily = m[2]
+		}
+	}
 }
 
 // ConfidenceUnstated marks an IOC whose source states no confidence.
@@ -116,6 +163,11 @@ type ProvenanceRecord struct {
 	Origin      string `json:"origin,omitempty"`
 	RetrievedAt string `json:"retrieved_at,omitempty"`
 	Confidence  string `json:"confidence"`
+	// MISPClusters and MalpediaFamily carry the source's own galaxy-cluster
+	// tagging, so a consumer can name the family or actor in the CIRCL and
+	// Fraunhofer FKIE vocabularies instead of this engine's label.
+	MISPClusters   []string `json:"misp_clusters,omitempty"`
+	MalpediaFamily string   `json:"malpedia_family,omitempty"`
 }
 
 // Provenance renders the provenance records of iocs as JSON lines.
@@ -126,6 +178,7 @@ func Provenance(iocs []IOC) ([]byte, error) {
 		rec := ProvenanceRecord{
 			HashType: i.HashType, Hash: i.Hash, ThreatName: i.ThreatName,
 			Source: i.Source, Origin: i.Origin, Confidence: i.Confidence,
+			MISPClusters: i.MISPClusters, MalpediaFamily: i.MalpediaFamily,
 		}
 		if rec.Confidence == "" {
 			rec.Confidence = ConfidenceUnstated
@@ -184,6 +237,33 @@ type stixObject struct {
 	Revoked     bool     `json:"revoked"`
 	ValidUntil  string   `json:"valid_until"`
 	Confidence  *int     `json:"confidence"`
+	// IndicatorTypes is the STIX open vocabulary saying what the indicator
+	// indicates ("malicious-activity", "anomalous-activity", "benign", ...).
+	IndicatorTypes []string `json:"indicator_types"`
+}
+
+// stixIndicatesMalice reports whether an indicator's declared types make it
+// fit to become a hash signature. An indicator that declares no type is taken
+// as before. One that declares types is taken only if it says the thing is
+// malicious or compromised: "benign" is the producer saying it is not a
+// threat, and "anomalous-activity" alone is a suspicion, which is what this
+// engine's own STIX export uses for a file that only crossed a heuristic. A
+// hash signature is the engine's most confident tier, so a suspicion must
+// not be promoted into one by a round trip through a feed.
+func stixIndicatesMalice(types []string) bool {
+	if len(types) == 0 {
+		return true
+	}
+	malicious := false
+	for _, t := range types {
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "benign":
+			return false
+		case "malicious-activity", "compromised":
+			malicious = true
+		}
+	}
+	return malicious
 }
 
 // stixConfidence maps a STIX confidence value (0-100) onto the None/Low/Med/
@@ -215,7 +295,8 @@ var stixHashPattern = regexp.MustCompile(`(?i)file:hashes\.'?([a-z0-9\-]+)'?\s*=
 // bundle wrapper) is also accepted. An indicator its producer has withdrawn
 // (revoked) or that has expired (valid_until in the past) is not ingested:
 // the producer has said it no longer identifies a threat, and a signature
-// database that keeps it is a false-positive source.
+// database that keeps it is a false-positive source. So is an indicator whose
+// declared indicator_types do not say "malicious" (see stixIndicatesMalice).
 func ParseSTIX(data []byte) ([]IOC, error) {
 	var bundle stixBundle
 	if err := json.Unmarshal(data, &bundle); err != nil {
@@ -228,7 +309,7 @@ func ParseSTIX(data []byte) ([]IOC, error) {
 	}
 	var out []IOC
 	for _, o := range bundle.Objects {
-		if !strings.EqualFold(o.Type, "indicator") || o.Pattern == "" || o.Revoked {
+		if !strings.EqualFold(o.Type, "indicator") || o.Pattern == "" || o.Revoked || !stixIndicatesMalice(o.IndicatorTypes) {
 			continue
 		}
 		if o.ValidUntil != "" {
@@ -240,6 +321,7 @@ func ParseSTIX(data []byte) ([]IOC, error) {
 		for _, m := range stixHashPattern.FindAllStringSubmatch(o.Pattern, -1) {
 			if ioc, ok := newIOC(m[1], m[2], name, "stix"); ok {
 				ioc.Confidence = stixConfidence(o.Confidence)
+				ioc.applyTags(o.Labels)
 				out = append(out, ioc)
 			}
 		}
@@ -260,6 +342,19 @@ type mispEvent struct {
 	Info      string     `json:"info"`
 	Attribute []mispAttr `json:"Attribute"`
 	Object    []mispObj  `json:"Object"`
+	Tag       []mispTag  `json:"Tag"`
+}
+
+type mispTag struct {
+	Name string `json:"name"`
+}
+
+func tagNames(tags []mispTag) []string {
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		out = append(out, t.Name)
+	}
+	return out
 }
 
 type mispObj struct {
@@ -274,6 +369,9 @@ type mispAttr struct {
 	// decoy), which its producer has said must not become a signature. A
 	// document that omits the flag is taken as before.
 	ToIDS *bool `json:"to_ids"`
+	// Tag carries attribute-level tags; event-level tags apply to every
+	// attribute of the event.
+	Tag []mispTag `json:"Tag"`
 }
 
 // ParseMISP extracts hash attributes from a MISP event (or event list). Hash
@@ -287,9 +385,14 @@ func ParseMISP(data []byte) ([]IOC, error) {
 	var out []IOC
 	collect := func(ev mispEvent) {
 		label := firstNonEmpty(ev.Info, "MISP event")
+		eventTags := tagNames(ev.Tag)
 		add := func(attrs []mispAttr) {
 			for _, a := range attrs {
 				if ioc, ok := mispAttrToIOC(a, label); ok {
+					// The attribute's own tags first: they are the more
+					// specific statement when the two disagree.
+					ioc.applyTags(tagNames(a.Tag))
+					ioc.applyTags(eventTags)
 					out = append(out, ioc)
 				}
 			}

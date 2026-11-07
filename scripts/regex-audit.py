@@ -126,7 +126,8 @@ RULES = [
     rule("go-split-index", "memory", "go", r"strings\.(Split|SplitN|Fields)\([^)]*\)\[\d+\]",
          "panics when the separator is absent", 's := strings.Fields(x)[0]', "s := strings.Fields(x)"),
     rule("go-short-read", "memory", "go", r"\b\w+,\s*(_|err)\s*:?=\s*\w+\.Read\(\w+\)",
-         "one Read may return less than the buffer; a seq_file returns a page", "n, _ := f.Read(buf)", "io.ReadFull(f, buf)"),
+         "one Read may return less than the buffer; a seq_file returns a page", "n, _ := f.Read(buf)",
+         "func f() {\n\tfor {\n\t\tn, err := r.Read(buf)\n\t}\n}\n", "noloop"),
     rule("go-unsafe", "memory", "go", r"\bunsafe\.(Pointer|Slice|String|StringData|Add)\(",
          "outside the type system: check the bounds by hand", "unsafe.Slice(p, n)", "x"),
     rule("go-retained-slice", "memory", "go", r"^\s*\w+\.\w+\s*=\s*\w+\[[^\]\n:]*:[^\]\n]*\]\s*$",
@@ -136,7 +137,9 @@ RULES = [
     rule("go-loop-after", "memory", "go", r"time\.After\(",
          "allocates a timer every iteration", "\tcase <-time.After(d):", "\tcase <-t.C:", "loop"),
     rule("go-regexp-call", "memory", "go", r"\bregexp\.(MustCompile|Compile)\(",
-         "compiled on every call rather than once", 'func f() {\n\tre := regexp.MustCompile("x")\n}\n', 'var re = regexp.MustCompile("x")', "func", r"(?!)"),
+         "compiled on every call rather than once", 'func f() {\n\tre := regexp.MustCompile("x")\n}\n',
+         'func f() func() *regexp.Regexp {\n\treturn sync.OnceValue(func() *regexp.Regexp { return regexp.MustCompile("x") })\n}\n',
+         "func", r"sync\.Once"),
 
     # ── logic: conditions that cannot do what they say ────────────────────────
     rule("go-same-operands", "logic", "go",
@@ -329,7 +332,7 @@ def check(r, regex, text, raw_lines, report):
             if m and not lacks.search(body):
                 report(r, start + body.count("\n", 0, m.start()), raw_lines)
     else:
-        test = in_loop if r.scope == "loop" else break_leaves_select
+        test = {"loop": in_loop, "noloop": lambda kinds: not in_loop(kinds)}.get(r.scope, break_leaves_select)
         for n, line, kinds in block_stack(text.split("\n")):
             if regex.search(line) and test(kinds):
                 report(r, n, raw_lines)

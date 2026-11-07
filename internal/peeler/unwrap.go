@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"unsafe"
 )
 
 // An Unwrapper removes one obfuscation layer. It only ever *decodes* — it never
@@ -45,6 +46,7 @@ func DefaultUnwrappers() []Unwrapper {
 		gzipLayer{},
 		zlibLayer{},
 		bzip2Layer{},
+		zipLayer{},
 		flateLayer{},
 		base64Layer{},
 		base32Layer{},
@@ -198,16 +200,22 @@ func (base64Layer) Detect(b []byte) bool {
 	return true
 }
 func (base64Layer) Unwrap(b []byte, limit int64) ([]byte, error) {
-	s := string(textBody(b))
+	body := textBody(b)
+	// Four digits make three bytes, and the unpadded forms add a short final
+	// group, so the unpadded bound is the widest one. It is taken once and
+	// shared by all four encodings: a rejected attempt leaves only bytes at or
+	// past the length a later one overwrites, so the result of the encoding
+	// that succeeds is exactly the bytes it wrote.
+	dst := make([]byte, base64.RawStdEncoding.DecodedLen(len(body)))
 	for _, enc := range []*base64.Encoding{
 		base64.StdEncoding, base64.RawStdEncoding,
 		base64.URLEncoding, base64.RawURLEncoding,
 	} {
-		if out, err := enc.DecodeString(s); err == nil && len(out) >= minLayerLen {
-			if int64(len(out)) > limit {
+		if n, err := enc.Decode(dst, body); err == nil && n >= minLayerLen {
+			if int64(n) > limit {
 				return nil, errBombCap
 			}
-			return out, nil
+			return dst[:n], nil
 		}
 	}
 	return nil, ErrNotThisLayer
@@ -232,7 +240,11 @@ func (base32Layer) Detect(b []byte) bool {
 	return true
 }
 func (base32Layer) Unwrap(b []byte, limit int64) ([]byte, error) {
-	s := string(textBody(b))
+	body := textBody(b)
+	// The stdlib decodes base32 in place over its own copy of the text, so the
+	// text is aliased rather than copied here: nothing writes the caller's
+	// bytes, and nothing keeps them past the return.
+	s := unsafe.String(unsafe.SliceData(body), len(body)) // audit:ok DecodeString copies before it writes, and decodes into that copy
 	for _, enc := range []*base32.Encoding{base32.StdEncoding, base32.StdEncoding.WithPadding(base32.NoPadding)} {
 		if out, err := enc.DecodeString(s); err == nil && len(out) >= minLayerLen {
 			if int64(len(out)) > limit {
@@ -264,9 +276,12 @@ func (hexLayer) Unwrap(b []byte, limit int64) ([]byte, error) {
 	if int64(len(s)/2) > limit {
 		return nil, errBombCap
 	}
-	out, err := hex.DecodeString(string(s))
-	if err != nil || len(out) < minLayerLen {
+	// Two digits make one byte, and hex never writes its input: the output is
+	// sized here and decoded into it, with no copy of the text in between.
+	out := make([]byte, len(s)/2)
+	n, err := hex.Decode(out, s)
+	if err != nil || n < minLayerLen {
 		return nil, ErrNotThisLayer
 	}
-	return out, nil
+	return out[:n], nil
 }

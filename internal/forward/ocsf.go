@@ -107,11 +107,19 @@ func OCSFIncident(inc correlate.Incident, p Product, now time.Time) map[string]a
 			"title": incidentMessage(inc),
 			"uid":   inc.Fingerprint(),
 			"desc":  inc.Why,
+			// analytic.uid names what detected this, not which incident it was.
+			// It used to carry inc.ID, which is unique per artefact, so every
+			// incident looked like a different kind of event: formats that use
+			// this as their event or signature id — CEF and LEEF do — gave an
+			// ArcSight or QRadar class map a value it could never group on. The
+			// lead signal's class is stable across incidents of the same kind,
+			// which is exactly what such a map is keyed on. The incident's own
+			// identity is finding_info.uid, and its id stays in unmapped.
 			"analytic": map[string]any{
 				"name":    "cau defend correlation",
 				"type_id": 4, // Behavioral
 				"type":    "Behavioral",
-				"uid":     inc.ID,
+				"uid":     analyticUID(inc),
 				"desc":    inc.Why,
 			},
 			"attacks":      ocsfAttacks(inc.Techniques),
@@ -127,6 +135,12 @@ func OCSFIncident(inc correlate.Incident, p Product, now time.Time) map[string]a
 			"confirmed":  inc.Confirmed,
 			"score":      inc.Score,
 			"layers":     layers,
+			// verdict is the daemon's own tier, in the same field `cau scan`
+			// uses for a file's verdict. Without it the wire formats derived
+			// from this envelope carry the tier in severity alone, which loses
+			// the distinction the daemon actually acts on: CONFIRMED is what it
+			// would respond to, ALERT is what it leaves for a human.
+			"verdict": incidentVerdict(inc),
 		},
 	}
 
@@ -145,28 +159,52 @@ func OCSFIncident(inc correlate.Incident, p Product, now time.Time) map[string]a
 	return ev
 }
 
-// incidentMessage is the one line a SIEM shows in a list. It names the state,
-// the layers that agreed and the strongest signal, because "incident
-// e3b0c442" on its own tells an analyst nothing.
-func incidentMessage(inc correlate.Incident) string {
-	state := "ALERT"
+// incidentVerdict is the daemon's tier for an incident, in its own vocabulary:
+// CONFIRMED is what it would act on, ALERT is what it leaves for a human.
+func incidentVerdict(inc correlate.Incident) string {
 	if inc.Confirmed {
-		state = "CONFIRMED"
+		return "CONFIRMED"
 	}
-	lead := ""
-	best := -1
+	return "ALERT"
+}
+
+// leadSignal picks the signal an analyst reads first. Definitive evidence leads
+// regardless of score, because a YARA or hash hit answers the question that a
+// pile of behavioural observations only narrows.
+func leadSignal(inc correlate.Incident) (correlate.Signal, bool) {
+	var lead correlate.Signal
+	best, found := -1, false
 	for _, s := range inc.Signals {
-		// Definitive evidence leads regardless of score: a YARA or hash hit is
-		// what an analyst reads first.
 		weight := s.Score
 		if s.Definitive {
 			weight += 1000
 		}
 		if weight > best {
-			best, lead = weight, s.Class
-			if s.Detail != "" {
-				lead = s.Class + ": " + s.Detail
-			}
+			best, lead, found = weight, s, true
+		}
+	}
+	return lead, found
+}
+
+// analyticUID identifies the kind of detection rather than the instance of it,
+// so a SIEM keyed on it groups like with like.
+func analyticUID(inc correlate.Incident) string {
+	if lead, ok := leadSignal(inc); ok && lead.Class != "" {
+		return "cau.defend." + lead.Class
+	}
+	return "cau.defend.correlate"
+}
+
+// incidentMessage is the one line a SIEM shows in a list. It names the state,
+// the layers that agreed and the strongest signal, because "incident
+// e3b0c442" on its own tells an analyst nothing.
+func incidentMessage(inc correlate.Incident) string {
+	state := incidentVerdict(inc)
+	lead := ""
+	if s, ok := leadSignal(inc); ok {
+		lead = s.Class
+		if s.Detail != "" {
+			lead = s.Class + ": " + s.Detail
 		}
 	}
 	layers := make([]string, 0, len(inc.Layers))

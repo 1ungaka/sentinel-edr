@@ -63,6 +63,9 @@ type Config struct {
 	SIEMPasswordEnv string
 	SIEMCA          string
 	SIEMInsecure    bool
+	// SIEMCertPins are SHA-256 public-key pins for the manager. Several may be
+	// listed, comma-separated, so a key can be rotated without an outage.
+	SIEMCertPins []string
 
 	// Response policy. Respond is "", "stop", "kill" or "none".
 	Respond    string
@@ -156,6 +159,12 @@ func (c *Config) set(key, value string) error {
 		c.SIEMPasswordEnv = value
 	case "siem-ca":
 		c.SIEMCA = value
+	case "siem-cert-pin":
+		for _, p := range strings.Split(value, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				c.SIEMCertPins = append(c.SIEMCertPins, p)
+			}
+		}
 	case "siem-insecure":
 		var b *bool
 		if err := boolean(&b); err != nil {

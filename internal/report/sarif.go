@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/s-b-repo/cau/internal/peeler"
+	"github.com/s-b-repo/cau/internal/provenance"
 	"github.com/s-b-repo/cau/scanner"
 	"github.com/s-b-repo/cau/scanner/encchain"
 	"github.com/s-b-repo/cau/scanner/fusion"
@@ -50,6 +51,11 @@ const (
 	// SARIFRulePeelPrefix prefixes one rule per peeler class
 	// ("peel/revealed-executable", "peel/exhausted", ...).
 	SARIFRulePeelPrefix = "peel/"
+	// SARIFRuleProvenanceModified is the modified-system-binary observation
+	// (--provenance): a package-owned executable or library whose content no
+	// longer matches the package database. Level "note": it is context beside
+	// the verdict, never a detection, and it does not move the exit code.
+	SARIFRuleProvenanceModified = "provenance/modified-system-binary"
 )
 
 // ── SARIF object model (only the subset the reporter emits) ──────────────────
@@ -307,6 +313,19 @@ func (r *SARIFReporter) build(in Input) sarifLog {
 			})
 		}
 	}
+	if len(in.ProvenanceModifiedBinaries()) > 0 {
+		table.add(sarifRule{
+			ID:               SARIFRuleProvenanceModified,
+			Name:             "ProvenanceModifiedSystemBinary",
+			ShortDescription: &sarifMessage{Text: "A package-owned executable or library no longer matches the package database"},
+			FullDescription: &sarifMessage{Text: "The host's package manager records a digest for this path and the scanned content differs; " +
+				"the file is not a configuration file and is an ELF image or a script with an interpreter line. " +
+				"This is the shape of a trojaned system binary (ATT&CK T1554), reported as an observation beside the verdict: " +
+				"it is not scored, and it is only as trustworthy as the host's own package database, which root can rewrite."},
+			DefaultConfig: &sarifRuleConfig{Level: LevelNote},
+			Properties:    map[string]interface{}{"technique": provenance.TechniqueModifiedSystemBinary},
+		})
+	}
 	if c.sarifIncludeScanErrors && in.FileErrorCount() > 0 {
 		table.add(sarifRule{
 			ID:               SARIFRuleScanError,
@@ -325,6 +344,7 @@ func (r *SARIFReporter) build(in Input) sarifLog {
 
 	for _, res := range in.Results {
 		loc := c.location(res.FilePath, nil)
+		first := len(results)
 
 		if res.Detected {
 			rule := c.hashRule(res)
@@ -421,6 +441,9 @@ func (r *SARIFReporter) build(in Input) sarifLog {
 		}
 		if res.Fusion != nil {
 			results = c.appendFusion(results, &table, res)
+		}
+		if prov, ok := in.ProvenanceFor(res.FilePath); ok {
+			results = c.appendProvenance(results, &table, res, prov, first)
 		}
 	}
 
@@ -1060,6 +1083,60 @@ func (c config) appendFusion(results []sarifResult, table *ruleTable, res scanne
 		PartialFingerprints: c.fingerprints(res),
 		Properties:          props,
 	})
+}
+
+// appendProvenance adds the file's provenance to the properties of every
+// result already emitted for it (results[first:]) and, for a modified
+// package-owned executable, one note-level observation result.
+func (c config) appendProvenance(results []sarifResult, table *ruleTable, res scanner.ScanResult, prov provenance.Provenance, first int) []sarifResult {
+	props := c.sarifProvenance(prov)
+	for i := first; i < len(results); i++ {
+		if results[i].Properties == nil {
+			results[i].Properties = map[string]interface{}{}
+		}
+		results[i].Properties["provenance"] = props
+	}
+	f := prov.Finding
+	if f == nil {
+		return results
+	}
+	if _, ok := table.index[SARIFRuleProvenanceModified]; !ok {
+		return results
+	}
+	return append(results, sarifResult{
+		RuleID:    SARIFRuleProvenanceModified,
+		RuleIndex: table.index[SARIFRuleProvenanceModified],
+		Level:     LevelNote,
+		Message: sarifMessage{Text: c.boundedMessage(fmt.Sprintf("%s (%s); an observation beside the verdict, not scored, per the host's %s database",
+			f.Detail, f.Technique, prov.Manager))},
+		Locations:           []sarifLocation{c.location(res.FilePath, nil)},
+		PartialFingerprints: c.fingerprints(res),
+		Properties: map[string]interface{}{
+			"class":      c.boundedMessage(f.Class),
+			"technique":  c.boundedMessage(f.Technique),
+			"kind":       c.boundedMessage(f.Kind),
+			"provenance": props,
+		},
+	})
+}
+
+// sarifProvenance is the provenance object carried in result properties.
+func (c config) sarifProvenance(p provenance.Provenance) map[string]interface{} {
+	m := map[string]interface{}{"state": c.boundedMessage(string(p.State))}
+	if p.Manager != "" {
+		m["manager"] = c.boundedMessage(p.Manager)
+	}
+	if p.Package != "" {
+		m["package"] = c.boundedMessage(p.Package)
+	}
+	if p.Version != "" {
+		m["version"] = c.boundedMessage(p.Version)
+	}
+	if p.ShippedDigest != "" {
+		m["shippedDigest"] = c.boundedHash(p.ShippedDigest)
+		m["digestAlgo"] = c.boundedMessage(p.DigestAlgo)
+	}
+	return m
 }
 
 // categories lists the distinct heuristic categories in first-seen order.

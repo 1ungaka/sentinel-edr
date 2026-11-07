@@ -10,8 +10,17 @@ exposes the same detection engine as
 .BR cau (1)
 over the Model Context Protocol: JSON-RPC 2.0, by default on standard input and
 standard output. An MCP client (an LLM agent or an IDE) drives the engine
-through bounded tools (scan, explain, draft and test rules, coverage), with file
-access confined to the directories passed with \fB\-\-root\fP.
+through bounded tools (scan, explain, draft and test rules, peel, firmware and
+boot-chain inventory, hardware identity, evaluation summaries, coverage and
+the honesty index), with file access confined to the directories passed with
+\fB\-\-root\fP.
+.PP
+The surface is analysis only. Nothing it exposes executes, quarantines, blocks
+or kills:
+.BR "cau defend" ,
+.BR "cau net"
+and the quarantine store are deliberately not reachable over MCP. Results are
+bounded summaries; every list is capped and every cut is reported.
 .PP
 Resources are resolved with the same discovery rules as the scanner, so a
 package install under \fB/usr\fP needs no configuration. The engine behind the
@@ -24,7 +33,32 @@ hash, rule and coverage tools remain available.
 .TP
 .BR \-root " " \fIpath\fP
 An allowed scan root for the file-touching tools. Repeatable. With no root,
-file tools are disabled.
+file tools are disabled. The boot-surface tools (\fBboot_scan\fP,
+\fBhardware_identity\fP) accept an efivarfs or sysfs directory only under a
+root: the live \fI/sys/firmware/efi/efivars\fP and \fI/sys\fP are reachable
+by a client only when the operator passes \fB\-\-root /sys\fP (or the efivars
+mount) here.
+.TP
+.BR \-expect " " \fIfile\fR
+Coverage expectation for the honesty index (\fBhonesty_index\fP,
+\fIcau://honesty\fP). Defaults to \fIbaselines/attack-coverage.txt\fP when
+present in the working directory, as
+.BR "cau honesty"
+does.
+.TP
+.BR \-eval " " \fIfile\fR
+Evaluation report written by \fBcau eval run \-\-out\fP, for the honesty
+index. Defaults to \fIbaselines/smoke.json\fP when present.
+.TP
+.BR \-manifest " " \fIfile\fR
+Integrity baseline for the honesty index. Defaults to \fIintegrity.json\fP
+next to the signature database.
+.TP
+.BR \-pubkey " " \fIfile\fR
+Ed25519 public key (hex) the integrity baseline's signature must verify
+against; also read from \fB$CAU_SELFTEST_PUBKEY\fP. A key that is supplied
+and cannot be read is reported in the index as "signature not checked" with
+the reason, never silently dropped.
 .TP
 .BR \-db " " \fIfile\fR
 The hash signature database. Auto-discovered when omitted. Unlike the scanner,
@@ -38,7 +72,10 @@ are missing, YARA is disabled and the server continues.
 The fuzzy-hash database (TLSH, ssdeep, imphash).
 .TP
 .BR \-max\-bytes " " \fIn\fR
-Per-file size cap for file tools.
+Per-file size cap for file tools. \fBfirmware_image\fP applies the firmware
+analyser's own 64 MiB cap on top of it. Disk images given to \fBboot_scan\fP
+are exempt: only their boot sectors and partition tables are read by offset,
+never the whole file.
 .TP
 .BR \-max\-files " " \fIn\fR
 Maximum files a single scan_dir call may enumerate.
@@ -50,7 +87,9 @@ Per-file YARA scan budget (default 10s).
 Serve the streamable-HTTP transport on this address (for example
 \fB127.0.0.1:8923\fP) instead of stdio. Binding to a non-loopback address
 exposes the scanner to everyone who can reach it, within the \fB\-\-root\fP
-sandbox.
+sandbox. A request carrying a browser \fBOrigin\fP other than loopback is refused
+with 403, so a web page cannot reach the server through a browser. Clients that
+send no \fBOrigin\fP are unaffected.
 .TP
 .BR \-no\-yara\fR, \fB\-no\-static\fR, \fB\-no\-stego\fR, \fB\-no\-encchain\fR, \fB\-no\-lnk\fR, \fB\-no\-ole\fR, \fB\-no\-pdf\fR, \fB\-no\-iso\fR, \fB\-no\-pkg\fR, \fB\-no\-peel\fR, \fB\-no\-heuristics\fR, \fB\-no\-fusion\fR
 Disable one detector. A detector disabled by a flag is reported as disabled, not
@@ -58,6 +97,47 @@ silently skipped.
 .TP
 .BR \-version\fR
 Print the version and exit.
+.SH TOOLS
+Beside the scan, hash, rule and coverage tools, the server exposes these
+read-only analyses, each with the same sandbox and bounding as \fBscan_file\fP:
+.TP
+.B honesty_index
+The \fBcau honesty\fP document: coverage against the committed expectation,
+what a recorded evaluation measured (with the synthetic-corpus caveat), and
+whether the content matches its integrity baseline. No arguments; reads only
+the operator paths above.
+.TP
+.B eval_report
+Summarise an evaluation report at a sandboxed path: totals, ratios,
+per-detector rows, corpus class, and whether the totals follow from the sample
+records. Arguments: \fBpath\fP, \fBinclude_samples\fP, \fBlimit\fP.
+.TP
+.B peel_file
+Peel one file's obfuscation chain: outcome, score, depth, chain signatures,
+findings. Decoded bytes are never returned. Argument: \fBpath\fP.
+.TP
+.B firmware_image
+Inventory a UEFI firmware image: volumes, modules, checksum, decompression
+counts, findings, and rule matches over module bodies when a ruleset is
+loaded. Argument: \fBpath\fP.
+.TP
+.B boot_scan
+Scan explicitly named boot surfaces, each inside a root: \fBdisks\fP (image
+files), \fBesp\fP, \fBefivars\fP, \fBsysfs\fP, \fBdbx_reference\fP. No
+auto-discovery; signatures are reported present or absent, never verified.
+.TP
+.B hardware_identity
+The \fBcau hwanchor\fP snapshot from a sysfs root inside a root. Arguments:
+\fBsysfs\fP, \fBredact\fP (default true: serials, UUID and MAC addresses are
+replaced by digests).
+.TP
+.B mitre_coverage
+Takes \fBframeworks\fP (boolean) to add the Unified Kill Chain phase view of
+\fBcau coverage \-\-frameworks\fP.
+.PP
+The resource \fIcau://honesty\fP serves the honesty index without a tool
+call, and the prompt \fBboot_chain_review\fP drives a boot-chain triage over
+the tools above.
 .SH EXIT STATUS
 .TP
 .B 0

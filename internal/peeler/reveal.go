@@ -53,9 +53,10 @@ func printableFraction(b []byte) float64 {
 	return float64(n) / float64(len(b))
 }
 
-// plausible is the bar for a base decoder's output.
+// plausible is the bar for a base decoder's output. An archive counts beside the
+// formats reveals knows: its four-byte magic does not come out of a wrong guess.
 func plausible(b []byte) bool {
-	return len(b) > 0 && (printableFraction(window(b)) >= minPlainFraction || reveals(b))
+	return len(b) > 0 && (printableFraction(window(b)) >= minPlainFraction || reveals(b) || zipLayer{}.Detect(b))
 }
 
 // reveals is the bar for a substitution: b is, or decodes to, something known.
@@ -66,8 +67,12 @@ func reveals(b []byte) bool {
 	}
 	// A reversed encoding keeps its alphabet, so it survives into the next
 	// cipher trial only if the trial can see through it.
-	return isToken(textBody(w)) && peekEncoded(reversed(w), 1, true)
+	return isToken(textBody(w)) && peekEncoded(reversed(w), 1, true, isCut(w))
 }
+
+// isCut reports a window that is the head of something longer, so an encoding
+// in it may stop in the middle of a group.
+func isCut(w []byte) bool { return len(w) >= peekWindow }
 
 // revealsPayload is the bar for lifting a blob out of a file: under however many
 // encodings, there is a format or a script. Text alone is not enough here. A file
@@ -87,24 +92,30 @@ func isToken(s []byte) bool {
 }
 
 func revealsAt(w []byte, depth int, textCounts bool) bool {
+	return revealsCut(w, depth, textCounts, isCut(w))
+}
+
+// revealsCut is revealsAt for a blob decoded out of a window: it is cut short if
+// the window was, whatever its own length.
+func revealsCut(w []byte, depth int, textCounts, cut bool) bool {
 	if knownFormat(w) || scriptLike(w) {
 		return true
 	}
-	return depth < maxPeekDepth && peekEncoded(w, depth, textCounts)
+	return depth < maxPeekDepth && peekEncoded(w, depth, textCounts, cut)
 }
 
 // peekEncoded reports a window that decodes, under some base, to a known format
 // or to clean text. Text is enough here where it is not for a cipher: a wrong
 // guess at a base gives noise, so text coming out means the guess was right, and
 // the next layer down in a long chain is usually one more encoding.
-func peekEncoded(w []byte, depth int, textCounts bool) bool {
+func peekEncoded(w []byte, depth int, textCounts, cut bool) bool {
 	s := bytes.TrimRight(textBody(w), "=")
 	if len(s) < minLayerLen || !isToken(s) {
 		return false
 	}
 	found := func(out []byte) bool {
 		return len(out) >= minLayerLen/2 &&
-			((textCounts && printableFraction(out) >= minPlainFraction) || revealsAt(out, depth+1, textCounts))
+			((textCounts && printableFraction(out) >= minPlainFraction) || revealsCut(out, depth+1, textCounts, cut))
 	}
 	buf := make([]byte, len(s))
 	if base64Shaped(s) {
@@ -126,14 +137,25 @@ func peekEncoded(w []byte, depth int, textCounts bool) bool {
 		return true
 	}
 	for _, l := range peekBases() {
-		if l.detect(s) {
-			if out, ok := l.decode(s); ok && found(out) {
-				return true
-			}
+		if !l.detect(s) {
+			continue
+		}
+		out, ok := l.decode(s)
+		// A window that stops inside a group does not decode as it stands. The
+		// base64 and base32 trials above drop the partial group; the grouped
+		// bases here (five digits for base85, three for base45) need the same.
+		for drop := 1; !ok && cut && drop < maxGroup && drop < len(s); drop++ {
+			out, ok = l.decode(s[:len(s)-drop])
+		}
+		if ok && found(out) {
+			return true
 		}
 	}
 	return false
 }
+
+// maxGroup is the longest digit group of any base here (base85's five).
+const maxGroup = 5
 
 // peekBases is the baseLayers a trial can look through. It is built on first use
 // because the layers themselves call back into reveals.

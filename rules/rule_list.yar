@@ -153,9 +153,14 @@ rule obfuscated_powershell
         $enc2 = "FromBase64String(" ascii wide nocase
         $iex1 = "Invoke-Expression" ascii wide nocase
         $iex2 = "IEX(" ascii wide nocase
-        $dl1  = "DownloadString(" ascii wide nocase
-        $dl2  = "DownloadFile(" ascii wide nocase
-        $dl3  = "Net.WebClient" ascii wide nocase
+        // Execute and download on one line, or a hidden window launching one.
+        // These words anywhere in a file describe half of all admin scripts: a
+        // whole-file version flagged 15 of 5,701 public ones as MALICIOUS.
+        $cradle = /(iex|invoke-expression)[^\r\n]{0,200}(downloadstring|downloaddata)|(downloadstring|downloaddata)[^\r\n]{0,200}\|[ \t]*(iex|invoke-expression)/ ascii wide nocase
+        $hidden_fetch = /-w(indowstyle)?[ \t]+hidden[^\r\n]{0,200}download(string|file|data)/ ascii wide nocase
+        // Exact bootstrap URLs: download-and-execute by design, on hosts an
+        // attacker cannot publish that path at.
+        $trusted = /https:\/\/(community\.)?chocolatey\.org\/install\.ps1|https:\/\/get\.scoop\.sh/ ascii wide nocase
         $hid1 = "-WindowStyle Hidden" ascii wide nocase
         $hid2 = "-w hidden" ascii wide nocase
         $nop  = "-NoProfile" ascii wide nocase
@@ -165,7 +170,7 @@ rule obfuscated_powershell
         $ps and
         (
             $enc_payload or
-            (1 of ($dl*) and (1 of ($iex*) or 1 of ($hid*) or $nop or $byp)) or
+            (($cradle or $hidden_fetch) and not $trusted) or
             (1 of ($enc*) and 1 of ($iex*) and (1 of ($hid*) or $nop or $byp))
         )
 }

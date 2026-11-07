@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -310,7 +311,7 @@ func TestProvenanceRecords(t *testing.T) {
 	}
 	want := ProvenanceRecord{HashType: "SHA256", Hash: sha256A, ThreatName: "Evil", Source: "stix",
 		Origin: "https://intel.example/collections/c1/", RetrievedAt: "2026-11-06T08:30:00Z", Confidence: "high"}
-	if rec != want {
+	if !reflect.DeepEqual(rec, want) {
 		t.Errorf("record\n got %+v\nwant %+v", rec, want)
 	}
 
@@ -319,5 +320,102 @@ func TestProvenanceRecords(t *testing.T) {
 	raw, _ = Provenance(mb)
 	if !strings.Contains(string(raw), `"confidence":"unstated"`) || strings.Contains(string(raw), "retrieved_at") {
 		t.Errorf("unstamped, unstated record: %s", raw)
+	}
+}
+
+// Galaxy-cluster tags a feed attaches are carried to the provenance record
+// verbatim, and the Malpedia family is taken only from a malpedia cluster tag.
+func TestGalaxyClusterTagsReachProvenance(t *testing.T) {
+	misp := `{"Event":{"info":"Campaign","Tag":[
+	    {"name":"tlp:amber"},
+	    {"name":"misp-galaxy:threat-actor=\"Sofacy\""}],
+	  "Attribute":[
+	    {"type":"sha256","value":"` + sha256A + `","Tag":[{"name":"misp-galaxy:malpedia=\"win.xagent\""}]},
+	    {"type":"sha256","value":"` + sha256B + `"}
+	]}}`
+	iocs, err := ParseMISP([]byte(misp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := hasHash(iocs, sha256A), hasHash(iocs, sha256B)
+	if a == nil || a.MalpediaFamily != "win.xagent" || len(a.MISPClusters) != 2 ||
+		a.MISPClusters[0] != `misp-galaxy:malpedia="win.xagent"` || a.MISPClusters[1] != `misp-galaxy:threat-actor="Sofacy"` {
+		t.Errorf("attribute and event tags: %+v", a)
+	}
+	if b == nil || b.MalpediaFamily != "" || len(b.MISPClusters) != 1 {
+		t.Errorf("event tag only: %+v", b)
+	}
+	raw, err := Provenance(iocs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"malpedia_family":"win.xagent"`, `"misp_clusters":["misp-galaxy:malpedia=\"win.xagent\"","misp-galaxy:threat-actor=\"Sofacy\""]`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("provenance lacks %s:\n%s", want, raw)
+		}
+	}
+	if strings.Contains(string(raw), "tlp:amber") {
+		t.Errorf("a non-galaxy tag is not a naming scheme and must not be kept:\n%s", raw)
+	}
+
+	// STIX: galaxy tags arrive as labels.
+	stix := `{"objects":[{"type":"indicator","name":"x","labels":["malicious-activity","misp-galaxy:malpedia=\"win.emotet\""],
+	  "pattern":"[file:hashes.'SHA-256' = '` + sha256A + `']"}]}`
+	iocs, _ = ParseSTIX([]byte(stix))
+	if i := hasHash(iocs, sha256A); i == nil || i.MalpediaFamily != "win.emotet" || len(i.MISPClusters) != 1 {
+		t.Errorf("stix labels: %+v", i)
+	}
+}
+
+// Hostile tags are bounded and cannot inject into the record.
+func TestGalaxyClusterTagsAreBounded(t *testing.T) {
+	var ioc IOC
+	var names []string
+	for i := 0; i < 100; i++ {
+		names = append(names, fmt.Sprintf(`misp-galaxy:tool="t%d"`, i))
+	}
+	names = append(names,
+		`misp-galaxy:malpedia="`+strings.Repeat("a", 500)+`"`,
+		"misp-galaxy:malpedia=\"x\"\nSHA256|deadbeef|forged",
+		`misp-galaxy:malpedia="a|b"`,
+		`not-a-galaxy:malpedia="y"`,
+		`misp-galaxy:malpedia="unterminated`)
+	ioc.applyTags(names)
+	if len(ioc.MISPClusters) != maxClusterTags || ioc.MalpediaFamily != "" {
+		t.Errorf("clusters %d (bound %d), malpedia %q", len(ioc.MISPClusters), maxClusterTags, ioc.MalpediaFamily)
+	}
+	ioc.applyTags(names[:3]) // repeats are not added again
+	if len(ioc.MISPClusters) != maxClusterTags {
+		t.Errorf("duplicates grew the list to %d", len(ioc.MISPClusters))
+	}
+}
+
+// An indicator's declared types decide whether it may become a signature:
+// a suspicion or a benign marker must not be promoted into the engine's most
+// confident tier by passing through a feed.
+func TestSTIXIndicatorTypesGateIngestion(t *testing.T) {
+	ind := func(hash string, types string) string {
+		return `{"type":"indicator","name":"x","indicator_types":` + types + `,"pattern":"[file:hashes.'SHA-256' = '` + hash + `']"}`
+	}
+	h := func(c string) string { return strings.Repeat(c, 64) }
+	bundle := `{"objects":[` + strings.Join([]string{
+		ind(h("1"), `["malicious-activity"]`),
+		ind(h("2"), `["anomalous-activity"]`),
+		ind(h("3"), `["benign"]`),
+		ind(h("4"), `["malicious-activity","benign"]`),
+		ind(h("5"), `["anomalous-activity","compromised"]`),
+		ind(h("6"), `[]`),
+		ind(h("7"), `["unknown"]`),
+		`{"type":"indicator","name":"untyped","pattern":"[file:hashes.'SHA-256' = '` + h("8") + `']"}`,
+	}, ",") + `]}`
+	iocs, err := ParseSTIX([]byte(bundle))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{h("1"): true, h("5"): true, h("6"): true, h("8"): true}
+	for _, c := range []string{"1", "2", "3", "4", "5", "6", "7", "8"} {
+		if got := hasHash(iocs, h(c)) != nil; got != want[h(c)] {
+			t.Errorf("indicator %s: ingested=%v, want %v", c, got, want[h(c)])
+		}
 	}
 }

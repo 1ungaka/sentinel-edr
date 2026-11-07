@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/s-b-repo/cau/internal/peeler"
+	"github.com/s-b-repo/cau/internal/provenance"
 	"github.com/s-b-repo/cau/scanner"
 	"github.com/s-b-repo/cau/scanner/archive"
 	"github.com/s-b-repo/cau/scanner/chm"
@@ -27,12 +28,12 @@ type Reporter interface {
 	Write(w io.Writer, in Input) error
 }
 
-// Formats lists the names NewReporter accepts: the four report formats, then
+// Formats lists the names NewReporter accepts: the five report formats, then
 // the SIEM sink profiles (see siem.go).
-var Formats = append([]string{"text", "json", "sarif", "ocsf"}, SinkFormats()...)
+var Formats = append([]string{"text", "json", "sarif", "ocsf", "stix"}, SinkFormats()...)
 
 // NewReporter selects a reporter by format name ("text", "json", "sarif",
-// "ocsf", or a SIEM sink profile from SinkFormats).
+// "ocsf", "stix", or a SIEM sink profile from SinkFormats).
 func NewReporter(format string, opts ...Option) (Reporter, error) {
 	switch strings.ToLower(strings.TrimSpace(format)) {
 	case "", "text":
@@ -43,6 +44,8 @@ func NewReporter(format string, opts ...Option) (Reporter, error) {
 		return NewSARIFReporter(opts...), nil
 	case "ocsf":
 		return NewOCSFReporter(opts...), nil
+	case "stix":
+		return NewSTIXReporter(opts...), nil
 	default:
 		if _, ok := sinkProfileFor(strings.ToLower(strings.TrimSpace(format))); ok {
 			return NewSinkReporter(format, opts...)
@@ -124,6 +127,11 @@ func (r *TextReporter) Write(w io.Writer, in Input) error {
 		}
 		if hasResult && res.Fusion != nil {
 			c.writeFusion(bw, res.FilePath, res.Fusion)
+		}
+		if hasResult {
+			if prov, ok := in.ProvenanceFor(p); ok {
+				c.writeProvenance(bw, prov)
+			}
 		}
 	}
 
@@ -571,6 +579,9 @@ func (c config) writeArchive(w io.Writer, a *archive.Result) {
 		if f.Evidence != "" {
 			detail += ": " + c.textField(f.Evidence)
 		}
+		if f.Via != "" {
+			detail += " (via " + c.textField(f.Via) + ")"
+		}
 		fmt.Fprintf(w, "       %s\n", detail)
 	}
 	fmt.Fprintln(w)
@@ -702,6 +713,47 @@ func (c config) writeFusion(w io.Writer, path string, v *fusion.Verdict) {
 	fmt.Fprintln(w)
 }
 
+// writeProvenance prints one line of package-manager context under a file:
+//
+//	provenance: dpkg coreutils 9.4-3 (intact, per the host's dpkg database)
+//	provenance: dpkg coreutils 9.4-3 (MODIFIED: shipped md5 … differs, per the host's dpkg database)
+//
+// and, for a modified package-owned executable, the observation line. The
+// wording names the database on purpose: the answer is only as good as the
+// host's own package database, which root can rewrite.
+func (c config) writeProvenance(w io.Writer, p provenance.Provenance) {
+	var line string
+	switch {
+	case p.State.Owned():
+		who := c.textField(p.Manager) + " " + c.textField(p.Package)
+		if p.Version != "" {
+			who += " " + c.textField(p.Version)
+		}
+		switch p.State {
+		case provenance.OwnedIntact:
+			line = fmt.Sprintf("%s (intact, per the host's %s database)", who, c.textField(p.Manager))
+		case provenance.OwnedModified:
+			line = fmt.Sprintf("%s (MODIFIED: shipped %s %s differs from the scanned file, per the host's %s database)",
+				who, c.textField(p.DigestAlgo), TermSafe(c.boundedHash(p.ShippedDigest)), c.textField(p.Manager))
+		case provenance.OwnedConffile:
+			line = fmt.Sprintf("%s (conffile: an administrator-edited file, not compared, per the host's %s database)", who, c.textField(p.Manager))
+		default:
+			line = fmt.Sprintf("%s (owned, no digest recorded to verify against, per the host's %s database)", who, c.textField(p.Manager))
+		}
+	case p.State == provenance.Unowned:
+		line = fmt.Sprintf("no package owns this path, per the host's %s database", c.textField(p.Manager))
+	case p.State == provenance.Unsupported:
+		line = fmt.Sprintf("%s database present but unsupported (rpm keeps its file manifest in the rpmdb, not loose files)", c.textField(p.Manager))
+	default:
+		line = "unknown (no package database found, or the index was truncated)"
+	}
+	fmt.Fprintf(w, "     provenance: %s\n", line)
+	if f := p.Finding; f != nil {
+		fmt.Fprintf(w, "     [OBS] %s: %s (%s); an observation beside the verdict, not scored\n",
+			c.textField(f.Class), c.textField(f.Detail), c.textField(f.Technique))
+	}
+}
+
 func (c config) writeSummary(w io.Writer, in Input) {
 	policy := &ExitPolicy{cfg: c}
 	code, reason := policy.decide(in)
@@ -743,6 +795,10 @@ func (c config) writeSummary(w io.Writer, in Input) {
 	fmt.Fprintf(w, " CHM detections        : %d\n", chmHits)
 	fmt.Fprintf(w, " Tradecraft detections : %d\n", tradecraftHits)
 	fmt.Fprintf(w, " Fused-only detections : %d\n", fused)
+	if in.Provenance != nil {
+		fmt.Fprintf(w, " Provenance resolved   : %d (modified package binaries: %d, observations only)\n",
+			in.ProvenanceResolvedCount(), len(in.ProvenanceModifiedBinaries()))
+	}
 	fmt.Fprintf(w, " Errors                : %d\n", in.ErrorCount())
 	fmt.Fprintf(w, " Exit code             : %d (%s)\n", code, reason)
 	fmt.Fprintln(w, strings.Repeat("-", 60))

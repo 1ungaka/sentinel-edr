@@ -39,6 +39,7 @@ go-err-compare	internal/peeler/reveal.go	4e386953578fea64
 go-err-compare	scanner/linuxpkg/containers.go	48a5c0436f1c4805
 go-err-compare	scanner/linuxpkg/containers.go	e1b9da475d9f5405
 go-err-compare	scanner/linuxpkg/docker.go	e1b9da475d9f5405
+go-err-compare	scanner/scanner.go	e1b9da475d9f5405
 go-err-continue	cmd_peel.go	749180e60c8234c4
 go-err-continue	internal/bootscan/firmware.go	04bbeda47ee666a9
 go-err-continue	internal/heldout/pull.go	04bbeda47ee666a9
@@ -90,6 +91,8 @@ go-err-return-nil	internal/intel/intel.go	04bbeda47ee666a9
 go-err-return-nil	internal/mcp/sandbox.go	04bbeda47ee666a9
 go-err-return-nil	internal/netscan/proc.go	04bbeda47ee666a9
 go-err-return-nil	internal/persist/persist.go	04bbeda47ee666a9
+go-err-return-nil	internal/prefilter/prefilter.go	04bbeda47ee666a9
+go-err-return-nil	internal/prefilter/prefiltertest/sample.go	04bbeda47ee666a9
 go-err-return-nil	internal/procscan/netshell.go	04bbeda47ee666a9
 go-err-return-nil	internal/procscan/read.go	04bbeda47ee666a9
 go-err-return-nil	internal/updater/updater.go	04bbeda47ee666a9
@@ -112,6 +115,7 @@ go-last-index	scripts/lintworkflows/main.go	5add9675c523ba92
 go-last-index	scripts/lintworkflows/main.go	a8cd6c26a0d99fe7
 go-lock	internal/quarantine/lock_other.go	c4e62236d97ba770
 go-loop-after	internal/heldout/pull.go	51366371f69513fc
+go-loop-defer	scanner/linuxpkg/vectors.go	e10a5486313c2806
 go-make-sized	internal/bootscan/disk.go	965597b76a866bf0
 go-make-sized	internal/bootscan/disk.go	ddede7d5973cc1ff
 go-make-sized	internal/canary/canary.go	541e7d78729d2011
@@ -120,6 +124,7 @@ go-make-sized	internal/harden/proctitle_linux.go	3423095b164c8c1d
 go-make-sized	internal/harden/proctitle_linux.go	4146a556b0c3fb0e
 go-make-sized	internal/heldout/db.go	481e80b02c677e79
 go-make-sized	internal/heldout/db.go	aa43e6a6e1ca90c7
+go-make-sized	internal/prefilter/prefilter.go	459534da8ed58cd7
 go-make-sized	internal/quarantine/quarantine.go	46c910c4b8b111bd
 go-make-sized	scanner/encchain/encchain.go	a01e17f6489e31f6
 go-make-sized	scanner/encchain/encchain.go	f95e2d7da5c7a9f3
@@ -148,18 +153,9 @@ go-readfile	cau-kernel/internal/kstate/surface.go	40ebe5c5282d83ec
 go-readfile	cau-kernel/main.go	4cee9f0c8534c557
 go-readfile	cau-kernel/main.go	5b7879970ed79fa5
 go-readfile	cau-kernel/main.go	d66666002f8ba0e5
-go-readfile	cmd_bootscan.go	097ccb856235c4e0
 go-readfile	cmd_bundle.go	7f2aa2122ed5fec4
-go-readfile	cmd_bundle.go	f139098636edae21
-go-readfile	cmd_selftest.go	580058bd322ea236
-go-readfile	cmd_selftest.go	bb4978687790dc87
-go-readfile	cmd_update.go	f139098636edae21
 go-readfile	cmd_verifyself.go	3b54a1a2e1bf35b4
 go-readfile	cmd_verifyself.go	49157fc7af2afda6
-go-readfile	internal/bootscan/efi.go	84f8ae84aaaf8d5e
-go-readfile	internal/bootscan/firmware.go	84f8ae84aaaf8d5e
-go-readfile	internal/bootscan/firmware.go	ed2953e9c94d2183
-go-readfile	internal/canary/canary.go	dbfffc239169cd90
 go-readfile	internal/eval/manifest.go	3d08ea0c423cf09b
 go-readfile	internal/eval/manifest.go	dbfffc239169cd90
 go-readfile	internal/eval/persist.go	dbfffc239169cd90
@@ -168,15 +164,10 @@ go-readfile	internal/forward/collector/collector.go	f082d7bc64d0ad15
 go-readfile	internal/forward/wazuh/wazuh.go	f082d7bc64d0ad15
 go-readfile	internal/harden/proctitle_linux.go	69d67ce521f2eea7
 go-readfile	internal/harden/proctitle_linux.go	c63ab7cd1e087418
-go-readfile	internal/heldout/db.go	5c2110f28ff4d7dc
 go-readfile	internal/heldout/db.go	9c6bda94916ee2a4
 go-readfile	internal/intake/taxii.go	84f8ae84aaaf8d5e
-go-readfile	internal/netblock/netblock.go	c8f67dd263fbe7be
 go-readfile	internal/quarantine/quarantine.go	e5dd159fb2b901d8
-go-readfile	internal/quarantine/quarantine.go	ea8299a2e6806772
 go-readfile	internal/rulelint/rulelint.go	4745ff5c0d583998
-go-readfile	internal/selftest/selftest.go	986dc51ca432481a
-go-readfile	internal/selftest/selftest.go	dbfffc239169cd90
 go-readfile	internal/updater/updater.go	75cef5f1158a96e1
 go-readfile	internal/updater/updater.go	87f62e632814bcf6
 go-readfile	scanner/static/signerblock.go	dbfffc239169cd90

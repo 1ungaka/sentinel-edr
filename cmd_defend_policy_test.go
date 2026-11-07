@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/s-b-repo/cau/internal/correlate"
 	"github.com/s-b-repo/cau/internal/selftest"
@@ -461,5 +463,201 @@ func TestRebaselinedFeedIsAcceptedWithoutRestart(t *testing.T) {
 	}
 	if hasClass(f.d.cycle(), tamperFeed) {
 		t.Error("a legitimate re-recorded update must not be reported as tampering")
+	}
+}
+
+// ── weaknesses: guarantees that are not actually in force ───────────────────
+
+// Overriding the pinned SIEM address from the environment is the one way left
+// to redirect the stream without the config digest changing. The override is
+// honoured, because it is operator intent, but it must never be silent.
+func TestOverridingThePinnedSIEMIsReported(t *testing.T) {
+	f := siemFixture(t, "10.0.0.5")
+	t.Setenv(envSIEM, "attacker.example.com")
+	got := f.d.resolveSIEM("", false, trust.Config{SIEM: "10.0.0.5", Path: "/etc/cau/cau.conf"}, quiet)
+	if got != "attacker.example.com" {
+		t.Errorf("resolveSIEM = %q; an explicit override should still win", got)
+	}
+	incidents := f.d.cycle()
+	if !hasClass(incidents, weakSIEMOverridden) {
+		t.Fatalf("setting the pin aside must be reported, got %+v", incidents)
+	}
+	// It is a misconfiguration, not an attack: it must not confirm, because a
+	// confirmed incident is one the daemon would act on.
+	for _, inc := range incidents {
+		for _, s := range inc.Signals {
+			if s.Class == weakSIEMOverridden {
+				if inc.Confirmed {
+					t.Error("a weakness must not confirm on its own")
+				}
+				if s.Live {
+					t.Error("a weakness is not live state")
+				}
+			}
+		}
+	}
+}
+
+// An override that matches the pin is not a weakness at all.
+func TestOverrideMatchingThePinIsQuiet(t *testing.T) {
+	f := siemFixture(t, "10.0.0.5")
+	t.Setenv(envSIEM, "10.0.0.5")
+	if got := f.d.resolveSIEM("", false, trust.Config{SIEM: "10.0.0.5"}, quiet); got != "10.0.0.5" {
+		t.Errorf("resolveSIEM = %q", got)
+	}
+	if hasClass(f.d.cycle(), weakSIEMOverridden) {
+		t.Error("an override equal to the pin is not a weakness")
+	}
+}
+
+// With no pin recorded there is nothing being set aside, so an override is
+// simply configuration.
+func TestOverrideWithoutAPinIsQuiet(t *testing.T) {
+	f := newFixture(t)
+	t.Setenv(envSIEM, "10.0.0.9")
+	if got := f.d.resolveSIEM("", false, trust.Config{}, quiet); got != "10.0.0.9" {
+		t.Errorf("resolveSIEM = %q", got)
+	}
+	if hasClass(f.d.cycle(), weakSIEMOverridden) {
+		t.Error("no pin means no weakness to report")
+	}
+}
+
+// A weakness is reported once per state, like a tamper, so a long-running
+// daemon does not repeat it every cycle.
+func TestWeaknessIsReportedOncePerState(t *testing.T) {
+	f := newFixture(t)
+	f.d.weakness(weakSIEMInsecureTLS, "https://a", "first")
+	if !hasClass(f.d.cycle(), weakSIEMInsecureTLS) {
+		t.Fatal("the first report must be raised")
+	}
+	f.d.weakness(weakSIEMInsecureTLS, "https://a", "same state")
+	if hasClass(f.d.cycle(), weakSIEMInsecureTLS) {
+		t.Error("an unchanged weakness must not be repeated")
+	}
+	f.d.weakness(weakSIEMInsecureTLS, "https://b", "changed")
+	if !hasClass(f.d.cycle(), weakSIEMInsecureTLS) {
+		t.Error("a changed weakness must be raised again")
+	}
+}
+
+// ── the certificate pin: who may answer at the pinned address ───────────────
+
+// certPinFixture baselines a config carrying a cert pin, and signs the pin
+// value into the manifest the way `cau selftest --record` does.
+func certPinFixture(t *testing.T, pin string) *fixture {
+	t.Helper()
+	f := newFixture(t)
+	dir := t.TempDir()
+	conf := filepath.Join(dir, "cau.conf")
+	if err := os.WriteFile(conf, []byte("siem = 10.0.0.5\nsiem-cert-pin = "+pin+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := selftest.Compute([]selftest.Resource{{Name: selftestResConfig, Path: conf}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Pins = map[string]string{selftest.PinSIEM: "10.0.0.5", selftest.PinSIEMCert: pin}
+	man := filepath.Join(dir, "integrity.json")
+	if err := selftest.WriteManifest(man, m); err != nil {
+		t.Fatal(err)
+	}
+	g, err := trust.NewGuard(man, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.d.guard = g
+	return f
+}
+
+func TestCertPinFromConfigIsUsedWhenItMatchesThePin(t *testing.T) {
+	const pin = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	f := certPinFixture(t, pin)
+	got := f.d.resolveCertPins(trust.Config{SIEMCertPins: []string{pin}, Path: "/etc/cau/cau.conf"}, quiet)
+	if len(got) != 1 || got[0] != pin {
+		t.Errorf("resolveCertPins = %v, want [%s]", got, pin)
+	}
+	if inc := f.d.cycle(); len(inc) != 0 {
+		t.Errorf("a matching pin must raise nothing, got %+v", inc)
+	}
+}
+
+// Swapping the pin for your own collector's is the other half of the redirect
+// the address pin closes, so the signed value has to win.
+func TestSwappedCertPinUsesTheBaselinedOne(t *testing.T) {
+	const good = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	const evil = "sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+	f := certPinFixture(t, good)
+	got := f.d.resolveCertPins(trust.Config{SIEMCertPins: []string{evil}, Path: "/etc/cau/cau.conf"}, quiet)
+	if len(got) != 1 || got[0] != good {
+		t.Errorf("resolveCertPins = %v, want the baselined [%s]", got, good)
+	}
+	if !hasClass(f.d.cycle(), "defend.tamper.siem-cert-pin-changed") {
+		t.Error("a changed certificate pin must be raised")
+	}
+}
+
+// Deleting the pin is the quieter version: it would let any certificate the
+// host trusts receive the incidents again.
+func TestRemovedCertPinUsesTheBaselinedOne(t *testing.T) {
+	const good = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	f := certPinFixture(t, good)
+	got := f.d.resolveCertPins(trust.Config{Path: "/etc/cau/cau.conf"}, quiet)
+	if len(got) != 1 || got[0] != good {
+		t.Errorf("resolveCertPins = %v, want the baselined [%s]", got, good)
+	}
+	if !hasClass(f.d.cycle(), "defend.tamper.siem-cert-pin-removed") {
+		t.Error("a removed certificate pin must be raised")
+	}
+}
+
+// With nothing pinned in the baseline the configured value is simply used: an
+// unverified host must not look like an attacked one.
+func TestCertPinWithoutABaselineIsUsedAsConfigured(t *testing.T) {
+	f := newFixture(t)
+	const pin = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	got := f.d.resolveCertPins(trust.Config{SIEMCertPins: []string{pin}}, quiet)
+	if len(got) != 1 || got[0] != pin {
+		t.Errorf("resolveCertPins = %v, want [%s]", got, pin)
+	}
+	if inc := f.d.cycle(); len(inc) != 0 {
+		t.Errorf("no baseline means nothing to report, got %+v", inc)
+	}
+}
+
+// A pipe where the public key belongs is refused outright rather than waited on.
+//
+// `cau defend` resolves the key at startup, before it signals readiness. A pipe
+// held open by a silent writer made that read wait 120.1s, against systemd's
+// 90s default TimeoutStartSec — so the unit was killed as a failed start and
+// restarted into the same wall. An attacker with write access to the directory
+// holding the public key had a kill switch needing no edit to the unit file or
+// the flags. Pipes stay allowed for --sign-key, where the point is keeping a
+// secret off disk; a public key is not a secret and $CAU_SELFTEST_PUBKEY
+// already supplies one without a file.
+func TestPinnedKeyFromAPipeIsRefusedNotAwaited(t *testing.T) {
+	dir := t.TempDir()
+	fifo := filepath.Join(dir, "pub.hex")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+	// A writer that opens and then says nothing: the case that waited.
+	w, err := os.OpenFile(fifo, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+	if err == nil {
+		defer w.Close()
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := resolveSelftestPubkey(fifo)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("a pipe is not a public key file; it must be refused")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("resolveSelftestPubkey waited on a pipe: at daemon startup that is a failed start, and on retry a kill switch")
 	}
 }

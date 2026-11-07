@@ -154,9 +154,9 @@ sensor row). Limitations are still published — as `partial` states and the
 follow-up worth taking: widen the expectation to track genuinely-uncovered
 techniques as new published gaps, so the counterfactual stays visible.
 
-**Measured 2026-11-06:** the first recall number that is not synthetic. A local lab
+**Measured 2026-11-07:** the first recall number that is not synthetic. A local lab
 corpus of real offensive tooling, split by tool, took held-out detection from 25.4 %
-to 61.4 % (`docs/evaluation.md`). Recall against real malware (`make eval-recall`)
+to 61.1 % (`docs/evaluation.md`). Recall against real malware (`make eval-recall`)
 is still unmeasured, so the Phase 1 "real corpus" item stays open.
 
 **Not yet shipped (see phases):** the live intelligence-feed *sync* (the intake
@@ -457,8 +457,13 @@ score, which offset), `yara_test_rule` (against corpus, returns FP/FN), `generat
   built binary before publishing (a release that cannot verify itself never ships).
   The binary references itself at runtime via `cau verify-self` (computes its own
   SHA-256, checks it against the signed `SHA256SUMS` over HTTPS or an air-gapped
-  copy, signature-before-hash). **Open (ops):** generating and storing the release
-  keypair, and the opt-in periodic `cau update`/`cau verify-self` config. An
+  copy, signature-before-hash). **Opt-in periodic update shipped 2026-11-06:**
+  `packaging/systemd/cau-update.service` + `cau-update.timer` run `cau verify-self`
+  and then `cau update` weekly, unprivileged and sandboxed, writing only the signature
+  database directory; nothing enables them, and the unit refuses to run until the
+  operator has set the release URL and the pinned public key. Validated with
+  `systemd-analyze verify`, not yet run against a real release. **Open (ops):**
+  generating and storing the release keypair. An
   out-of-band ICMP/QUIC echo-lane fetch of the manifest remains the plan's future
   (proprietary, raw-socket/PQ-QUIC) transport; the signed-manifest-over-HTTPS path
   is the secure way shipped now.
@@ -503,8 +508,14 @@ score, which offset), `yara_test_rule` (against corpus, returns FP/FN), `generat
       `MalpediaFamily`, left for an intel feed to populate because they tag a sample, not a
       technique. Scan report findings now carry a `frameworks` array on the `fusion` object
       (ATT&CK id + UKC phase/stage per technique; JSON schema 1.10.0), so consumers pick
-      their scheme. **Open:** wiring MISP/Malpedia tags through the intake feeds and the
-      ENISA strategic layer.
+      their scheme. **Intake tagging shipped 2026-11-06:** MISP galaxy-cluster tags
+      (`misp-galaxy:<galaxy>="<value>"`) on a MISP event or attribute, or in a STIX
+      indicator's labels, are carried verbatim into the intake provenance record
+      (`misp_clusters`), and a `misp-galaxy:malpedia` cluster sets `malpedia_family`; the
+      engine never maps a feed's free-text label onto a Malpedia name. **Open:** the tags
+      stop at the provenance file, because the signature database is still three fields,
+      so a scan finding's `frameworks` object does not carry them yet; and the ENISA
+      strategic layer.
 
 **LOTL intake (the lolol.farm meta-catalog)** — lolol.farm indexes ~30 community catalogs.
 Ingest the upstream machine-readable sources on GitHub, never hand-typed; lolol.farm is
@@ -621,6 +632,16 @@ Hackage) so a *new* engine has ground-truth benign prevalence before the fleet i
 populates it. Prevalence is the single strongest FP suppressor and the reason Falcon's
 cloud decisioning feels precise. Deliverable: `internal/prevalence`, exposed as a metric
 in every verdict ("seen on 0.0004% of hosts; signed by Debian").
+**Host half shipped 2026-11-07** as `internal/provenance` + `cau scan --provenance`:
+every scanned file resolves against dpkg or pacman to owner, version, state and the
+shipped digest (usr-merge and diversions handled, conffiles distinguished, rpm reported
+unsupported), carried in every output format, plus the unscored observation
+`provenance.modified-system-binary` (T1554) for a package-owned executable whose content
+no longer matches. Measured on 4,157 system binaries: 4,154 intact, 1 real local rebuild,
+0 false "modified". It attenuates nothing yet: no fusion weight has been measured, so it
+is reported beside the verdict. **Open:** the fleet prevalence itself and the SBOM
+bootstrap (console work), feeding the anchor into scoring, and a "signed by" statement
+(dpkg records digests, not signatures).
 
 **6. Behavior engine (IOBs) on the sensor.**
 Static tiers lose to packing; the behavior layer does not. Sensor-side process-behavior
@@ -672,8 +693,13 @@ schemas. Drift between them is a CI failure.
       log aggregator that prefers them.
 - [~] Security Onion — ECS-JSON syslog + a STIX 2.1/TAXII feed. **ECS-in-syslog shipped
       2026-11-06**: `--format syslog-ecs` (RFC 5424 frames whose MSG is the ECS document),
-      delivered with `--sink-url tls://…` using RFC 6587 octet counting. **Open:** the
-      outbound STIX 2.1/TAXII feed of findings, and a run against a live Security Onion.
+      delivered with `--sink-url tls://…` using RFC 6587 octet counting.
+      **STIX export shipped 2026-11-06**: `--format stix` writes one STIX 2.1 bundle per
+      run (identity, hash-only indicators, deduplicated attack-patterns, `malware` only
+      for a named threat, `indicates` relationships; UUIDv5 ids; the file path never in
+      a pattern). Proven by round trip through the engine's own `intake.ParseSTIX` and a
+      conformance fixture. **Open:** a TAXII server or push (the bundle is a file), and
+      a run against a live Security Onion.
 - [~] OpenSearch Security Analytics — OTLP and ECS bulk over HTTP. **Engine side shipped
       2026-11-06**: `--format otlp` (OTLP/JSON logs) and `--format ecs`, delivered with
       `--sink-url https://…` (`/v1/logs`, or `_bulk` with `--sink-index`; a 200 carrying
@@ -684,8 +710,17 @@ schemas. Drift between them is a CI failure.
       **Open:** a run against a live OSSIM/QRadar parser.
       All three ride `internal/report/siem.go` (profiles of the one OCSF finding) and
       `internal/forward/collector` (one-shot delivery at the end of a scan, best-effort).
-      The resident agent's queued forwarder (`internal/forward`) does not yet speak these
-      formats; wiring `forward.Sender` over the collector is the remaining seam.
+      **Sender seam shipped 2026-11-06**: `collector.NewSender` implements
+      `forward.Sender`, so the resident agent's bounded queue can deliver any sink
+      format; `report.RenderSinkEvents` renders OCSF finding maps through the same
+      event and the same renderers as `cau scan` (byte-identical for file findings,
+      tested for all nine formats), and incident fields (peers, PIDs, extra files) have
+      a stated home per format. **Open:** no `cau defend` flag uses it yet (that file
+      has another owner, who has declined to wire it until asked); before it is wired,
+      `Send` must return the wire count rather than counting malformed, oversize and
+      refused events as delivered, or the queue's exact accounting becomes untrue;
+      process name, command line and peer port are not in the incident envelope, so
+      no format carries them; CEF drops file paths after the first.
 - [~] Matano — OCSF-JSON (Apache-2.0, the youngest of the five). Engine side shipped
       2026-10-29: `cau scan --format ocsf` writes OCSF 1.3.0 Detection Findings
       (`internal/report/ocsf.go`); the conformance fixture round-trip shipped 2026-11-06
@@ -798,10 +833,19 @@ command, not part of the per-file `cau scan`. The remaining Phase 8 items below 
   and size only, because sysfs maps a ROM only after a write), the WPBT table and ACPI
   table names, boot entries and order with dangling/missing-target checks, Secure Boot
   and setup-mode state, dbx/db/MOK sizes and the SBAT level, and a dbx comparison against
-  an operator-supplied reference file (`--dbx-reference`). **Open:** boot-entry *tamper*
-  detection needs a signed baseline to diff against (none yet); SBAT and MOK are reported
-  but not checked against published revocation levels; the reference dbx is supplied by
-  the operator, never fetched or bundled.
+  an operator-supplied reference file (`--dbx-reference`).
+  **Signed baseline shipped 2026-11-06:** `cau boot-scan --record / --check`
+  (`internal/bootscan/baseline.go`, `compare.go`) with optional Ed25519 signing. It
+  compares boot entries and order, Secure Boot state, PK/KEK/db/dbx/MOK digests, SBAT
+  levels, ESP binaries, disk boot code and partition tables, ACPI tables, option ROMs
+  and firmware versions; only security-relevant differences fail, a dbx that only grew
+  or a firmware version that rose is "expected with updates", and what could not be
+  re-read is `not-reverified`, never "removed". With `--pubkey`, an unsigned or
+  tampered baseline or an unusable key fails the run. Measured: 10 checks on one host
+  within one boot, 0 differences. **Open:** stability across reboots is unmeasured;
+  SBAT and MOK are not checked against published revocation levels; the reference dbx
+  is operator-supplied; dbx growth is judged by counts plus a digest; `BootNext` is
+  not recorded; ROM and WPBT contents are not read.
 - [x] `cau boot-scan` — OSS, strictly read-only: local ESP scan + firmware capsule/EFIVAR
   inventory, MBR/VBR/GPT sanity check (Petya-class bootkit coverage). Hard boundary: the
   engine never images or flashes live chips; SPI/eSPI work stays with opt-in operator
@@ -845,6 +889,25 @@ command, not part of the per-file `cau scan`. The remaining Phase 8 items below 
   an honest note when the binary is below TLSH's 50-byte floor. **Still open**
   (content, not parser): syscall-stub templates, SSH/cron tamper patterns and
   autostart paths. The pass is no longer "a PE-only engine behind a Linux CLI".
+  **Content shipped 2026-11-07** (`scanner/static/elf_content.go`), six classes:
+  `content.direct-syscalls` (T1106: a *dynamically linked* image carrying raw
+  `syscall` stubs for sensitive calls whose libc wrapper it does not export, decoded
+  from the `mov eax/rax, imm` before the instruction, x86-64 only; statically linked
+  Go/Rust/busybox images are exempt by construction), `content.ssh-authorized-key` and
+  `content.sshd-config-edit` (T1098.004), `content.cron-job` (T1053.003),
+  `content.systemd-unit` (T1543.002) and `content.autostart-multi` (T1547), each
+  needing a location *and* a payload body (a key, a directive set to yes, a crontab
+  line, a unit body), never a path string alone. A new `Persistence` category is capped
+  at 6, so content alone cannot cross the static threshold of 8. **Measured** on every
+  ELF under /usr/bin, /usr/sbin, /usr/lib and /usr/libexec (11,519 files, 10,928
+  dynamically linked): static detections 6 before and 6 after (the same six firmware
+  blobs), suspicious verdicts 19 and 19, exactly one file with any difference
+  (`/usr/bin/podman` gained the weight-2 `content.systemd-unit` observation; it does
+  install user units), 0 hits on any of the Kali offensive tools present, about +2 %
+  CPU over 10.3 GB. **Open:** i386 (`int 0x80`) and aarch64 (`svc`) number decoding,
+  not shipped because this machine holds no benign population of either to measure
+  on; `mov edi,N; call syscall@plt` stubs; the per-file marker and syscall tables are
+  in the result but not yet in the scan reports.
   GTFOBins/GTFOArgs intake is behavior content, not
   binary content — without this, the eBPF sensor (#Phase 7-7) is telemetry with no local
   verifier.
@@ -877,9 +940,33 @@ command, not part of the per-file `cau scan`. The remaining Phase 8 items below 
   shortcuts). **OLE shipped 2026-10-30** as `scanner/ole` ([MS-CFB] parser + [MS-OVBA]
   decompression + VBA-macro detection, wired the same way; `--no-ole` / `--ole-threshold`;
   adds coverage of T1137 and T1203 and joins T1105 / T1027 / the T1059 family /
-  T1204.002). Go-native, no sidecar needed. Macro-stomping is deferred (needs the
+  T1204.002). Go-native, no sidecar needed. Macro-stomping was deferred (needs the
   MODULEOFFSET dir-record parse; the v1 signature-scan locates CompressedContainers
-  without it — measure-or-don't-ship). **PDF shipped 2026-10-30** as `scanner/pdf`
+  without it — measure-or-don't-ship). **Macro-stomping detection shipped 2026-11-06,
+  conservatively** (`scanner/ole/vbadir.go`, `stomp.go`; T1564.007): a bounded parser
+  for the VBA `dir` stream splits each module at its text offset into compiled p-code
+  and source, and three classes report an inconsistency between them:
+  `ole.vba.stomp.source-missing` (5), `source-blank` (4) and `mismatch` (2, a heuristic
+  over string runs in the p-code, not a disassembly). No class crosses the threshold on
+  structure alone; a module with p-code and no source needs the string corroboration.
+  That caution is the measurement: this machine has 39 OLE2 files of which 6 carry a
+  VBA project (18 modules, three of the six from exploit-framework data), 0 stomping
+  findings and no change in any verdict, which is far too few to state a false-positive
+  rate. **Open for this part:** a real benign Office corpus to set the weights; source
+  replaced by harmless text is only a sub-threshold observation. **OOXML reached
+  2026-11-07** (`scanner/archive/ooxml.go`): a `.docm`/`.xlsm`/`.pptm` zip is recognised
+  (`ooxml-word/-excel/-powerpoint`), its `vbaProject.bin` member is opened under a
+  16 MiB cap and run through the OLE pass with the OLE weights, stomping included; the
+  findings carry an `archive.ooxml.` prefix and a `via` member, and the module table is
+  in the report as `embedded_vba` (JSON schema 1.13.0). Remote-template injection
+  (T1221, `archive.ooxml.remote-template`, weight 6: an `attachedTemplate` relationship
+  with an http/https/file-host target; UNC and local paths are not findings) is new.
+  Measured on the 307 OOXML files on this host: all recognised, 0 findings, but none of
+  them carries a VBA project or a settings relationship, so there is no false-positive
+  measurement for the carried classes or the template check beyond the 39-OLE-file
+  figure above; a real benign macro-document corpus is still the open item. The engine
+  does not yet pass `--ole-threshold` into the embedded pass (`scanner/engine.go`, one
+  line, another session's file today). **PDF shipped 2026-10-30** as `scanner/pdf`
   (bounded lexical scan with `#xx` name de-obfuscation + malicious-document detection,
   wired the same way; `--no-pdf` / `--pdf-threshold`; adds coverage of T1059.007 and
   T1204.001 and joins T1027 / T1059 / T1105 / T1204.002). **ISO shipped 2026-10-30** as
@@ -931,10 +1018,41 @@ command, not part of the per-file `cau scan`. The remaining Phase 8 items below 
   linked, with their go.sum hashes), with no timestamp or serial so it is reproducible;
   the release job writes one per binary before `SHA256SUMS` is signed. It states its own
   gap: cgo-linked libyara and libc are not Go modules and are not listed.
-  **Open:** the **post-quantum** upgrade (ML-DSA or a hybrid) — the signing/verify seam
-  is isolated behind the `release`/`updater` packages so swapping in a hybrid scheme is a
-  localized change — and a CI check that two builds of one tag are byte-identical
-  (`-trimpath` is set; the comparison is not yet run), plus SLSA provenance attestations.
+  **Hybrid post-quantum signatures implemented 2026-11-06:** `cau bundle keygen --hybrid`
+  makes an Ed25519 + ML-DSA-65 key (`crypto/mldsa`, FIPS 204); `cau bundle
+  update/checksums` sign with it, and `cau update` / `cau verify-self` require both
+  signatures when the trusted key is hybrid, refuse an Ed25519-only signature under a
+  hybrid key (the strip-the-PQ-half downgrade), and verify Ed25519-only releases under
+  Ed25519 keys exactly as before (pinned by tests using signatures made the old way).
+  The ML-DSA half is domain-separated per artifact type by the FIPS 204 context string.
+  Encodings and the both-required rule are tested, fuzzed and mutation-checked (11
+  mutants, all killed); there has been no outside review.
+  **Open, and the first one is a decision:** `go.mod` and CI are on Go 1.24 and
+  `crypto/mldsa` needs 1.27, so the ML-DSA code sits behind a build tag and a CI-built
+  binary refuses hybrid keys. Hybrid releases need Go >= 1.27 in CI (and then in the
+  Debian and RPM build requirements), a hybrid key generated and stored, and the
+  release job taught to sign with it. Also open: the `cau selftest` baseline signature
+  is Ed25519-only; several trusted keys for rotation (with the hazard that a set holding
+  an Ed25519 key and a hybrid key sharing its Ed25519 half re-opens the downgrade);
+   hosts that pin only the Ed25519 key gain nothing; SLSA provenance attestations.
+   **Decision (2026-11-07): the Go 1.27 bump (which would switch released binaries
+   from Ed25519-only to hybrid ML-DSA-65 signatures) is HELD.** `go.mod`'s
+   `go 1.24.1` plus CI (`.github/actions/cau-env/action.yml` follows go.mod) keep CI
+   binaries at 1.24; the hybrid code already sits behind `//go:build go1.27 &&
+   !nomldsa` and a 1.24 binary refuses hybrid keys cleanly, so holding breaks
+   nothing. Bumping would need `debian/control` `golang-go (>= 2:1.27~)`, but the
+   package.yml Debian leg builds in debian:trixie, whose golang-go is a 1.24-line
+   package (that leg fails unless CI is reworked to fetch a 1.27 toolchain), and
+   `packaging/rpm/cau.spec` would need `BuildRequires: golang >= 1.27`, unverifiable
+   because the spec has never been built on an RPM distribution; hybrid signing is
+   also new and has had no outside review. Revisit when: an RPM build is verified,
+   package.yml installs a 1.27 toolchain, and a hybrid release-signing key workflow
+   exists.
+   **Reproducibility check shipped 2026-11-06:** a `reproducible` CI lane copies the
+  checkout to two directories of different depth, builds both binaries in each and fails
+  on any difference; the release job needs it. Run locally with the same steps: `cau` and
+  `cau-mcp` came out byte-identical. It compares two builds on one runner with one
+  toolchain; it does not show that a different machine or distribution reproduces them.
 - [ ] Parser fuzzing gate: OSS-Fuzz/libFuzzer harnesses for every shipped parser (PE,
   ELF, UEFI, OLE, archives). A scanner that dies on a malformed sample is a
   time-of-scanning liability; fuzz failures block releases with the same honesty as the
@@ -1048,12 +1166,20 @@ catch and how to catch it, not how to build it. This Phase 4-connected work maps
   was already in the core increment. **Open:** PE/ELF structural fingerprints (overlay
   chains, packed-import tables) to route to specialized peelers, and provenance
   reconciliation of benign packers (needs the Phase 7 provenance DB).
+  **2026-11-06:** a zip magic now routes to the container peeler, and archive members
+  are ranked by a cheap peek (encoding token, long base64 run, other text) before any
+  is read whole, so the budget reaches the likely member first. **Open:** PE/ELF
+  structural fingerprints (the section-table parser is in `scanner/static`, which the
+  peeler cannot import) and the provenance attenuation (Phase 7 DB).
 - [~] Chain-signature model: each peel records the ordered transformation set it
   removed; ordered chain patterns become family signatures — the multi-layer equivalent
   of a hash — and enter the same detection-content lifecycle with model cards.
   Shipped: each peel records its ordered transform set and renders a stable
   `PrimarySignature` (e.g. `base64>gzip>base64`). Open: promoting recurring signatures
   into the detection-content lifecycle with model cards.
+  **2026-11-06:** signatures carry `zip` and `Result.DeepestSignature` names the deepest
+  path. **Open:** promoting signatures into a content lifecycle with model cards; there
+  is no lifecycle object yet.
 - [ ] Emulation-sidecar fallback (Phase 5 runtime): peel-stalled samples run
   unpack-then-scan in the isolated sidecar — snapshot memory, scan the unpacked image,
   same budget caps as static peel.
@@ -1069,6 +1195,12 @@ catch and how to catch it, not how to build it. This Phase 4-connected work maps
   an inert payload and the depth-sweep test asserts FP/FN stay flat 1..6 layers against
   a benign twin. Open: folding the composer into the Phase 1 eval generator so the
   chains run through the corpus gates, not only the package's unit tests.
+  **2026-11-06:** a randomised composer over the whole layer library (bases, radix
+  bases, seven substitutions, gzip/zlib, zip) depth-swept 1..8 with blue/red twins
+  runs in the package tests (`chains_test.go`): 0 FN and 0 FP over 192 chains each;
+  it found and fixed one real miss (a trial window cut mid-group made long base85
+  tokens undecodable). **Open:** folding the composer into `internal/eval`'s generator
+  so chains pass the corpus gates; nothing was written under `corpus/`.
 - [x] Peel-as-tree, not peel-as-chain: each layer's candidate continuations spawn as
   bounded speculative tasks on a work-stealing pool. The budget wall — cpu-ms, allocated
   bytes, syscall counts, wall-clock — is *global per sample*, shared across every
@@ -1079,10 +1211,15 @@ catch and how to catch it, not how to build it. This Phase 4-connected work maps
   shared atomic accounting struct across every branch. The wall tracks nodes, decoded
   bytes, depth, frontier width and wall-clock; cpu-ms/syscall accounting is not yet a
   wall (wall-clock bounds time-to-verdict instead).
-- [ ] Estimator-guided task graph: the chain-depth estimator ranks the frontier;
+- [x] Estimator-guided task graph: the chain-depth estimator ranks the frontier;
   low-probability branches queue last and are cancelled mid-run when the budget counter
   passes its floor. A cancel carries its reason — "peel-exhausted (budget), branch-cancel
   at layer N" is a labeled outcome, not a generic failure.
+  **Shipped 2026-11-06:** once any wall is within 1/8 of its limit, a branch from a
+  speculative layer (cipher, carve, raw flate) is cancelled instead of opened and the
+  peel says so. Engaged on 0 of 131,253 benign files and 0 of 1,645 archives (the
+  benign maxima were 14 of 512 nodes and 31 of 64 MiB). Caveat: the time floor can
+  drop a speculative branch slightly before the deadline would have.
 - [x] Wall-clock bounded by construction: speculative parallel unwrap caps
   time-to-verdict regardless of chain design — a stall-shaped chain burns its own
   budget, not the scan queue. Queue-level DoS dies at this row.
@@ -1100,14 +1237,21 @@ catch and how to catch it, not how to build it. This Phase 4-connected work maps
   Shipped: an in-peel `seen` set keyed by SHA-256 skips any sub-blob already visited
   (unit-tested via two transforms that produce the same child). A persistent cross-scan
   CAS stays a follow-on.
-- [~] Bounded task-graph invariants: max in-flight children per node, no unbounded
+- [x] Bounded task-graph invariants: max in-flight children per node, no unbounded
   queues, workers die on budget exhaustion, cancellation is cooperative. These are
   asserted by Phase 1 conformance tests, not just documented.
   Shipped in the peeler: frontier width is capped per node (`MaxChildren`), the worker
   pool is a fixed-size semaphore (no unbounded queue), and cancellation is cooperative
   (context + budget checks at every node). The invariants are asserted by the package's
   own tests; promoting them to the Phase 1 conformance suite is the open part.
-- [~] DoS honesty: Phase 9's decompression-bomb caps extend across the tree path —
+  **Shipped 2026-11-06** as code and tests (`invariants.go`): gauges for workers,
+  branches per node, nodes, kept bytes and bytes held (ceiling 2x the output wall;
+  a decode that would pass it is refused and the peel says so); `checkInvariants`
+  runs after every walk and latches a violation as the exhaustion reason; nine
+  hostile shapes at 1/3/8 workers, each check shown to fail when its bound is
+  broken, and the fuzz target asserts them. **Open:** the checks live on an
+  unexported method; a conformance suite outside the package would need it exported.
+- [x] DoS honesty: Phase 9's decompression-bomb caps extend across the tree path —
   "peel-exhausted, N layers observed" is still the rendering for anything that hits a
   wall, and CI depth-sweep fixtures assert the wall-clock cap holds across chain shapes
   while benchstat tracks the aggregate-CPU delta so the same-budget guarantee is
@@ -1116,6 +1260,12 @@ catch and how to catch it, not how to build it. This Phase 4-connected work maps
   across the whole tree), exhaustion renders as `peel-exhausted` with a reason, and the
   depth-sweep + bomb-cap + fuzz tests assert the caps hold. Open: the benchstat
   aggregate-CPU tracking in CI.
+  **Shipped 2026-11-06:** the caps extend to the zip layer (declared-size bomb profile
+  refuses an archive before a member is opened; every decompressed byte is charged to
+  the shared wall; 32,768-member cap; wall clock checked every 256 members), with
+  tests across nine chain shapes and an aggregate-CPU test against process rusage, and
+  `cpu-ns/op` benchmarks (`BenchmarkPeelDepth`, `BenchmarkPeelArchive`). **Open:** the
+  benchstat wiring in CI.
 - [ ] ATT&CK framing: T1027 family (partial) with the chain-pattern classification
   itself drafted as an ATT&CK submission alongside the other NOVEL families.
 - [ ] Publication rule: detectors, synthetic fixtures and templates are public; the
@@ -2159,8 +2309,15 @@ become implants, and the exclusion list outlives every review that approved it.
   one-shot (`cau-scan.service` + `cau-scan.timer`) and a resident daemon
   (`cau-daemon.service`), hardened units writing to a configurable report dir, with a
   README covering `--quarantine` and the Windows/`launchd` wrappers. It is a *scheduled*
-  scanner; real-time kernel monitoring stays the sensor's. **Open:** the deb/rpm
-  packages, man pages and shell completions.
+  scanner; real-time kernel monitoring stays the sensor's.
+  **Status 2026-11-06:** the Debian package (`debian/`), the Arch PKGBUILD, both man
+  pages and the three completion scripts exist and are installed by `make install`.
+  **RPM spec added** (`packaging/rpm/cau.spec`): offline build from the release tarball
+  and `vendor/`, the Makefile's own install targets, a `%check` that runs the packaged
+  binary, units installed and never enabled. Built here with `rpmbuild --nodeps` on a
+  Debian-family host (builds, self-check passes, file list complete). **Open:** it has
+  not been built or installed on an RPM distribution, where the build dependencies and
+  the systemd scriptlet macros actually resolve, and no CI job builds it.
 - [ ] The free/paid reporting boundary rides the single-agent vs. multi-agent line:
   anything a single agent can emit about its own host — per-run artifacts, its local
   history, its own prevention/response record — is free; only *cross-agent* rollups
@@ -2283,8 +2440,16 @@ axis where open beats installed-agent fleets without needing their scale.
   Byte-identical with `--no-timestamp`. On this tree today: coverage matches, the
   evaluation is the synthetic smoke report, and selftest is `no-baseline` because no
   `integrity.json` is committed. The index itself is not signed.
-- [ ] Substrate track: an embedding guide plus a stable detection-API contract; the MCP
+- [~] Substrate track: an embedding guide plus a stable detection-API contract; the MCP
   surface grows coverage and eval tools next to the scan tools.
+  **MCP half shipped 2026-11-07:** `cau-mcp` gained `honesty_index`, `eval_report`,
+  `peel_file`, `firmware_image`, `boot_scan`, `hardware_identity` (redacted by default)
+  and a `frameworks` option on `mitre_coverage` (the Unified Kill Chain view), the
+  `cau://honesty` resource and a `boot_chain_review` prompt: 15 tools, all read-only,
+  all bounded, all confined to `--root` (a client cannot point the server at the live
+  `/sys` unless the operator put it in the roots), with end-to-end JSON-RPC tests on
+  synthetic fixtures. `cau defend`, `cau net` and the quarantine are deliberately not
+  exposed. **Open:** the embedding guide and a stable detection-API contract.
 - [ ] Honest boundary: this path's schedule is market-gated, not code-gated — adoption,
   not engineering, is the limiting resource. The ten-path runs parallel to
   closing-the-loop and never replaces shipping the boxes.
@@ -3132,10 +3297,17 @@ commits the code.
   every flag must be one that subcommand defines (159 lines, 49 subcommand paths, 273
   flag uses on the first run; it found one stale example, `cau cluster --dir`, now fixed).
   Vacuity floors and a self-test with synthetic bad examples keep the checker honest.
-  **Open:** the examples are checked, not executed, so a documented *output* can still
-  drift and nothing is regenerated by CI; the man pages and inline code spans are not
-  covered; three paths with no flag set (`eval policy`, `help`, `version`) are logged
-  as not introspectable.
+  **Extended 2026-11-06** to the man pages, inline code spans, the three completion
+  scripts (a completion may not offer a flag or subcommand its command rejects) and
+  every command's own `--help` (all 396 flags defined in the source must be listed, with
+  no allowlist). Two documented outputs that are pure functions of the tree
+  (`cau eval policy`, the command table) are regenerated and compared. The first run
+  found and fixed 38 mismatches: one man-page flag and 37 completion offers.
+  **Open:** examples are checked, not executed; three output blocks (a scan report, an
+  eval-gate failure, an annotated JSON shape) are not regenerated; Go snippets in
+  `docs/library.md` are not compiled; Markdown flag tables are not checked; `cau-mcp` is
+  checked against its source, not by running it. Completions still *omit* many real
+  flags (logged by the test, not failed), most of all in fish.
 - [ ] Operator-facing search: the docs site ships with the same query language the
   console uses — one syntax, two surfaces.
 - [ ] The handbooks live under the same MIT license as the engine; the console's
@@ -3266,6 +3438,11 @@ deferred for a stated reason, not forgotten, and will not be padded into
       shellcode corpus (Phase 1 real-corpus work) to measure recall before the
       atom is changed. Until then it stays broad and only counts toward "3 of
       them".
+      Status 2026-11-06: the 3-byte atom is no longer in `rules/rule_list.yar`. The
+      shellcode rule now carries 4- and 6-byte forms (`$hash32`, `$hash64`: the rotate
+      followed by the add), which the linter accepts. The row stays open because its
+      own gate was not met: I found no recorded recall measurement for the lengthened
+      atoms against a shellcode corpus, so whether the change cost recall is unknown.
 
 ### Process additions
 
@@ -3278,8 +3455,11 @@ deferred for a stated reason, not forgotten, and will not be padded into
 - [ ] Extend the detection-robustness harness to every bundled rule as new
       rules are added, so the nocase/wide contract is enforced per rule, not
       per sampled family.
-- [ ] A `cau rules lint --strict` gate once the `$ror13` atom is resolved, so
+- [x] A `cau rules lint --strict` gate once the `$ror13` atom is resolved, so
       the ruleset is warning-clean and strict lint can block merges.
+      **Shipped 2026-11-06:** `make lint-rules` now runs `cau rules lint --strict`,
+      so a warning fails the gate CI runs. The bundled ruleset (12 rules) is clean
+      under it; a deliberately weak rule fails it.
 
 ### Encoded-executable detector — next layers (NOVEL-012 continued)
 
@@ -3291,6 +3471,12 @@ remaining NOVEL-012 surface, each with its own FP gate:
       PowerShell cradle is caught even when the decode is a script, not an
       executable. Gate: measured FP on the benign text population; cap the
       re-scan cost per file.
+      **Peeler half shipped 2026-11-06:** `peeler.WithLeaves(maxBytes)` exposes the
+      decoded leaves (at most 8, chosen by a scheduling-independent order, bounded,
+      off by default so the scan path pays nothing). **Open:** the engine side in
+      `scanner/engine.go`: run the YARA and heuristic indicators over each leaf with a
+      per-file cost cap, attribute hits as `peel.<class>` evidence, and gate it on a
+      benign text-population measurement as this row says.
 - [~] **Container layers.** gzip/zlib/zip/xz as decode layers alongside
       base64/hex, with the decompression-bomb caps the plan already requires
       (ratio and absolute-size limits, a global budget shared across layers).
@@ -3298,13 +3484,31 @@ remaining NOVEL-012 surface, each with its own FP gate:
       `internal/peeler` (not in `scanner/encchain`) under one shared per-sample
       budget. **Open:** zip members and xz as peel layers (xz has no standard-library
       decoder; the vendoring decision comes first).
-- [ ] **Chain-depth as a signal.** Report the peel depth as its own weighted
+  **Zip shipped 2026-11-06** (`internal/peeler/zip.go`): an own bounded central-directory
+  reader (stored and deflate; encrypted members skipped and counted; zip64 and
+  prepended data handled; nothing written to disk; member names never evidence; nested
+  zips through the same tree budget). A zip that *is* the sample, or sits under
+  compression only, is packaging; a zip under an encoding or substitution is a layer.
+  Measured on 1,645 local zip-family files: 1,640 clean, 4 documentation archives
+  `peel-exhausted` at score 0 (soft walls, no floor), 1 new true positive (a pentest
+  tool's base64+zlib reverse-shell templates inside its jar); +42 ms CPU per archive on
+  average, worst 3.0 s, bounded by the 5 s wall. **xz stays open:** it needs LZMA2 plus
+  the xz container, and the LZMA1 decoder in `scanner/uefi` cannot be imported by the
+  peeler; the right shape is lifting that decoder into a shared `internal/` package.
+  xz is recognised and reported as opaque.
+- [x] **Chain-depth as a signal.** Report the peel depth as its own weighted
       observation (a 4-layer wrapper is suspicious whatever the leaf), with the
       depth distribution measured on the benign population first.
       Status 2026-11-06: the peeler reports `max_depth` and uses depth to gate its
       classes (a revealed executable or script counts only at depth >= 2), but there
       is no class that scores depth alone. That stays open on purpose until the benign
       depth distribution is measured, which is this row's own gate.
+      **Shipped 2026-11-06, after the measurement the row required:** on 131,253 benign
+      files (`/usr/share/doc`, `/usr/share/man`, `/usr/lib/python3*`, `/usr/bin`,
+      `/etc`) the depth distribution was 0: 106,656, 1: 24,557, 2: 40, 3+: 0. The
+      `peel.deep-chain` class fires at depth 4 (one layer of margin), scores the depth
+      component that already existed (30 at depth 4, crossing alone at 6) beside a
+      payload class, never instead of it, and fired on 0 benign files.
 - [ ] **Provenance reconciliation (console).** An embedded encoded executable
       inside an official package (installer, security tool) is expected; the
       console's provenance DB (Phase 7 #5) attenuates those so the engine's

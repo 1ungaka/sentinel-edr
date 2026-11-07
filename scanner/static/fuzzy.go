@@ -13,6 +13,8 @@ import (
 
 	"github.com/glaslos/ssdeep"
 	"github.com/glaslos/tlsh"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // FuzzyHashes are the similarity digests computed for a file.
@@ -164,7 +166,7 @@ func NewFuzzyDB() *FuzzyDB { return &FuzzyDB{byImp: map[string]int{}} }
 // LoadFuzzyDB reads a database file. Malformed lines are skipped and recorded
 // as warnings; an unreadable file is an error.
 func LoadFuzzyDB(path string) (*FuzzyDB, error) {
-	f, err := os.Open(path)
+	f, _, err := safefs.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("could not open fuzzy database: %w", err)
 	}

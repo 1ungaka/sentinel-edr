@@ -13,7 +13,7 @@
                                                  ▼
                               fusion lattice: ratios, roles, techniques, tier
                                                  ▼
-                      internal/report: text | JSON 1.11.0 | SARIF 2.1.0 | OCSF 1.3.0 + exit policy
+                      internal/report: text | JSON 1.13.0 | SARIF 2.1.0 | OCSF 1.3.0 + exit policy
                       internal/eval:   corpus runner, metrics, diff, regression gate
 ```
 
@@ -117,7 +117,21 @@ internal/correlate/    joins every layer's signals into incidents and decides
                        what a confirmed one permits (the response policy)
 internal/ingest/       telemetry from other hosts and sensors, joined on the
                        peer address (cau defend --ingest)
-internal/peeler/       obfuscation-chain peeler (cau peel)
+internal/peeler/       obfuscation-chain peeler (cau peel): bases, rot and Caesar,
+                       decoders run at once, results rejoin in rank order
+internal/persist/      read-only persistence audit (cau persist)
+internal/watch/        inotify on the places attacks land (cau defend)
+internal/trust/        the configuration loader and the integrity guard
+internal/forward/      SIEM delivery: a bounded queue with retries, Wazuh, collectors
+internal/bootscan/     read-only boot-chain scan (cau boot-scan)
+internal/hwanchor/     read-only hardware identity (cau hwid)
+internal/honesty/      the honesty index (cau honesty)
+internal/intake/, intel/   threat-intel parsers and the abuse feed
+internal/updater/, release/, selftest/   signed updates, releases and baselines
+internal/quarantine/, canary/   the vault and decoy files
+internal/safefs/       reads of paths an attacker can reach: opens first, asks the
+                       descriptor, cannot block on a FIFO, never returns a prefix
+internal/parallel/     goroutines that wait for each other and carry panics back
 internal/harden/       in-process self-protection (memory, privileges, process concealment)
 internal/report/       text / JSON / SARIF / OCSF reporters and the exit-code policy
 internal/coverage/     ATT&CK coverage matrix, expectation gate, Navigator layer
@@ -126,6 +140,9 @@ internal/attack/       ATT&CK technique names and tactics for the ids the conten
 internal/eval/         corpus manifest, runner, metrics, diff, regression policy
 internal/eval/scannerbridge/
                        adapts the scanner to the harness (the only place both meet)
+scanner/tradecraft/    behaviour in scripts and payload bytes
+scanner/archive/, chm/, uefi/   containers and firmware
+scripts/regex-audit.py regex sweep for bug shapes, with a baseline (make regex-audit)
 rules/, signatures/    bundled detection content
 corpus/smoke/          committed synthetic corpus
 baselines/             baseline report, gate policy, ATT&CK coverage expectation
@@ -141,11 +158,38 @@ docs/                  these pages
                        environment
 ```
 
+## Reading hostile input
+
+Everything a scan touches was chosen by an attacker, so four rules hold throughout.
+
+- **Open first, then ask.** A stat followed by a read checks one file and reads
+  another. `internal/safefs` opens, asks the descriptor what it opened, cannot block
+  on a FIFO, and fails rather than return a prefix of a file over its limit.
+- **Bounds subtract.** A file-supplied `off+size` can wrap back inside the buffer,
+  and an `int` of a wire value can go negative on 32-bit, so checks are written as
+  `size > n-off` on unsigned values. Parsers run as real 386 binaries too.
+- **A panic stops where it starts.** A recover covers one goroutine, so a decoder's
+  panic is caught at that decoder, its siblings carry on, and the result is marked
+  incomplete. `internal/parallel` carries a worker's panic back to its caller.
+- **Text is untrusted at the terminal.** `report.TermSafe` escapes control and bidi
+  characters in human output, and machine formats keep the exact bytes.
+
+## The obfuscation-chain peeler
+
+A node's decoders run at once through `internal/parallel`, sharing one pool of slots
+across the tree, so `WithParallelism(n)` means exactly n and depth cannot multiply
+it. Slots are borrowed rather than waited for, so a deep chain cannot deadlock on
+its own ancestors. Results rejoin in rank order before anything is charged to the
+budget, so a report does not depend on which decoder finished first. `Peeler.Start`
+runs a peel in the background and streams each layer and chain as it is found, and
+a slow reader cannot slow the peel down.
+
 ## The engine / console boundary
 
-This repository is the engine: detection content, the scanning library, the
-evaluation harness and (planned) an MCP server, under MIT. Fleet state,
-policy, response and the resident sensor are inherently stateful and live in
-a separate, proprietary control plane. The split is by persona, not by
-withholding features: the engine stays genuinely useful standalone. PLAN.md
+This repository is the engine and the agent, under MIT: detection content, the
+scanning library, the evaluation harness, `cau-mcp`, and the resident `cau defend`
+with every on-host response. Fleet inventory and central policy are inherently
+multi-host and live in a separate, proprietary control plane, as
+[pricing](pricing.md) sets out. The split is by persona, not by withholding
+features: the engine stays genuinely useful standalone. PLAN.md
 has the reasoning and the roadmap.

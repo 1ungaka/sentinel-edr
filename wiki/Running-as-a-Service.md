@@ -1,8 +1,30 @@
 # Running as a Service (automated background scanning)
 
-CAU's engine is a one-shot scanner. Run it automatically in the background two
-ways. Either way it is a **scheduled** scanner — real-time, kernel-level file
-monitoring (fanotify/eBPF) is the resident sensor's job, a separate component.
+There are two ways to leave CAU running. **`cau defend` is the resident agent**, and
+the one to use on a host you want defended: it watches files as they land, chains
+every layer into incidents, and responds. `cau scan --interval` is a **scheduled**
+scanner, for when you only want periodic reports.
+
+## The resident agent
+
+```sh
+sudo cau defend                       # watch, correlate, respond
+sudo cau defend --report-only         # the same, changing nothing: start here
+sudo cau defend --siem 10.0.0.5       # stream every incident to a SIEM
+```
+
+Install it with the `cau-defend.service` unit. A confirmed incident has its process
+frozen, its file moved to the vault, and the kernel and firewall blocks armed where
+the host can do them. What counts as confirmed is live host state, two independent
+layers agreeing, or known-bad content, never one layer's opinion, and every default
+action is reversible. `/etc/cau/cau.conf` holds the settings, and a flag on the
+command line wins over the file. Set `report-only = true` there to watch a host first.
+`sudo make install-logrotate` installs the rotation policy for its log, which both
+packages include.
+
+Every layer runs as its own goroutine, so a slow part delays only itself: a small
+script dropped on the host is confirmed in about 34 ms on an idle machine. A task that
+panics is retried at once and raised, rather than taking the agent down.
 
 ## Built-in daemon
 
@@ -25,7 +47,9 @@ target:
   `Type=notify` systemd unit with `WatchdogSec=`, the daemon pings a watchdog on
   its own cadence (independent of the scan interval); if the process hangs,
   deadlocks, is OOM-killed, or crashes, the pings stop and systemd restarts it.
-  A crash-loop is capped by `StartLimitBurst`. Run by hand or in a plain
+  A crash-loop is capped by `StartLimitBurst` in `cau-daemon.service`;
+  `cau-defend.service` never gives up, so no fault leaves the host without its
+  EDR. Run by hand or in a plain
   container (no `NOTIFY_SOCKET`), these are silent no-ops and cycle-level
   recovery still applies — add `restart: always` at your orchestrator for the
   process level.
@@ -61,6 +85,11 @@ apply a locked-down sandbox (`ProtectProc=invisible`, read-only system, a
 `@system-service` syscall filter) — see [Anti-Tamper](Anti-Tamper). For an
 always-on process with crash/hang auto-recovery instead of a timer, use
 `cau-daemon.service` (`Type=notify`, `WatchdogSec`, `Restart=always`).
+
+A host that must never act should carry `--report-only` on the `ExecStart` line of
+`cau-defend.service` rather than relying on `report-only = true` in
+`/etc/cau/cau.conf` alone: a cau.conf that is missing, refused or unparseable
+leaves the agent on its built-in defaults, and those act.
 
 ## Windows / macOS
 

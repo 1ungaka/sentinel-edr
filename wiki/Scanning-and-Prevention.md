@@ -9,7 +9,12 @@ cau scan ./app.deb ./pkg.rpm ./image.tar                            # Linux pack
 cau scan ./dist --format sarif --output cau.sarif --fail-on none   # code scanning
 cau scan ./build --format json  --fail-on heuristic                 # fail CI on suspicion
 cau scan ./dist --format ocsf   --output findings.json              # OCSF for a lake
+cau peel --stream --jobs 8 ./samples/*                              # peel many files, live
 ```
+
+A directory you name is scanned even when it is a symbolic link, so `cau scan /bin`
+works on a merged-`/usr` host. Links found during the walk are not followed, unless
+`--follow-symlinks` is given for links to files.
 
 A single file is read once and offered to every detector: hash, YARA, string/API
 heuristics, the PE/ELF/Mach-O static structural pass, invisible codepoints,
@@ -25,6 +30,11 @@ are **SUSPICIOUS** and never promoted. The fusion lattice reports sub-threshold
 detectors that corroborate each other, with attack-path chaining for recognised
 combinations. Exit codes: `0` clean, `1` findings at/above `--fail-on`, `2` some
 files unscannable, `3` the run failed, `4` usage.
+
+The obfuscation-chain peeler reads every common base (2 to 92), every rot and Caesar
+shift, atbash, reversal, UTF-16 and compression, in any order and in parallel, and
+lifts encoded blobs out of scripts. A script with three payloads is three chains. Its
+chain signature, such as `base64>rot13>flate`, says how a payload was hidden.
 
 Each detector can be disabled (`--no-yara`, `--no-static`, `--no-peel`,
 `--no-pkg`, `--no-archive`, …) and has a `--*-threshold`. An abuse-intel feed

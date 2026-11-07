@@ -10,7 +10,7 @@ Record a baseline on a known-good install, then verify it (e.g. from a timer, or
 as the `ExecStartPre` the shipped systemd units already use):
 
 ```sh
-cau selftest --record                      # baseline: signatures, rules, fuzzy DB
+cau selftest --record                      # baseline: signatures, rules, fuzzy DB, feed, config, binary
 cau selftest                               # verify; drift → exit 1, names the resource
 ```
 
@@ -23,6 +23,15 @@ forge the signature:
 cau selftest --record --sign-key priv.hex
 cau selftest --pubkey pub.hex              # fail-closed on a bad/missing signature
 ```
+
+`cau selftest --record` also pins the SIEM address and its CA bundle in the baseline,
+so editing `cau.conf` can no longer redirect or silence the incident stream.
+`cau defend` checks everything it reads twice: how the file sits on disk, and against
+the signed baseline. The feed is checked on every reload, a resource that fails is
+refused while the last trustworthy value stays live, and drift raises a confirmed
+incident. A failed check never stops the agent, because that would be a one-file off
+switch. A signing key left on the host is reported, since it reduces a signed baseline
+to an unsigned one.
 
 ## The binary itself — `cau verify-self`
 
@@ -68,22 +77,36 @@ daemon protects itself and recovers from attempts to crash it:
   barrier.)
 - **Hang/death auto-recovery.** Under a `Type=notify` systemd unit with
   `WatchdogSec=`, the daemon pings a watchdog on its own cadence; a hang,
-  deadlock, OOM kill, or hard crash stops the pings and systemd restarts it,
-  with `StartLimitBurst` capping a crash-loop.
+  deadlock, OOM kill, or hard crash stops the pings and systemd restarts it.
+  `StartLimitBurst` caps a crash-loop in `cau-daemon.service`;
+  `cau-defend.service` never gives up, because a unit left failed is a host with
+  no EDR until someone notices.
+- **No file can stop `cau defend`.** A corrupted or planted key, baseline,
+  `cau.conf`, signature database or rule file used to be a one-file off switch.
+  The daemon now runs without what it lost and raises a top-score
+  `defend.tamper.*` incident, and only a mistake on its command line stops it. A
+  key or baseline it cannot check vouches for nothing and is never reported as
+  verified, and both are retried on every selftest cycle, so a repair needs no
+  restart. The cost of staying up is listed in
+  [limitations](https://github.com/s-b-repo/cau/blob/main/docs/limitations.md).
 
 The shipped systemd units add the sandbox around all of this: an unprivileged
 user holding only `CAP_DAC_READ_SEARCH` (not root), `ProtectProc=invisible` (no
 other user can even see or inspect the process), a read-only system view, a
 `@system-service` syscall filter, private `/tmp` and devices, and `cau selftest`
-as `ExecStartPre` to refuse a start on tampered detection content. See
-[Running as a Service](Running-as-a-Service).
+as `ExecStartPre` to report tampered detection content before the service starts.
+The leading `-` on that line is deliberate: tampering is reported, and never stops
+the defence. See [Running as a Service](Running-as-a-Service).
 
 ## The vault and updates fail closed
 
 - The quarantine vault is sealed with the SHA-256 of both the original and the
   stored bytes; `cau quarantine verify` exits 1 on any tampering, and restore
   refuses to write wrong bytes back to the live path.
-- `cau update` installs nothing whose Ed25519 signature does not verify.
+- `cau update` installs nothing whose Ed25519 signature does not verify, and refuses a
+  bundle older than the one installed.
+- Index updates hold a file lock, because the daemon and the CLI share the vault, and
+  an entry is the only key to its blob.
 - Both write atomically and `fsync` before rename, so a crash cannot leave a
   half-written index or database that would silently pass or fail later checks.
 

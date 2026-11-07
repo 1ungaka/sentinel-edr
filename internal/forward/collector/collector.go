@@ -26,6 +26,11 @@
 //	gelf                one POST per message (the GELF HTTP input)
 //	anything else       the events as newline-delimited lines
 //
+// Sender (sender.go) is the same delivery for a long-running caller: it takes
+// OCSF Detection Finding maps, renders them with the report package and has
+// the method set of forward.Sender, so the defend daemon's queue can forward
+// correlated incidents through this client.
+//
 // Like the Wazuh forwarder this is in the free surface: one host talking to
 // its own collector is a single-host action. And like it, nothing here ever
 // fails a scan: a collector outage must not break a CI gate, so the caller
@@ -90,6 +95,10 @@ type Client struct {
 	tlsCfg  *tls.Config
 	timeout time.Duration
 	http    *http.Client
+
+	// afterEvent is a test seam: when set it runs after each event is written
+	// to a stream, with the number written so far. Production leaves it nil.
+	afterEvent func(sent int)
 }
 
 // Result reports what Send did. Attempted counts the events handed in and
@@ -118,6 +127,11 @@ func New(opts Options) (*Client, error) {
 	}
 	format := strings.ToLower(strings.TrimSpace(opts.Format))
 	opts.Format = format
+	if format == "stix" {
+		// A STIX bundle is a document a TAXII server publishes, not an event a
+		// log collector ingests; none of the transports here is TAXII.
+		return nil, errors.New("collector: stix is a bundle for a TAXII server, which this forwarder does not speak; write it with --format stix --output FILE and publish the file")
+	}
 	c := &Client{opts: opts, url: u, timeout: opts.Timeout}
 	if c.timeout <= 0 {
 		c.timeout = DefaultTimeout
@@ -271,6 +285,7 @@ func (c *Client) sendUDP(ctx context.Context, events [][]byte) (int, error) {
 		return 0, fmt.Errorf("collector: dial %s: %w", c.url.Host, err)
 	}
 	defer conn.Close()
+	defer interruptOnCancel(ctx, conn)()
 	sent := 0
 	var firstErr error
 	for _, ev := range events {
@@ -280,13 +295,38 @@ func (c *Client) sendUDP(ctx context.Context, events [][]byte) (int, error) {
 			}
 			continue
 		}
-		_ = conn.SetWriteDeadline(c.deadline(ctx))
-		if _, err := conn.Write(ev); err != nil {
-			return sent, fmt.Errorf("collector: send to %s: %w", c.url.Host, err)
+		if err := c.write(ctx, conn, ev); err != nil {
+			return sent, err
 		}
 		sent++
 	}
 	return sent, firstErr
+}
+
+// interruptOnCancel makes a cancelled context end a write that is already
+// blocked: a deadline alone covers a context that expires, not one that is
+// cancelled, and a daemon shutting down cancels. The returned func releases
+// the watcher.
+func interruptOnCancel(ctx context.Context, conn net.Conn) func() {
+	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Unix(1, 0)) })
+	return func() { stop() }
+}
+
+// write sends one event under the client's deadline and the context. The
+// context is checked after the deadline is set, so a cancellation that lands
+// between the two cannot be overwritten by a deadline in the future.
+func (c *Client) write(ctx context.Context, conn net.Conn, b []byte) error {
+	_ = conn.SetWriteDeadline(c.deadline(ctx))
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("collector: send to %s: %w", c.url.Host, err)
+	}
+	if _, err := conn.Write(b); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			err = cerr // the write was interrupted, not refused
+		}
+		return fmt.Errorf("collector: send to %s: %w", c.url.Host, err)
+	}
+	return nil
 }
 
 // frame applies the stream framing for the client's format.
@@ -320,13 +360,16 @@ func (c *Client) sendStream(ctx context.Context, events [][]byte) (int, error) {
 		return 0, fmt.Errorf("collector: dial %s: %w", c.url.Host, err)
 	}
 	defer conn.Close()
+	defer interruptOnCancel(ctx, conn)()
 	sent := 0
 	for _, ev := range events {
-		_ = conn.SetWriteDeadline(c.deadline(ctx))
-		if _, err := conn.Write(c.frame(ev)); err != nil {
-			return sent, fmt.Errorf("collector: send to %s: %w", c.url.Host, err)
+		if err := c.write(ctx, conn, c.frame(ev)); err != nil {
+			return sent, err
 		}
 		sent++
+		if c.afterEvent != nil {
+			c.afterEvent(sent)
+		}
 	}
 	return sent, nil
 }
@@ -347,26 +390,11 @@ func (c *Client) sendHTTP(ctx context.Context, events [][]byte, count int) (int,
 		}
 		return len(events), nil
 	case c.opts.BulkIndex != "":
-		action, err := json.Marshal(map[string]any{"create": map[string]any{"_index": c.opts.BulkIndex}})
-		if err != nil {
-			return 0, fmt.Errorf("collector: encode bulk action: %w", err)
+		out := c.sendBulk(ctx, events)
+		if out.err == nil && out.rejected > 0 {
+			out.err = fmt.Errorf("collector: bulk request accepted but %d of %d documents were rejected (%s)", out.rejected, len(events), out.detail)
 		}
-		done := 0
-		for start := 0; start < len(events); start += MaxBulkDocs {
-			end := min(start+MaxBulkDocs, len(events))
-			var body bytes.Buffer
-			for _, ev := range events[start:end] {
-				body.Write(action)
-				body.WriteByte('\n')
-				body.Write(ev)
-				body.WriteByte('\n')
-			}
-			if err := c.postBulk(ctx, body.Bytes()); err != nil {
-				return done, err
-			}
-			done = end
-		}
-		return done, nil
+		return out.accepted, out.err
 	default:
 		ctype := "text/plain; charset=utf-8"
 		if c.opts.Format == "ecs" || c.opts.Format == "syslog-ecs" {
@@ -407,20 +435,113 @@ func (c *Client) post(ctx context.Context, ctype string, body []byte) error {
 	return err
 }
 
-// postBulk posts a _bulk body and reads the response: the bulk API answers
-// 200 even when individual documents were rejected, with "errors": true.
-func (c *Client) postBulk(ctx context.Context, body []byte) error {
-	resp, err := c.do(ctx, "application/x-ndjson", body)
+// bulkOutcome is what the _bulk API said about a run of documents.
+type bulkOutcome struct {
+	// settled is the number of leading documents that must not be sent again:
+	// each was indexed, or refused in a way a resend cannot change.
+	settled int
+	// accepted is the number indexed (wherever they sit in the run).
+	accepted int
+	// rejected is the number, among the settled ones, refused for good: a 4xx
+	// other than 429, typically a mapping conflict.
+	rejected int
+	// detail is the collector's words about the first refusal.
+	detail string
+	// err is set when the documents from settled onward are worth resending.
+	err error
+}
+
+// sendBulk posts the documents as _bulk requests and reads each response per
+// document: the bulk API answers 200 even when it refused some of them, with
+// "errors": true and a status per item.
+//
+// The distinction matters to a caller that retries. A document the index
+// refused (400, a mapping conflict) will be refused again, and resending its
+// request would index every accepted neighbour a second time, on every retry.
+// A 429 or 5xx item is the collector asking for a retry. So refused documents
+// are counted and passed over, and the run stops at the first item that wants
+// a retry. Documents accepted after that item are indexed again when the
+// caller resends from it: the bulk API has no way to resend one item of a
+// request, and these documents carry no _id to deduplicate on.
+func (c *Client) sendBulk(ctx context.Context, events [][]byte) bulkOutcome {
+	var out bulkOutcome
+	action, err := json.Marshal(map[string]any{"create": map[string]any{"_index": c.opts.BulkIndex}})
 	if err != nil {
-		return err
+		out.err = fmt.Errorf("collector: encode bulk action: %w", err)
+		return out
 	}
-	var out struct {
-		Errors bool `json:"errors"`
+	for start := 0; start < len(events); start += MaxBulkDocs {
+		end := min(start+MaxBulkDocs, len(events))
+		var body bytes.Buffer
+		for _, ev := range events[start:end] {
+			body.Write(action)
+			body.WriteByte('\n')
+			body.Write(ev)
+			body.WriteByte('\n')
+		}
+		resp, err := c.do(ctx, "application/x-ndjson", body.Bytes())
+		if err != nil {
+			out.err = err
+			return out
+		}
+		var reply struct {
+			Errors bool `json:"errors"`
+			Items  []map[string]struct {
+				Status int             `json:"status"`
+				Error  json.RawMessage `json:"error"`
+			} `json:"items"`
+		}
+		if json.Unmarshal(resp, &reply) != nil || !reply.Errors {
+			// Everything was taken (or the endpoint answers 2xx in a dialect
+			// that reports no per-item errors).
+			out.accepted += end - start
+			out.settled = end
+			continue
+		}
+		statuses := make([]int, 0, end-start)
+		details := make([]json.RawMessage, 0, end-start)
+		for _, item := range reply.Items {
+			for _, result := range item { // one key: the action name
+				statuses, details = append(statuses, result.Status), append(details, result.Error)
+			}
+		}
+		readable := len(reply.Items) == end-start && len(statuses) == end-start
+		for _, st := range statuses {
+			readable = readable && st >= 100
+		}
+		if !readable {
+			// errors:true without a status per document: which ones failed is
+			// unknown, so the request as a whole is reported as not delivered.
+			out.err = fmt.Errorf("collector: bulk request accepted but some documents were rejected (%s)", snippet(resp))
+			return out
+		}
+		retryAt := -1
+		for i, st := range statuses {
+			switch {
+			case st/100 == 2:
+				out.accepted++
+			case st == http.StatusTooManyRequests || st >= 500:
+				if retryAt < 0 {
+					retryAt = i
+				}
+			default:
+				if retryAt < 0 {
+					out.rejected++
+					if out.detail == "" {
+						out.detail = fmt.Sprintf("status %d: %s", st, snippet(details[i]))
+					}
+				}
+			}
+		}
+		if retryAt >= 0 {
+			out.settled = start + retryAt
+			out.err = fmt.Errorf("collector: bulk: the collector asked for a retry of document %d of %d (status %d: %s)",
+				start+retryAt+1, len(events), statuses[retryAt], snippet(details[retryAt]))
+			return out
+		}
+		out.settled = end
 	}
-	if json.Unmarshal(resp, &out) == nil && out.Errors {
-		return fmt.Errorf("collector: bulk request accepted but some documents were rejected (%s)", snippet(resp))
-	}
-	return nil
+	return out
 }
 
 // scrub removes a credential from an error string, in case a transport error

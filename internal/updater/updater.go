@@ -2,7 +2,9 @@
 //
 // The engine never phones home on its own: an update is always an explicit
 // command (or an opt-in periodic job the operator configures). This package is
-// the verify-and-apply core. Trust is anchored in a pinned Ed25519 public key;
+// the verify-and-apply core. Trust is anchored in a pinned public key, either
+// Ed25519-only or hybrid (Ed25519 + ML-DSA-65; see package release for the
+// key and signature forms and for the rule that a hybrid key requires both);
 // a bundle whose detached signature does not verify against that key, or whose
 // payload digest does not match the signed manifest, or whose declared
 // min-engine-version is newer than the running engine, is rejected and nothing
@@ -15,9 +17,11 @@
 //
 //	hashes.txt         the signature database payload
 //	manifest.json      {schema, db_version, min_engine_version, sha256, created}
-//	manifest.json.sig  a detached Ed25519 signature over manifest.json's bytes
+//	manifest.json.sig  a detached signature over manifest.json's bytes: Ed25519
+//	                   (hex or raw), or the hybrid cau-hybrid-v1 form carrying
+//	                   an Ed25519 and an ML-DSA-65 signature over those bytes
 //
-// One signature over the manifest covers everything, because the manifest
+// One signature file over the manifest covers everything, because the manifest
 // carries the SHA-256 of hashes.txt: verify the manifest, then verify the
 // payload against the manifest's digest.
 package updater
@@ -35,6 +39,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/s-b-repo/cau/internal/release"
 	"github.com/s-b-repo/cau/internal/safefs"
 )
 
@@ -88,6 +93,11 @@ type Verified struct {
 // Verify checks a bundle fail-closed against pubKey and the running
 // engineVersion. It returns the verified payload, or an error and no payload.
 // It touches no files.
+//
+// This is the original Ed25519-only check, kept as it was: b.Signature must be
+// the 64 raw signature bytes (what LoadBundleDir and NormalizeSignature leave
+// for an Ed25519 signature file), and a hybrid signature is refused.
+// VerifyWithKey is the general form: either kind of key, either signature form.
 func Verify(b Bundle, pubKey ed25519.PublicKey, engineVersion string) (Verified, error) {
 	if len(pubKey) != ed25519.PublicKeySize {
 		return Verified{}, ErrNoKey
@@ -95,6 +105,43 @@ func Verify(b Bundle, pubKey ed25519.PublicKey, engineVersion string) (Verified,
 	if !ed25519.Verify(pubKey, b.Manifest, b.Signature) {
 		return Verified{}, ErrBadSignature
 	}
+	return checkManifest(b, engineVersion)
+}
+
+// VerifyWithKey is Verify for a trusted key that may be hybrid. The signature
+// rules are release.VerifyDetached's, with the update-manifest domain: an
+// Ed25519-only key needs a valid Ed25519 signature (and accepts a hybrid
+// signature on its Ed25519 half, reporting the ML-DSA half as present and
+// unchecked); a hybrid key needs a valid Ed25519 signature AND a valid
+// ML-DSA-65 signature, and refuses a bundle whose signature is Ed25519-only.
+// b.Signature may be the raw Ed25519 bytes, hex, or the hybrid text form.
+//
+// Everything after the signature is the same as Verify: schema, payload
+// digest, minimum engine version. The rollback check is Apply's and
+// CheckRollback's, unchanged, and is applied to what this returns exactly as
+// it is to what Verify returns. It touches no files.
+func VerifyWithKey(b Bundle, key release.VerifyKey, engineVersion string) (Verified, release.Checked, error) {
+	checked, err := release.VerifyDetached(b.Manifest, b.Signature, key, release.DomainUpdateManifest)
+	if err != nil {
+		if errors.Is(err, release.ErrNoKey) {
+			return Verified{}, release.Checked{}, ErrNoKey
+		}
+		var ve *release.VerifyError
+		if errors.As(err, &ve) {
+			return Verified{}, release.Checked{}, fmt.Errorf("%w: %s", ErrBadSignature, ve.Reason)
+		}
+		return Verified{}, release.Checked{}, fmt.Errorf("%w: %v", ErrBadSignature, err)
+	}
+	v, err := checkManifest(b, engineVersion)
+	if err != nil {
+		return Verified{}, release.Checked{}, err
+	}
+	return v, checked, nil
+}
+
+// checkManifest is everything Verify checks once the signature over b.Manifest
+// has been verified. It is only called after that.
+func checkManifest(b Bundle, engineVersion string) (Verified, error) {
 	var m Manifest
 	if err := json.Unmarshal(b.Manifest, &m); err != nil {
 		return Verified{}, fmt.Errorf("%w: %w", ErrBadManifest, err)
@@ -201,7 +248,8 @@ func LoadBundleDir(dir string) (Bundle, error) {
 }
 
 // ParsePublicKey reads an Ed25519 public key from hex (with surrounding
-// whitespace tolerated), the on-disk form the release documents.
+// whitespace tolerated), the on-disk form the release documents. It reads the
+// Ed25519-only form; release.ParseVerifyKey reads that and the hybrid form.
 func ParsePublicKey(data []byte) (ed25519.PublicKey, error) {
 	raw, err := hex.DecodeString(strings.TrimSpace(string(data)))
 	if err != nil {
@@ -215,7 +263,9 @@ func ParsePublicKey(data []byte) (ed25519.PublicKey, error) {
 
 // NormalizeSignature accepts a detached signature as raw bytes or as hex text
 // and returns the raw signature bytes. The CLI uses it when assembling a bundle
-// from separately fetched files.
+// from separately fetched files. Anything that is not a 64-byte Ed25519
+// signature in one of those two forms, a hybrid signature included, is
+// returned unchanged for VerifyWithKey to parse (or for Verify to refuse).
 func NormalizeSignature(data []byte) []byte { return decodeSig(data) }
 
 // decodeSig accepts a signature as raw bytes or as hex text, so the release can

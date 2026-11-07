@@ -61,11 +61,19 @@ func peelUsage(w io.Writer) {
 Walks the obfuscation-chain tree of each file (NOVEL-012). At each node every
 reversible layer that applies decodes at once, and each result opens a branch:
 the base encodings (2, 8, 10, 16, 32, 36, 45, 58, 62, 64, 85, 91, 92), every
-rot and Caesar shift, atbash, reversal, UTF-16, gzip, zlib, flate and bzip2, and
-blobs carved out of a surrounding script. Layers chain in any order, under a
-single global per-sample budget wall. Chain *depth* is itself a signal, and a
-branch that hits the wall is reported as 'peel-exhausted', a first-class outcome,
-never a silent clean. The peeler only decodes; it never executes sample content.
+rot and Caesar shift, atbash, reversal, UTF-16, gzip, zlib, flate and bzip2, the
+members of a zip, and blobs carved out of a surrounding script. Layers chain in
+any order, under a single global per-sample budget wall. Chain *depth* is itself
+a signal: four or more layers are reported as 'deep-chain' whatever is under
+them. A branch that hits the wall is reported as 'peel-exhausted', a first-class
+outcome, never a silent clean. The peeler only decodes; it never executes sample
+content.
+
+A zip the file is, or one nested straight inside it, is packaging and adds no
+depth: each member is peeled as the file it is. A zip found under another layer
+counts as one. Members with no sign of a layer are screened out without being
+walked, encrypted members are skipped, and both are counted in the output. xz is
+recognised and not decoded: a path that ends in it is listed as opaque.
 
 Flags:
   --format <fmt>     text or json (default text)
@@ -80,8 +88,8 @@ Flags:
 With --stream --format json the output is JSON lines: one object per event, then
 one per file with kind "result".
 
-Exit codes: 0 clean, 1 any file revealed a payload or was exhausted, 3 the run
-failed, 4 usage.
+Exit codes: 0 clean, 1 any file revealed a payload, was exhausted or is a deep
+chain, 3 the run failed, 4 usage.
 `)
 }
 
@@ -163,6 +171,25 @@ func writePeelText(w io.Writer, f peeledFile) {
 	fmt.Fprintf(w, "Decoded     : %d bytes\n", r.OutputBytes)
 	if r.Exhausted {
 		fmt.Fprintf(w, "Exhausted   : %s\n", report.TermSafe(r.ExhaustReason))
+	}
+	if r.DeepestSignature != "" {
+		fmt.Fprintf(w, "Deepest     : %s\n", report.TermSafe(r.DeepestSignature))
+	}
+	if a := r.Archive; a != nil {
+		fmt.Fprintf(w, "Archive     : %d zip, %d members: %d peeled, %d screened out", a.Archives, a.Members, a.Peeled, a.Screened)
+		if a.Encrypted > 0 {
+			fmt.Fprintf(w, ", %d encrypted (skipped)", a.Encrypted)
+		}
+		if a.Unsupported > 0 {
+			fmt.Fprintf(w, ", %d in a method not decoded (skipped)", a.Unsupported)
+		}
+		if a.Damaged > 0 {
+			fmt.Fprintf(w, ", %d damaged", a.Damaged)
+		}
+		fmt.Fprintln(w)
+	}
+	for _, o := range r.Opaque {
+		fmt.Fprintf(w, "Opaque      : %s (recognised, not decoded)\n", report.TermSafe(o))
 	}
 	for _, c := range r.Chains {
 		fmt.Fprintf(w, "Chain       : %s  -> %s (depth %d)\n", c.Signature(), c.Terminal, c.Depth)

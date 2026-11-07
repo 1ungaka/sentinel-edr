@@ -44,6 +44,54 @@ func (c *catcher) raise() {
 	}
 }
 
+// spare holds the helpers every Share in the process may add between them. A For
+// inside a For multiplies, and past the number of CPUs extra goroutines only take
+// turns: they add scheduling and stack memory and finish nothing sooner.
+var spare = make(chan struct{}, max(runtime.GOMAXPROCS(0)-1, 1))
+
+// Share is For for CPU-bound work inside something that may already be parallel. It
+// calls fn with every index in [0, n) and returns when all calls have finished. The
+// caller always works, so this needs nothing from anyone to finish, and it borrows
+// only the helpers that are free right now: on a busy machine it degrades to a plain
+// loop, and on an idle one it uses every CPU. Use For for work that blocks or must
+// overlap, which Share can't promise.
+func Share(n int, fn func(i int)) {
+	if n <= 0 {
+		return
+	}
+	var c catcher
+	var next atomic.Int64
+	work := func() {
+		for {
+			i := int(next.Add(1)) - 1
+			if i >= n {
+				return
+			}
+			c.guard(func() { fn(i) })
+		}
+	}
+	var wg sync.WaitGroup
+borrow:
+	for range n - 1 {
+		select {
+		case spare <- struct{}{}:
+			wg.Add(1)
+			go func() {
+				defer func() {
+					<-spare
+					wg.Done()
+				}()
+				work()
+			}()
+		default:
+			break borrow
+		}
+	}
+	work()
+	wg.Wait()
+	c.raise()
+}
+
 // Do runs every task at once and returns when all of them have finished.
 func Do(tasks ...func()) {
 	var c catcher
@@ -60,12 +108,13 @@ func Do(tasks ...func()) {
 }
 
 // For calls fn with every index in [0, n), on at most workers goroutines, and
-// returns when all calls have finished. workers <= 0 means one per CPU. fn owns
+// returns when all calls have finished. workers <= 0 means one per CPU this process
+// may use, which unlike runtime.NumCPU respects a CPU quota. fn owns
 // its index, so writing to slot i of a preallocated slice needs no lock and keeps
 // the input's order.
 func For(n, workers int, fn func(i int)) {
 	if workers <= 0 {
-		workers = runtime.NumCPU()
+		workers = runtime.GOMAXPROCS(0)
 	}
 	workers = min(workers, n)
 	if workers <= 0 {

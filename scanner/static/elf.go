@@ -304,10 +304,15 @@ type ELF struct {
 	// SyscallStubs counts raw system-call instructions in executable sections
 	// (x86-64 syscall, i386 int 0x80 / sysenter, aarch64 svc #0). It is the
 	// tell for a loader or interposer that reaches the kernel without libc.
-	SyscallStubs int  `json:"syscall_stubs,omitempty"`
-	TextRel      bool `json:"textrel,omitempty"`
-	BindNow      bool `json:"bind_now,omitempty"`
-	IsPIE        bool `json:"pie"`
+	SyscallStubs int `json:"syscall_stubs,omitempty"`
+	// Content is what the content pass read from the loadable image: the
+	// persistence markers it carries and the sensitive system calls its code
+	// enters the kernel for directly. nil when neither was looked for (a
+	// relocatable object, an image with no loadable data).
+	Content *ELFContent `json:"content,omitempty"`
+	TextRel bool        `json:"textrel,omitempty"`
+	BindNow bool        `json:"bind_now,omitempty"`
+	IsPIE   bool        `json:"pie"`
 	// Static is true for an image that needs no dynamic loader: no PT_INTERP
 	// and no PT_DYNAMIC.
 	Static          bool `json:"static"`
@@ -353,6 +358,11 @@ type ELF struct {
 	// telf accumulates telfhash-eligible symbol names (lower-cased) as the
 	// symbol tables are walked.
 	telf []string
+
+	// syscallNrs counts, per system-call number, the kernel-entry
+	// instructions whose number was decoded from the instruction before it.
+	// Allocated on the first decoded stub; most images have none.
+	syscallNrs *[maxSyscallNr]uint16
 }
 
 func (e *ELF) warn(format string, a ...interface{}) {
@@ -439,6 +449,8 @@ func ParseELF(data []byte) (*ELF, error) {
 	e.resolveInitArray(data)
 	e.parseVersions(data)
 	e.scanSyscalls(data)
+	e.scanContent(data)
+	e.resolveSyscalls()
 	return e, nil
 }
 

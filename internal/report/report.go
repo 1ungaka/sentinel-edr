@@ -42,6 +42,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/s-b-repo/cau/internal/peeler"
+	"github.com/s-b-repo/cau/internal/provenance"
 	"github.com/s-b-repo/cau/scanner"
 	"github.com/s-b-repo/cau/scanner/archive"
 	"github.com/s-b-repo/cau/scanner/chm"
@@ -137,6 +138,47 @@ type Input struct {
 	// "internal error" case for the exit policy and is surfaced verbatim in
 	// both output formats; a per-file error does not belong here.
 	RunError error
+	// Provenance is the package-manager provenance of the scanned files, keyed
+	// by ScanResult.FilePath (the same spelling the engine recorded). nil when
+	// the run did not resolve provenance (the default); a file absent from a
+	// non-nil map has no provenance object. Like Heuristics it is a parallel
+	// stream, because ScanResult belongs to the scanner and provenance is
+	// resolved after the scan from the digests the engine already computed.
+	// Provenance never changes a verdict: it is context on every row and, for
+	// a modified package-owned executable, an observation beside the verdict.
+	Provenance map[string]provenance.Provenance
+}
+
+// ProvenanceFor returns the provenance recorded for a scanned path.
+func (in Input) ProvenanceFor(path string) (provenance.Provenance, bool) {
+	p, ok := in.Provenance[path]
+	return p, ok
+}
+
+// ProvenanceResolvedCount is the number of scan results with a provenance
+// entry: zero when the run did not resolve provenance.
+func (in Input) ProvenanceResolvedCount() int {
+	n := 0
+	for _, r := range in.Results {
+		if _, ok := in.Provenance[r.FilePath]; ok {
+			n++
+		}
+	}
+	return n
+}
+
+// ProvenanceModifiedBinaries returns the scan results carrying the
+// modified-system-binary observation: package-owned executables or libraries
+// whose content no longer matches the package database. They are observations,
+// not detections, and do not move the verdict or the exit code.
+func (in Input) ProvenanceModifiedBinaries() []scanner.ScanResult {
+	var out []scanner.ScanResult
+	for _, r := range in.Results {
+		if p, ok := in.Provenance[r.FilePath]; ok && p.Finding != nil {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // Empty reports whether the run scanned nothing. A run that produced no

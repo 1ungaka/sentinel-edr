@@ -18,6 +18,7 @@ const (
 	techIngress       = "T1105"     // Ingress Tool Transfer
 	techObfuscation   = "T1027"     // Obfuscated Files or Information
 	techExploit       = "T1203"     // Exploitation for Client Execution
+	techStomping      = "T1564.007" // Hide Artifacts: VBA Stomping
 )
 
 // ── finding weights ────────────────────────────────────────────────────────────
@@ -43,6 +44,26 @@ const (
 	weightLateBind   = 3 // late-binding object creation (CreateObject/GetObject)
 	weightObfusc     = 3 // base64 / string-reversal / Chr()-heavy obfuscation
 	weightEmbedded   = 3 // an Equation Editor / embedded-object lure stream
+)
+
+// VBA-stomping weights (stomp.go). These are deliberately conservative: the
+// p-code bounds they depend on were measured on six VBA projects only (see
+// stompMinPCodeBlank), so no stomping class reaches the threshold on structure
+// alone; it takes the structural anomaly AND p-code strings that the source
+// does not account for.
+//
+//	p-code, no source at TextOffset                 = project 2 + missing 5              = 7   (below)
+//	... and the p-code strings name Shell / AutoOpen = project 2 + missing 5 + mismatch 2 = 9   (detected)
+//	p-code, Attribute-only source, same strings     = project 2 + blank 4 + mismatch 2   = 8   (detected)
+//	p-code, Attribute-only source, nothing else     = project 2 + blank 4                = 6   (below)
+//	source swapped for harmless text, strings differ = project 2 + mismatch 2             = 4   (below)
+//
+// The last line is the honest limit of a string-run comparison: on its own it
+// is an observation for an analyst, not a verdict.
+const (
+	weightStompMissing  = 5 // p-code present, no source container at TextOffset
+	weightStompBlank    = 4 // p-code present, source is Attribute lines only
+	weightStompMismatch = 2 // p-code string runs name what the source does not
 )
 
 // DefaultThreshold is the shipped score at which a document is reported
@@ -97,6 +118,10 @@ type Parsed struct {
 	Modules     int      `json:"modules,omitempty"`
 	StreamNames []string `json:"stream_names,omitempty"`
 	Warning     string   `json:"warning,omitempty"`
+	// VBAProjects is the dir-stream view of each VBA project (at most
+	// maxVBAProjects, each listing at most maxModulesReported modules): what
+	// the project declares per module and what the module stream holds.
+	VBAProjects []VBAProject `json:"vba_projects,omitempty"`
 }
 
 // Result is the outcome for one file.
@@ -137,6 +162,10 @@ func Analyze(data []byte, opts Options) *Result {
 	f := parseCFB(data)
 
 	findings, hasVBA, modules := detect(f)
+	// The dir-record pass runs after the signature scan and on its own
+	// budgets, so it cannot change what the rules above saw.
+	projects, stomp := analyzeVBAProjects(f)
+	findings = append(findings, stomp...)
 	r.Findings = findings
 	for _, fd := range findings {
 		r.Score += fd.Score
@@ -146,6 +175,7 @@ func Analyze(data []byte, opts Options) *Result {
 		Modules:     modules,
 		StreamNames: streamNames(f),
 		Warning:     f.warning,
+		VBAProjects: projects,
 	}
 	return r
 }

@@ -383,8 +383,12 @@ func (s *Store) appendEntry(e Entry) error {
 	})
 }
 
+// maxIndexBytes bounds the vault index, generously: an entry is a few hundred
+// bytes, so this is over half a million quarantined files.
+const maxIndexBytes = 256 << 20
+
 func (s *Store) readIndex() (*index, error) {
-	data, err := os.ReadFile(s.indexPath())
+	data, err := safefs.ReadFile(s.indexPath(), maxIndexBytes)
 	if err != nil {
 		return nil, fmt.Errorf("quarantine: read index: %w", err)
 	}

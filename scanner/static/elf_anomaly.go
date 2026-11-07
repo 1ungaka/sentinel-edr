@@ -384,6 +384,9 @@ func elfAnomalies(e *ELF) []Anomaly {
 	if !image && e.Type != etRel && e.Type != etCore {
 		add("format.type-unknown", CatFormat, 2, "", "ELF type %s is neither executable, shared object, relocatable nor core", e.TypeName)
 	}
+
+	// ── Content (elf_content.go) ──
+	out = append(out, elfContentAnomalies(e)...)
 	return out
 }
 

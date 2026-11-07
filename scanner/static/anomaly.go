@@ -59,6 +59,8 @@ var categoryCaps = map[string]int{
 	CatInfo:      0,
 	CatDynamic:   4,
 	CatModule:    3,
+	// Every content.* persistence class together stays below the threshold.
+	CatPersist: 6,
 }
 
 // DefaultThreshold is the shipped score at which a file's structure is

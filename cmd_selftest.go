@@ -19,8 +19,15 @@ import (
 const envSelftestKey = "CAU_SELFTEST_PUBKEY"
 
 // pinnedSelftestKey is the baseline-signing key this build trusts, as hex. It
-// is empty in source; a release sets it, exactly as pinnedUpdateKey in
-// cmd_update.go is set for the update channel.
+// is empty in source and set at link time, the same way main.version is:
+//
+//	make build SELFTEST_PUBKEY=$(cat pub.hex)
+//
+// It is a var rather than a const for exactly that reason — `-ldflags -X` can
+// only write to a variable. A release sets it, and so can anyone building from
+// source, which is the point: a self-built binary that pinned nothing would
+// leave the downgrade below open on precisely the installs whose owner cared
+// enough to compile it.
 //
 // It exists to close a downgrade. Without it, "no key configured" and "this
 // manifest is unsigned" are indistinguishable, so an attacker who rewrites the
@@ -35,7 +42,7 @@ const envSelftestKey = "CAU_SELFTEST_PUBKEY"
 // constant with it. That is what `cau verify-self` and the signed update
 // channel are for, and it is why this raises the cost of an attack rather than
 // ending it.
-const pinnedSelftestKey = ""
+var pinnedSelftestKey = ""
 
 // Resource names in the integrity baseline. They are constants because the
 // recorder and the daemon that verifies a single one of them at reload time
@@ -47,7 +54,18 @@ const (
 	selftestResFeed       = "feed"
 	selftestResConfig     = "config"
 	selftestResBinary     = "binary"
+	selftestResSIEMCA     = "siem-ca"
 )
+
+// siemCAPath is the CA bundle the configuration points the forwarder at, or ""
+// when none is configured.
+func siemCAPath(configPath string) string {
+	cfg, err := trust.LoadConfig(configPath)
+	if err != nil {
+		return ""
+	}
+	return cfg.SIEMCA
+}
 
 // existingPath returns the first path that exists, or "" so the resource is
 // skipped rather than recorded as missing.
@@ -86,10 +104,20 @@ func selftestPins(configPath string, stderr io.Writer) map[string]string {
 		fmt.Fprintf(stderr, "[WARN] configuration not pinned: %v\n", err)
 		return nil
 	}
-	if strings.TrimSpace(cfg.SIEM) == "" {
+	pins := map[string]string{}
+	if v := strings.TrimSpace(cfg.SIEM); v != "" {
+		pins[selftest.PinSIEM] = v
+	}
+	// The certificate pin decides who may answer at that address, so leaving it
+	// unsigned would reopen the redirect from the other end: swap the pin on
+	// disk for your own collector's and the address check still passes.
+	if len(cfg.SIEMCertPins) > 0 {
+		pins[selftest.PinSIEMCert] = strings.Join(cfg.SIEMCertPins, ",")
+	}
+	if len(pins) == 0 {
 		return nil
 	}
-	return map[string]string{selftest.PinSIEM: strings.TrimSpace(cfg.SIEM)}
+	return pins
 }
 
 func selftestUsage(w io.Writer) {
@@ -106,8 +134,12 @@ settings pinned into it. Gutting signatures or neutering a rule is the classic
   feed        the threat-intel feed
   config      the agent's configuration file
   binary      the agent binary itself
+  siem-ca     the CA bundle that decides whose certificate is accepted
   pin siem    where incidents are forwarded, signed, so editing the config on
               disk can neither silence the stream nor redirect it elsewhere
+  pin siem-cert  which public key may answer at that address, signed for the
+              same reason: an attacker able to edit it would substitute their
+              own collector's pin
 
 Detection content is the obvious target; it is not the cheapest one. Emptying
 the feed, or repointing the SIEM address at a collector of the attacker's own,
@@ -179,6 +211,11 @@ func cmdSelftest(args []string, stdout, stderr io.Writer) int {
 		{Name: selftestResFeed, Path: resolveFeedPath(*feedFlag)},
 		{Name: selftestResConfig, Path: existingPath(*configFlag, trust.DefaultConfigPath)},
 		{Name: selftestResBinary, Path: selfExePath()},
+		// The CA bundle decides who is allowed to answer at the SIEM address.
+		// Pinning the address without pinning this would leave the other half
+		// of the same redirect open: swap the bundle for one you control and
+		// the stream goes to you with TLS verification still "on".
+		{Name: selftestResSIEMCA, Path: existingPath(siemCAPath(*configFlag))},
 	}
 
 	mpath := *manifestPath
@@ -203,7 +240,7 @@ func selftestRecord(resources []selftest.Resource, mpath, signKeyFile string, pi
 	}
 	m.Pins = pins
 	if signKeyFile != "" {
-		keyData, rerr := os.ReadFile(signKeyFile)
+		keyData, rerr := readPrivateKey(signKeyFile)
 		if rerr != nil {
 			return fail(stderr, report.ExitRunFailed, "reading signing key: %v", rerr)
 		}
@@ -286,7 +323,20 @@ func resolveSelftestPubkey(file string) (selftestKey, error) {
 	var origin string
 	switch {
 	case file != "":
-		b, err := os.ReadFile(file)
+		// readPublicKey, not a stricter local read, so the policy for how a key
+		// path may be read lives in one place rather than here as well.
+		//
+		// This is the read that made the policy matter. `cau defend` resolves
+		// the key at startup, before it signals readiness, and a pipe held open
+		// by a silent writer used to make it wait 120.1s — past systemd's 90s
+		// default TimeoutStartSec, so the unit was killed as a failed start and
+		// restarted into the same wall. Anyone able to write to the directory
+		// holding the public key had a kill switch for the whole agent, needing
+		// no edit to the unit file or the flags. readPublicKey now waits five
+		// seconds, because a public key has nothing to prompt a human for,
+		// while a private key keeps the long wait for `--sign-key <(pass show
+		// cau/key)`. That split belongs with the key reading, not here.
+		b, err := readPublicKey(file)
 		if err != nil {
 			return selftestKey{}, fmt.Errorf("reading the pinned public key %s: %w; refusing to fall back to an unsigned check", file, err)
 		}

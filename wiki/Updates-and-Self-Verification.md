@@ -50,7 +50,12 @@ cau update --url https://github.com/s-b-repo/cau/releases/download/vX.Y.Z \
 cau update --from /media/usb/cau-release --pubkey release-pubkey.hex
 ```
 
-A bad signature, a payload-digest mismatch, or an unmet `min_engine_version`
-leaves the live database untouched; a success swaps it atomically and keeps
-`<db>.bak` for rollback. The engine never fetches on its own — update is always
-an explicit command.
+A bad signature, a payload-digest mismatch, an unmet `min_engine_version`, or a
+bundle older than the one installed leaves the live database untouched; a success
+swaps it atomically, keeps `<db>.bak` for rollback, and records what it installed in
+`<db>.manifest`. A signature proves a bundle was released, not that it is current, so
+that record is what stops a mirror replaying an old one. To back out a bad release on
+purpose, pass `--allow-downgrade`. The first install has nothing to compare against.
+With `--from`, files are size-limited and checked before they are read, because the
+directory can hold whatever was on the media. The engine never fetches on its own —
+update is always an explicit command.

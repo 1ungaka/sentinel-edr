@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/s-b-repo/cau/internal/coverage"
+	"github.com/s-b-repo/cau/internal/frameworks"
 	"github.com/s-b-repo/cau/scanner"
 )
 
@@ -102,8 +103,38 @@ func (s *Server) toolDescs() []toolDesc {
 		},
 		{
 			Name:        "mitre_coverage",
-			Description: "Report ATT&CK coverage derived from the shipped content: covered technique count, per-source summary, and declared gaps. Gaps are published, never padded.",
-			InputSchema: obj(`{"type":"object","properties":{"technique":{"type":"string","description":"optional; report only this technique id"}}}`),
+			Description: "Report ATT&CK coverage derived from the shipped content: covered technique count, per-source summary, and declared gaps. Gaps are published, never padded. With frameworks=true, also the Unified Kill Chain sequencing view (every UKC phase, with the covered techniques that land in it; empty phases are listed as gaps).",
+			InputSchema: obj(`{"type":"object","properties":{"technique":{"type":"string","description":"optional; report only this technique id"},"frameworks":{"type":"boolean","description":"optional; add the Unified Kill Chain phase view (cau coverage --frameworks)"}}}`),
+		},
+		{
+			Name:        "honesty_index",
+			Description: "Build the honesty index (cau honesty): what the shipped content covers against its committed expectation, what a recorded evaluation report measured (with the synthetic-corpus caveat), and whether the content matches its integrity baseline. Each section carries a state (measured, not-measured, mismatch, no-baseline, tampered, error) and its caveats; there is no overall score. Reads only operator-configured paths (--expect, --eval, --manifest), never a client path. The per-detector table and other lists are capped; the cut is reported.",
+			InputSchema: obj(`{"type":"object","properties":{}}`),
+		},
+		{
+			Name:        "eval_report",
+			Description: "Summarise an evaluation report written by 'cau eval run --out' at a sandboxed path: totals, precision/recall/FPR, per-detector rows, corpus name and class (synthetic smoke corpus or unclassified), error/skip counts and whether the headline totals follow from the sample records. The per-sample list is omitted unless include_samples is set, and then capped. Does not re-run the evaluation.",
+			InputSchema: obj(`{"type":"object","properties":{"path":{"type":"string","description":"report JSON, inside a scan root"},"include_samples":{"type":"boolean","description":"optional; include a capped list of per-sample rows"},"limit":{"type":"integer","description":"optional; max samples and detector rows to list (capped server-side)"}},"required":["path"]}`),
+		},
+		{
+			Name:        "peel_file",
+			Description: "Peel the obfuscation chain of one sandboxed file under the peeler's budget: outcome, score against threshold, max depth, primary and deepest chain signatures, findings, archive statistics and budget spend. The decoded bytes of any layer are never returned.",
+			InputSchema: obj(`{"type":"object","properties":{"path":{"type":"string","description":"path to the file, inside a scan root"}},"required":["path"]}`),
+		},
+		{
+			Name:        "firmware_image",
+			Description: "Inventory a UEFI firmware image (a flash dump or capsule) at a sandboxed path, within the firmware size cap: volumes, module count and the first modules (GUID, type, name, PE presence, nesting depth), checksum validity, LZMA sections opened and failed, findings, and, when the server holds a compiled ruleset, rule matches over the executable module bodies. Module bodies are inventoried, never disassembled or executed.",
+			InputSchema: obj(`{"type":"object","properties":{"path":{"type":"string","description":"firmware image, inside a scan root"}},"required":["path"]}`),
+		},
+		{
+			Name:        "boot_scan",
+			Description: "Scan boot-chain surfaces given explicitly, each confined to the scan roots: disk images (MBR/GPT structure, boot code, partitions), a mounted EFI System Partition directory (.efi inventory, signature presence), an efivarfs directory (Secure Boot state, boot entries, key databases) and a sysfs root (ACPI/WPBT/option ROM/ESRT inventory). There is no auto-discovery: the live host's /sys/firmware/efi/efivars and /sys are reachable only when the operator put them under --root. Signatures are reported present or absent, never verified. At least one input is required.",
+			InputSchema: obj(`{"type":"object","properties":{"disks":{"type":"array","items":{"type":"string"},"description":"disk image files inside a scan root (only their boot sectors and partition tables are read)"},"esp":{"type":"string","description":"a mounted EFI System Partition directory inside a scan root"},"efivars":{"type":"string","description":"an efivarfs directory inside a scan root"},"sysfs":{"type":"string","description":"a sysfs root inside a scan root, for the firmware inventory"},"dbx_reference":{"type":"string","description":"optional; a dbx revocation list file inside a scan root to compare the host dbx against"}}}`),
+		},
+		{
+			Name:        "hardware_identity",
+			Description: "Capture the hardware-identity snapshot (cau hwanchor) from a sysfs root inside a scan root: DMI/SMBIOS fields, physical interfaces and their address assignment, TPM presence and PCR 0-7, hardware RNG state, and the anchors that could not be established. Read-only. redact defaults to true: serials, the product UUID and MAC addresses are replaced by digests; pass redact=false only when the identity values themselves are needed. The live host's /sys is reachable only when the operator put it under --root.",
+			InputSchema: obj(`{"type":"object","properties":{"sysfs":{"type":"string","description":"a sysfs root inside a scan root"},"redact":{"type":"boolean","description":"optional; default true. false returns raw serials and MAC addresses"}},"required":["sysfs"]}`),
 		},
 	}
 }
@@ -143,6 +174,18 @@ func (s *Server) onToolsCall(raw json.RawMessage) (interface{}, *rpcError) {
 		return s.toolAddSignature(p.Arguments)
 	case "mitre_coverage":
 		return s.toolMitreCoverage(p.Arguments)
+	case "honesty_index":
+		return s.toolHonestyIndex(p.Arguments)
+	case "eval_report":
+		return s.toolEvalReport(p.Arguments)
+	case "peel_file":
+		return s.toolPeelFile(p.Arguments)
+	case "firmware_image":
+		return s.toolFirmwareImage(p.Arguments)
+	case "boot_scan":
+		return s.toolBootScan(p.Arguments)
+	case "hardware_identity":
+		return s.toolHardwareIdentity(p.Arguments)
 	default:
 		return nil, errf(codeInvalidParams, "unknown tool: %s", p.Name)
 	}
@@ -493,12 +536,16 @@ func (s *Server) buildMatrix() *coverage.Matrix {
 	if s.deps.SigDB != nil {
 		in.HashCount = s.deps.SigDB.Count()
 	}
+	if s.deps.FuzzyDB != nil {
+		in.FuzzyCount = s.deps.FuzzyDB.Count()
+	}
 	return coverage.Build(in)
 }
 
 func (s *Server) toolMitreCoverage(raw json.RawMessage) (interface{}, *rpcError) {
 	var args struct {
-		Technique string `json:"technique"`
+		Technique  string `json:"technique"`
+		Frameworks bool   `json:"frameworks"`
 	}
 	if e := unmarshalArgs(raw, &args); e != nil {
 		return nil, e
@@ -507,7 +554,11 @@ func (s *Server) toolMitreCoverage(raw json.RawMessage) (interface{}, *rpcError)
 	if args.Technique != "" {
 		for _, t := range m.Techniques {
 			if strings.EqualFold(t.ID, args.Technique) {
-				return jsonResult(map[string]interface{}{"covered": true, "technique": t})
+				out := map[string]interface{}{"covered": true, "technique": t}
+				if args.Frameworks {
+					out["ukc"] = frameworks.ForTechnique(t.ID)
+				}
+				return jsonResult(out)
 			}
 		}
 		return jsonResult(map[string]interface{}{"technique": args.Technique, "covered": false})
@@ -523,7 +574,44 @@ func (s *Server) toolMitreCoverage(raw json.RawMessage) (interface{}, *rpcError)
 	if len(m.Gaps) > 0 {
 		out["gaps"] = m.Gaps
 	}
+	if args.Frameworks {
+		out["ukc"] = ukcView(techniqueIDs(m))
+	}
 	return jsonResult(out)
+}
+
+// ukcPhase is one row of the Unified Kill Chain view: every phase is listed,
+// so an empty one is a visible gap rather than a missing row.
+type ukcPhase struct {
+	Phase      string   `json:"phase"`
+	Stage      string   `json:"stage"`
+	Techniques []string `json:"techniques"`
+}
+
+// ukcView is the JSON form of `cau coverage --frameworks`: the covered
+// techniques mapped phase-wise onto the Unified Kill Chain.
+func ukcView(ids []string) map[string]interface{} {
+	seq := frameworks.Sequence(ids)
+	covered := make(map[string]frameworks.PhaseCoverage, len(seq))
+	for _, pc := range seq {
+		covered[pc.Phase] = pc
+	}
+	all := frameworks.Phases()
+	phases := make([]ukcPhase, 0, len(all))
+	for _, p := range all {
+		row := ukcPhase{Phase: p, Stage: frameworks.StageForPhase(p), Techniques: []string{}}
+		if pc, ok := covered[p]; ok {
+			row.Techniques = pc.Techniques
+		}
+		phases = append(phases, row)
+	}
+	return map[string]interface{}{
+		"framework":           "Unified Kill Chain",
+		"phases":              phases,
+		"phases_with_content": len(seq),
+		"phases_total":        len(all),
+		"note":                "ATT&CK techniques mapped phase-wise by tactic; an empty phase is a gap in the shipped content, not an absence of the phase",
+	}
 }
 
 func techniqueIDs(m *coverage.Matrix) []string {

@@ -27,6 +27,7 @@ import (
 	"github.com/s-b-repo/cau/internal/forward/wazuh"
 	"github.com/s-b-repo/cau/internal/harden"
 	"github.com/s-b-repo/cau/internal/peeler"
+	"github.com/s-b-repo/cau/internal/provenance"
 	"github.com/s-b-repo/cau/internal/release"
 	"github.com/s-b-repo/cau/internal/report"
 	"github.com/s-b-repo/cau/internal/sdnotify"
@@ -75,7 +76,7 @@ Usage:
                                        detection content is intact, with gaps shown and no overall score
   cau quarantine <subcommand>          vault flagged files (add/list/restore/verify/delete)
   cau canary    plant|check [flags]    plant decoy files and detect tampering
-  cau peel      [flags] <file>         walk an obfuscation chain, depth as signal
+  cau peel      [flags] <file>...      walk obfuscation chains, depth as signal
   cau firmware  [flags] <image>        parse a UEFI firmware image (FV/FFS inventory, integrity, implant blocklist)
   cau boot-scan [flags]                read the boot chain, read-only: MBR/GPT/boot sectors, the EFI System Partition,
                                        Secure Boot state and boot entries, WPBT, option ROMs
@@ -93,7 +94,7 @@ Usage:
   cau update    (--from|--url) [flags] install a signed signature-DB bundle (fail-closed)
   cau selftest  [--record] [flags]     verify detection content has not been tampered with
   cau verify-self (--from|--url) [flags] verify this binary against the signed release manifest
-  cau bundle    update|checksums [flags] produce signed release artifacts (CI)
+  cau bundle    update|checksums|sbom [flags] produce signed release artifacts (CI)
   cau completion <shell>                 print a shell completion script (bash|zsh|fish)
   cau version                          print the version
 
@@ -246,6 +247,11 @@ type scanFlags struct {
 	maxInMemoryMiB      int64
 	yaraTimeout         time.Duration
 	quiet               bool
+	// Package-manager provenance (internal/provenance): off by default, it
+	// loads the host's dpkg/pacman database once per scan. provenanceRoot is
+	// the test override for the database tree (default "/").
+	provenance     bool
+	provenanceRoot string
 
 	// Wazuh forwarder: free SIEM sink. See internal/forward/wazuh.
 	wazuhURL         string
@@ -318,6 +324,8 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	fs.Int64Var(&f.maxInMemoryMiB, "max-in-memory", scanner.DefaultMaxInMemory>>20, "largest file (MiB) read into memory; bigger files are streamed and skip heuristics")
 	fs.DurationVar(&f.yaraTimeout, "yara-timeout", scanner.DefaultScanTimeout, "per-file YARA scan budget")
 	fs.BoolVar(&f.quiet, "quiet", false, "suppress the banner and progress lines on stderr")
+	fs.BoolVar(&f.provenance, "provenance", false, "resolve every scanned file against the host's package database (dpkg/pacman): owner, version, and whether the content still matches what the package shipped; costs one database load per scan, about one to three seconds of CPU on a 4,400-package Debian install")
+	fs.StringVar(&f.provenanceRoot, "provenance-root", "/", "root under which var/lib/dpkg and var/lib/pacman/local are read for --provenance (testing)")
 
 	// ── Free SIEM forwarder: Wazuh Manager API (see docs/pricing.md). ──
 	fs.StringVar(&f.wazuhURL, "wazuh-url", "", "Wazuh Manager API base (e.g. https://wazuh.example.com:55000); forwards OCSF findings over /events")
@@ -686,6 +694,26 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 			in.Results = append(in.Results, r)
 			if h != nil {
 				in.Heuristics = append(in.Heuristics, *h)
+			}
+		}
+		// Provenance (--provenance): after the scan, resolve each result
+		// against the host's package database using the digests the engine
+		// already computed. The index loads once, on the first lookup, and is
+		// rebuilt per cycle in daemon mode so an upgrade is seen. It never
+		// changes a verdict: it is context on every row plus the
+		// modified-system-binary observation.
+		if f.provenance {
+			resolver := provenance.New(f.provenanceRoot)
+			in.Provenance = make(map[string]provenance.Provenance, len(in.Results))
+			for _, r := range in.Results {
+				if r.Error != nil {
+					continue
+				}
+				in.Provenance[r.FilePath] = resolver.Lookup(r.FilePath, provenance.Digests{MD5: r.MD5, SHA1: r.SHA1, SHA256: r.SHA256})
+			}
+			status("[*] Provenance: %s", resolver.Summary())
+			for _, n := range resolver.Notes() {
+				status("[WARN] provenance: %s", report.TermSafe(n))
 			}
 		}
 		in.Elapsed = time.Since(start)

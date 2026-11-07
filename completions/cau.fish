@@ -44,19 +44,19 @@ complete -c cau -n '__fish_seen_subcommand_from rules' -a 'lint list help'
 complete -c cau -n '__fish_seen_subcommand_from quarantine' -a 'add list restore verify delete help'
 complete -c cau -n '__fish_seen_subcommand_from canary' -a 'plant check help'
 complete -c cau -n '__fish_seen_subcommand_from feed' -a 'list check update help'
-complete -c cau -n '__fish_seen_subcommand_from bundle' -a 'update checksums'
+complete -c cau -n '__fish_seen_subcommand_from bundle' -a 'update checksums sbom keygen'
 
 # The flags that are common to the scanning family.
-complete -c cau -n '__fish_seen_subcommand_from scan hash cluster peel ps' -l file -d 'a single file'
+complete -c cau -n '__fish_seen_subcommand_from scan' -l file -d 'a single file'
 complete -c cau -n '__fish_seen_subcommand_from scan' -l dir -d 'a directory to scan recursively'
 complete -c cau -n '__fish_seen_subcommand_from scan' -l db -d 'hash signature database'
 complete -c cau -n '__fish_seen_subcommand_from scan' -l rules -d 'YARA rules directory'
 complete -c cau -n '__fish_seen_subcommand_from scan' -l fuzzy-db -d 'fuzzy-hash database'
 complete -c cau -n '__fish_seen_subcommand_from scan hash cluster' -l format -d 'output format' -r -f -a 'text json sarif ocsf'
-complete -c cau -n '__fish_seen_subcommand_from scan' -l format -d 'SIEM sink format' -r -f -a 'ecs cef leef gelf syslog syslog-ecs syslog-cef syslog-leef otlp'
+complete -c cau -n '__fish_seen_subcommand_from scan' -l format -d 'SIEM sink format or STIX bundle' -r -f -a 'ecs cef leef gelf syslog syslog-ecs syslog-cef syslog-leef otlp stix'
 complete -c cau -n '__fish_seen_subcommand_from scan' -l sink-url -d 'forward findings to a collector (udp/tcp/tls/https)' -r
 complete -c cau -n '__fish_seen_subcommand_from scan' -l sink-format -d 'sink format for --sink-url' -r -f -a 'ecs cef leef gelf syslog syslog-ecs syslog-cef syslog-leef otlp'
-complete -c cau -n '__fish_seen_subcommand_from scan hash cluster' -l output -d 'write the report to a file' -r
+complete -c cau -n '__fish_seen_subcommand_from scan' -l output -d 'write the report to a file' -r
 complete -c cau -n '__fish_seen_subcommand_from scan' -l fail-on -d 'findings tier that fails the run' -r -f -a 'clean heuristic malicious none'
 complete -c cau -n '__fish_seen_subcommand_from scan' -l jobs -d 'parallel workers' -r
 complete -c cau -n '__fish_seen_subcommand_from scan' -l interval -d 'run as a daemon on this interval' -r

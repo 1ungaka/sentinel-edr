@@ -31,6 +31,7 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+	"unsafe"
 )
 
 // DefaultMaxSize is the largest file analysed. Payload checks run to this size;
@@ -115,6 +116,7 @@ func (w *walker) add(class string, c catalogEntry, origin, evidence string) {
 		return
 	}
 	w.seen[class] = true
+	evidence = strings.Clone(evidence) // a substring of the text would pin all of it
 	detail := c.detail
 	if origin != "" {
 		detail += " (after decoding " + origin + ")"
@@ -194,7 +196,8 @@ func asText(data []byte) (string, bool) {
 	if control*10 > len(head) || (high*4 > len(head) && !utf8.Valid(trimRune(head))) {
 		return "", false
 	}
-	return string(data), true
+	// A view, not a copy: nothing here writes to data, and it outlives this scan.
+	return unsafe.String(unsafe.SliceData(data), len(data)), true // audit:ok safe only while scan buffers are never pooled or written; add clones the evidence it keeps
 }
 
 // trimRune drops a multi-byte sequence the 8 KiB head may have cut in half.

@@ -302,8 +302,9 @@ type state struct {
 	prevBase rune
 	prevInv  bool
 	runLen   int
-	lineRTL  bool   // a right-to-left character occurred on the current line
-	recent   []rune // last exampleRadius visible-or-not runes, for examples
+	lineRTL  bool                // a right-to-left character occurred on the current line
+	recent   [exampleRadius]rune // ring of the last runes, visible or not, for examples
+	pushed   int                 // runes ever pushed, so pushed%exampleRadius is the next slot
 	pend     []*pending
 }
 
@@ -322,7 +323,7 @@ func (s *state) run(next iterator) {
 		if k, inv := classify(r); inv {
 			s.runLen++
 			p := &pending{r: r, k: k, off: off, line: s.line, prevBase: s.prevBase, prevVS: s.prevInv}
-			p.before = append(p.before, s.recent...)
+			p.before = s.appendRecent(p.before)
 			s.pushRecent(r) // earlier occurrences see it on their right; this one must not
 			s.pend = append(s.pend, p)
 			s.prevInv = true
@@ -352,11 +353,17 @@ func (s *state) run(next iterator) {
 	s.r.Lines = s.line
 }
 
-func (s *state) pushRecent(r rune) {
-	s.recent = append(s.recent, r)
-	if len(s.recent) > exampleRadius {
-		s.recent = s.recent[1:]
+// appendRecent appends the ring to dst, oldest first.
+func (s *state) appendRecent(dst []rune) []rune {
+	for i := max(0, s.pushed-exampleRadius); i < s.pushed; i++ {
+		dst = append(dst, s.recent[i%exampleRadius])
 	}
+	return dst
+}
+
+func (s *state) pushRecent(r rune) {
+	s.recent[s.pushed%exampleRadius] = r
+	s.pushed++
 	for _, p := range s.pend {
 		if len(p.after) < exampleRadius {
 			p.after = append(p.after, r)

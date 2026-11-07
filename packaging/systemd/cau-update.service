@@ -1,0 +1,78 @@
+# Oneshot signed update, driven by cau-update.timer. OPT-IN: nothing enables
+# this unit or its timer for you, because the engine never fetches anything
+# unless an operator has said so.
+#
+# What it does, in order:
+#   1. cau verify-self: checks this binary against the signed SHA256SUMS of its
+#      release. A binary that does not verify is not trusted to update itself,
+#      so the run stops there.
+#   2. cau update: fetches the signed signature-database bundle and installs it
+#      only if the signature verifies against the pinned key, the payload
+#      matches the signed manifest, the bundle is not older than the installed
+#      one, and this engine is new enough for it. Any failure leaves the live
+#      database untouched (the unit fails; the database does not change).
+#
+# Configure before enabling. Both URLs and the key are yours to set:
+#   systemctl edit cau-update.service
+#   [Service]
+#   Environment=CAU_UPDATE_URL=https://github.com/s-b-repo/cau/releases/latest/download
+#   Environment=CAU_UPDATE_PUBKEY=/etc/cau/release-pubkey.hex
+# Then:
+#   systemctl enable --now cau-update.timer
+#
+# Air-gapped hosts do not use this unit: deliver the signed bundle on media
+# and run `cau update --from <dir>` by hand.
+[Unit]
+Description=CAU EDR signed signature-database update
+Documentation=https://github.com/s-b-repo/cau
+After=network-online.target
+Wants=network-online.target
+# Refuse to run unconfigured rather than guess a source.
+ConditionPathExists=/etc/cau/release-pubkey.hex
+
+[Service]
+Type=oneshot
+Environment=CAU_UPDATE_URL=
+Environment=CAU_UPDATE_PUBKEY=/etc/cau/release-pubkey.hex
+# The explicit test makes an empty URL a clear failure in the journal instead
+# of a confusing usage error from the tool.
+ExecStartPre=/bin/sh -c 'test -n "$CAU_UPDATE_URL" || { echo "cau-update: CAU_UPDATE_URL is not set (systemctl edit cau-update.service)"; exit 78; }'
+ExecStartPre=/usr/bin/cau verify-self --url ${CAU_UPDATE_URL} --pubkey ${CAU_UPDATE_PUBKEY}
+ExecStart=/usr/bin/cau update --url ${CAU_UPDATE_URL} --pubkey ${CAU_UPDATE_PUBKEY} --db /usr/share/cau/signatures/hashes.txt
+Nice=10
+
+# ── Least privilege ─────────────────────────────────────────────────────────
+# This unit writes exactly one place: the signature database directory (the
+# database, its .bak rollback copy and its .manifest install record). It needs
+# no capability at all, only ownership of that directory:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin cau
+#   chown -R cau:cau /usr/share/cau/signatures
+User=cau
+Group=cau
+CapabilityBoundingSet=
+UMask=0022
+
+# ── Sandbox ─────────────────────────────────────────────────────────────────
+ProtectSystem=strict
+ReadWritePaths=/usr/share/cau/signatures
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM

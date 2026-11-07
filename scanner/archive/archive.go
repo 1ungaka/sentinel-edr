@@ -6,6 +6,10 @@
 // questions, which the linuxpkg detector owns. It never writes to disk, never
 // executes a member, and bounds every read so a hostile archive cannot make it
 // allocate or decompress without limit.
+//
+// One zip shape is looked into further: an Office Open XML document
+// (.docm/.xlsm/.pptm and their macro-free siblings), whose embedded VBA
+// project and attached-template relationship are inspected in ooxml.go.
 package archive
 
 import (
@@ -22,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/s-b-repo/cau/scanner/ole"
 )
 
 // Parsing and safety limits.
@@ -83,6 +88,10 @@ var Threshold = DefaultThreshold
 type Options struct {
 	Threshold int
 	MaxSize   int64
+	// OLEThreshold is handed to the OLE pass run over an OOXML document's
+	// embedded vbaProject.bin (0 = the ole package default). It sets
+	// EmbeddedVBA.Threshold only; the container's own verdict uses Threshold.
+	OLEThreshold int
 }
 
 func (o Options) threshold() int {
@@ -99,18 +108,30 @@ type Finding struct {
 	Technique string `json:"technique,omitempty"`
 	Detail    string `json:"detail"`
 	// Evidence names the triggering member; it never carries member content.
+	// For a finding carried out of an embedded VBA project it is the OLE
+	// pass's evidence (a matched needle or stream name); for the remote
+	// template it is the target host.
 	Evidence string `json:"evidence,omitempty"`
+	// Via names the member the finding was read out of, for findings that
+	// came from inspecting one member's content (an OOXML vbaProject.bin or
+	// relationship part). Empty for container-level findings.
+	Via string `json:"via,omitempty"`
 }
 
 // Summary is the enumerated shape of the container, for the report.
 type Summary struct {
-	Format       string `json:"format"` // "zip","tar","gzip","tar.gz"
+	// Format is "zip", "tar", "gzip" or "tar.gz"; a zip recognised as an
+	// Office Open XML document reads "ooxml-word", "ooxml-excel" or
+	// "ooxml-powerpoint" instead.
+	Format       string `json:"format"`
 	Members      int    `json:"members"`
 	Compressed   int64  `json:"compressed_bytes"`
 	Uncompressed int64  `json:"uncompressed_bytes"`
 	Encrypted    int    `json:"encrypted_members,omitempty"`
 	Executables  int    `json:"executable_members,omitempty"`
 	NotInspected string `json:"not_inspected,omitempty"`
+	// VBAMember names the vbaProject.bin member the OLE pass was run over.
+	VBAMember string `json:"vba_member,omitempty"`
 }
 
 // Result is the analysis of one container.
@@ -123,6 +144,12 @@ type Result struct {
 	Parsed    *Summary  `json:"parsed,omitempty"`
 	Skipped   string    `json:"skipped,omitempty"`
 	Error     error     `json:"-"`
+	// EmbeddedVBA is the OLE pass's full result for an OOXML document's
+	// vbaProject.bin member (has_vba, modules, the per-module source-state
+	// table, its own score and threshold). Its findings are also carried into
+	// Findings under the archive.ooxml.* classes and counted in Score, so it
+	// is detail, not a second verdict. Nil when no VBA project was inspected.
+	EmbeddedVBA *ole.Result `json:"embedded_vba,omitempty"`
 }
 
 // EffectiveThreshold returns the threshold applied to this result.
@@ -175,7 +202,7 @@ func Analyze(data []byte, opts Options) *Result {
 	r := &Result{Size: len(data), Threshold: opts.threshold()}
 	switch {
 	case isZip(data):
-		r.analyzeZip(data)
+		r.analyzeZip(data, opts)
 	case isGzip(data):
 		r.analyzeGzip(data)
 	case isTar(data):
@@ -336,6 +363,18 @@ type collector struct {
 	nested        []string
 	notInspected  string
 	truncated     bool
+	// ooxml holds the findings read out of an Office document's members
+	// (ooxml.go); vbaMember names the VBA project they came from.
+	ooxml     []Finding
+	vbaMember string
+}
+
+// addNotInspected records why something was not inspected; the first reason
+// is kept for the summary, as a hostile container can produce many.
+func (c *collector) addNotInspected(why string) {
+	if c.notInspected == "" {
+		c.notInspected = why
+	}
 }
 
 func (c *collector) note(name string, uncompressed, compressed int64, encrypted bool) {
@@ -411,9 +450,11 @@ func (c *collector) result(r *Result) {
 		add("archive.nested-archive", scoreNested, techObfuscated,
 			fmt.Sprintf("%d nested archive member(s): a layer that must be unwrapped to inspect", len(c.nested)), firstOf(c.nested))
 	}
+	r.Findings = append(r.Findings, c.ooxml...)
 	r.Parsed = &Summary{
 		Format: c.format, Members: c.members, Compressed: c.compressed, Uncompressed: c.uncompressed,
 		Encrypted: c.encrypted, Executables: c.execMembers, NotInspected: c.notInspected,
+		VBAMember: c.vbaMember,
 	}
 }
 
@@ -429,7 +470,7 @@ func firstOf(s []string) string {
 
 // ── format walks ───────────────────────────────────────────────────────────
 
-func (r *Result) analyzeZip(data []byte) {
+func (r *Result) analyzeZip(data []byte, opts Options) {
 	c := &collector{format: "zip"}
 	defer c.result(r)
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
@@ -437,6 +478,7 @@ func (r *Result) analyzeZip(data []byte) {
 		c.notInspected = "zip central directory unreadable: " + err.Error()
 		return
 	}
+	var office ooxml
 	peeked := 0
 	for _, f := range zr.File {
 		if c.members >= maxMembers {
@@ -449,12 +491,19 @@ func (r *Result) analyzeZip(data []byte) {
 		if f.FileInfo().IsDir() {
 			continue
 		}
+		office.note(f)
 		var content []byte
 		if !encrypted && peeked < maxMembersPeeked {
 			peeked++
 			content = peekZip(f)
 		}
 		c.classify(f.Name, content)
+	}
+	// An Office Open XML document: the only zip whose members are opened
+	// beyond the magic peek, and only the two that carry code or fetch it.
+	if format := office.format(); format != "" {
+		c.format = format
+		office.inspect(r, c, opts.OLEThreshold)
 	}
 }
 

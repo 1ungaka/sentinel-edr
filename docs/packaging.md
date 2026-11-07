@@ -201,8 +201,16 @@ removes `debian/` from every CI checkout.
 - **Kali Linux repository.** Kali packages are built from Kali's own
   repositories. The `.deb` installs on Kali unchanged; landing it in Kali's repos
   is a submission to Kali's packaging queue, not a change to this code.
-- **No RPM or Homebrew core.** The Fedora and macOS paths stay build-from-source
-  (they are documented in [installation.md](installation.md)).
+- **RPM is a spec, not a pipeline.** `packaging/rpm/cau.spec` builds offline
+  from the release tarball and `vendor/` with the same Makefile install targets
+  as the Debian and Arch packages, and its `%check` runs the packaged binary.
+  It has been built with `rpmbuild --nodeps` on a Debian-family host only: no
+  CI job builds it and it has not been installed on Fedora, RHEL or openSUSE,
+  where the build dependencies (`golang`, `yara-devel`) and the systemd
+  scriptlet macros resolve for real. Build it with
+  `rpmbuild -ba packaging/rpm/cau.spec --define "cau_version <version>" --define "_sourcedir <dir holding cau-<version>.tar.gz>"`.
+- **No Homebrew core.** The macOS path stays build-from-source
+  ([installation.md](installation.md)).
 - **arm64 user-space libraries.** The arm64 package is built on an arm64 runner
   against that image's libyara, so it links only what the image provides. A
   distro that ships an older libyara than the base image would need a rebuild

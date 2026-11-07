@@ -37,10 +37,10 @@ key is still scanned on its content; the signature is reported, not believed.
 Scan files and directories recursively. Flags select detectors, thresholds,
 output and failure behaviour.
 .TP
-.B cau hash \fR[\fPflags\fR] \fP<\fBpath\fP ...\fR\fP
+.B cau hash \fR[\fPflags\fR] \fP<\fBpath\fP ...\fR>
 Print the SHA-256, imphash, TLSH and ssdeep digests of a file.
 .TP
-.B cau cluster \fR[\fPflags\fR] \fP<\fBpath\fP ...\fR\fP
+.B cau cluster \fR[\fPflags\fR] \fP<\fBpath\fP ...\fR>
 Group PE files by import-table similarity.
 .TP
 .B cau add-hash \fR[\fPflags\fR]
@@ -56,23 +56,26 @@ runs and gate a run against a measured baseline.
 .B cau heldout \fR<\fBinit\fP|\fBadd\fP|\fBpull\fP|\fBsync\fP|\fBremove\fP|\fBrm\fP|\fBlist\fP|\fBmanifest\fP\fR>
 Manage the encrypted held-out recall-corpus hash database.
 .TP
-.B cau rules \fR<\fBlint\fP|\fBlist\fR\fP\fR
+.B cau rules \fR<\fBlint\fP|\fBlist\fR>
 Lint the YARA rules, or list them with their metadata.
 .TP
 .B cau coverage \fR[\fPflags\fR]
 ATT&CK coverage matrix of the shipped content, as text, JSON, SARIF or an ATT&CK
 Navigator layer; \fB\-\-expect\fP gates the content against a recorded technique list.
 .TP
-.B cau quarantine \fR<\fBadd\fP|\fBlist\fP|\fBrestore\fP|\fBverify\fP|\fBdelete\fR\fP\fR
+.B cau quarantine \fR<\fBadd\fP|\fBlist\fP|\fBrestore\fP|\fBverify\fP|\fBdelete\fR>
 Vault flagged files in a protected store and restore them deliberately.
 .TP
-.B cau canary \fR<\fBplant\fP|\fBcheck\fP\fR\fP\fR
+.B cau canary \fR<\fBplant\fP|\fBcheck\fR>
 Plant decoy files and detect tampering with them.
 .TP
-.B cau peel \fR[\fPflags\fR] \fP<\fBfile\fR\fP...\fR
-Walk an obfuscation chain, reporting depth as a signal in its own right.
+.B cau peel \fR[\fPflags\fR] \fP<\fBfile\fR>...
+Walk obfuscation chains through every common base, rot and Caesar shift and
+compression layer, in parallel, reporting depth as a signal in its own right.
+\fB\-\-jobs\fP peels several files at once and \fB\-\-stream\fP prints each
+layer as it is found.
 .TP
-.B cau firmware \fR[\fPflags\fR] \fP<\fBimage\fR\fP\fR
+.B cau firmware \fR[\fPflags\fR] \fP<\fBimage\fR>
 Parse a UEFI firmware image: firmware-volume and file inventory, integrity and
 an implant blocklist.
 .TP
@@ -85,7 +88,7 @@ Boot state and boot entries, the WPBT table and PCI option ROMs.
 Scan the live process table for fileless, masquerade, injection and network
 shell indicators; \fB\-\-respond\fR stops or kills confirmed processes.
 .TP
-.B cau net \fR[\fPflags\fR] | \fR<\fBblock\fP|\fBunblock\fP|\fBblocks\fP|\fBclear\fR\fP\fR
+.B cau net \fR[\fPflags\fR] | \fR<\fBblock\fP|\fBunblock\fP|\fBblocks\fP|\fBclear\fR>
 Scan the network plane, read entirely from /proc and /etc: every socket the
 kernel holds, per network namespace, attributed to the process and the
 executable behind it, plus the resolver configuration and the neighbour table.
@@ -112,14 +115,16 @@ SSH keys, accounts, sudoers, PAM and set-uid programs in writable directories.
 Audit installed-package maintainer scripts (dpkg and pacman) for root-level
 tradecraft.
 .TP
-.B cau feed \fR<\fBlist\fP|\fBcheck\fP|\fBupdate\fR\fP\fR
+.B cau feed \fR<\fBlist\fP|\fBcheck\fP|\fBupdate\fR>
 Manage the local abuse-intel feed from its offline cache.
 .TP
 .B cau intake \fB\-\-format \fP<\fPfmt\fP>\fP \fR[\fPflags\fR]
 Ingest a threat-intel feed into the signature database.
 .TP
 .B cau update \fB\-\-from\fP|\fB\-\-url\fP \fR[\fPflags\fR]
-Install a signed signature-database bundle; fail-closed on a bad signature.
+Install a signed signature-database bundle; fail-closed on a bad signature, and
+on a bundle older than the one installed unless \fB\-\-allow\-downgrade\fP is
+given.
 .TP
 .B cau selftest \fR[\fB\-\-record\fP\fR] \fR[\fPflags\fR]
 Verify the bundled detection content has not been tampered with.
@@ -127,10 +132,20 @@ Verify the bundled detection content has not been tampered with.
 .B cau verify\-self \fB\-\-from\fP|\fB\-\-url\fP \fR[\fPflags\fR]
 Verify this binary against the signed release manifest.
 .TP
-.B cau bundle \fR<\fBupdate\fP|\fBchecksums\fR\fR\fR
-Produce signed release artifacts; intended for CI.
+.B cau bundle \fR<\fBupdate\fP|\fBchecksums\fP|\fBsbom\fR>
+Produce signed release artifacts and a CycloneDX bill of materials; intended for
+CI.
 .TP
-.B cau completion \fR<\fBshell\fP\fR\fP\fR
+.B cau hwid \fR[\fPflags\fR]
+Snapshot the hardware identity: DMI, NIC addresses, TPM PCRs and the entropy
+source. \fB\-\-record\fP and \fB\-\-check\fP use a baseline, and
+\fB\-\-redact\fP makes the output shareable. Read-only.
+.TP
+.B cau honesty \fR[\fPflags\fR]
+One document of what is covered, what was measured and whether the detection
+content is intact, with a state per section and no overall score.
+.TP
+.B cau completion \fR<\fBshell\fR>
 Print the shell-completion script for \fBbash\fP, \fBzsh\fP or \fBfish\fP.
 .TP
 .B cau version
@@ -154,7 +169,8 @@ The YARA rules directory.
 Output format. Machine formats never write the banner to stdout, so stdout is
 always valid for a parser. The SIEM sink formats \fBecs\fR, \fBcef\fR,
 \fBleef\fR, \fBgelf\fR, \fBsyslog\fR, \fBsyslog\-ecs\fR, \fBsyslog\-cef\fR,
-\fBsyslog\-leef\fR and \fBotlp\fR carry the same findings as \fBocsf\fR.
+\fBsyslog\-leef\fR and \fBotlp\fR carry the same findings as \fBocsf\fR, and
+\fBstix\fR writes them as one STIX 2.1 bundle.
 .TP
 .BR \-sink\-url " " "\fIurl\fR"
 Forward the findings to a collector after the scan: \fBudp://\fR,
@@ -175,7 +191,7 @@ signal arrives.
 .BR \-pretty\fR, \fB\-quiet\fR
 Pretty-print machine formats, or suppress the banner and progress.
 .TP
-.B \-no\-yara\fR, \fB\-no\-heur\fR, \fB\-no\-static\fR, \fB\-no\-fuzzy\fR, \fB\-no\-stego\fR, \fB\-no\-fusion\fR
+.B \-no\-yara\fR, \fB\-no\-heuristics\fR, \fB\-no\-static\fR, \fB\-no\-fuzzy\fR, \fB\-no\-stego\fR, \fB\-no\-fusion\fR
 Disable a single detector. Disabled detectors are named in the report rather
 than silently omitted.
 .PP
@@ -239,6 +255,13 @@ Bundled fuzzy-hash database.
 .TP
 .I /usr/bin/cau\fR, \fI/usr/bin/cau-mcp
 The scanner and the Model Context Protocol server.
+.TP
+.I /etc/cau/cau.conf
+The agent's configuration. A flag on the command line wins over the file.
+.TP
+.IR <db> .bak\fR, \fI<db> .manifest
+The previous signature database, and the record of the installed bundle that
+\fBcau update\fP refuses to roll back past.
 .TP
 .I /usr/share/man/man1/cau.1
 This manual page.

@@ -106,7 +106,7 @@ func rankUnwrappers(blob []byte, us []Unwrapper, p profile) []Unwrapper {
 // headerless flate ranks last because its Detect is only a length check.
 func likelihood(name string, p profile) int {
 	switch name {
-	case "gzip", "bzip2", "zlib":
+	case "gzip", "bzip2", "zlib", zipStep:
 		return 100 // magic matched: almost certainly this layer
 	case "base64", "base32", "hex":
 		// A text encoding is likely only when the blob really is text-like.
@@ -116,12 +116,17 @@ func likelihood(name string, p profile) int {
 		return 40
 	case "flate":
 		// Raw deflate has no header; try it only after everything else.
-		return 10
+		return speculative / 2
 	case "cipher", "carve":
 		// Thirty trial transforms, or a scan of the whole blob. Everything
 		// cheaper and more specific goes first.
-		return 20
+		return speculative
 	default:
 		return 50
 	}
 }
+
+// speculative is the likelihood at or below which a layer is a guess with no
+// structure behind it. Such a branch queues last, and it is the one cancelled
+// when the budget passes its floor.
+const speculative = 20

@@ -28,6 +28,81 @@
 // never verified, because the engine holds no trust store; firmware that lies
 // about its own variables is below this scan; and a point-in-time read says
 // nothing about what happened between two reads.
+//
+// # Baselines
+//
+// One scan cannot say whether a boot entry is the one that was there last
+// month. A Baseline (baseline.go) is the comparable part of a Result,
+// recorded on a host believed good; Compare (compare.go) lists how a later
+// scan differs from it. The package builds, encodes, decodes and compares
+// baselines; it does not write or sign them. SigningBytes is the canonical
+// encoding a caller signs with Ed25519, and the command owns the key and the
+// file.
+//
+// Every difference has a kind (added, removed, changed, not-reverified,
+// not-in-baseline) and a severity. Only "security" sets the exit code:
+//
+//	surface / item          security                          expected-update        info
+//	efi.secure_boot         enabled -> disabled                                      disabled -> enabled
+//	efi.setup_mode          off -> on                                                on -> off
+//	efi.pk, efi.kek,        appeared, gone, or content
+//	  efi.db, efi.mok         changed in any way (db grew)
+//	efi.dbx                 gone; any count SHRANK; same      a count grew and none
+//	                          counts, other content;            shrank; appeared
+//	                          unparseable
+//	efi.sbat                a component's level fell or it    levels rose only;      bytes differ, same
+//	                          is no longer listed; gone;        appeared               levels
+//	                          unparseable
+//	efi.boot_order          another entry is first, or the                           reordered after the
+//	                          entry started first changed                              first entry
+//	efi.boot.NNNN           added; file path, active flag,                           removed; label only
+//	                          device path, attributes or
+//	                          optional data changed
+//	esp:<path>              added; content changed                                   removed
+//	disk:<p>.mbr.boot_code  any change
+//	disk:<p> table, GUID,   any change: scheme, disk GUID,
+//	  signature, partition    signature; a partition added,
+//	                          removed or changed (type,
+//	                          start, length, ESP or active
+//	                          flag, boot-sector kind)
+//	acpi.table.<NAME>       added (WPBT or any other); WPBT                          removed (any other)
+//	                          declared size changed; DMAR,
+//	                          IVRS, TPM2 or TCPA removed
+//	pci.rom.<address>       added; size changed; another                             removed
+//	                          device at the address
+//	esrt.<class>            version went down; unparseable    version went up        added; removed
+//
+// The reasoning behind the columns:
+//
+//   - Something new that the firmware will run, or a change to what it
+//     trusts, is security-relevant even though updates cause it too. A
+//     changed boot loader is never "expected": the scan sees that a
+//     signature is present, not that it is valid, so it cannot tell an
+//     update from a replacement. After an update the operator confirms the
+//     change and records a new baseline.
+//   - "Expected with updates" is kept for the changes that can only tighten
+//     or advance the chain: revocations added, revocation levels raised,
+//     firmware versions raised. The reverse direction of each is
+//     security-relevant, because rolling one back is an attack.
+//   - A removal introduces no code. Whatever runs instead was already in
+//     the baseline, or shows up as added or changed, or moves the entry that
+//     boots first (which efi.boot_order reports). The exceptions are
+//     removals that take protection away: keys, revocations, the IOMMU and
+//     TPM tables, and anything in a partition table.
+//   - A name is context, not an anchor: a boot entry whose label changed and
+//     whose target digest did not is informational.
+//   - Unknown never equals and never differs. An item the baseline has and
+//     this run could not read is not-reverified; an item this run read and
+//     the baseline did not cover is not-in-baseline. Neither is ever
+//     reported as removed or added, and neither sets the exit code.
+//
+// What NewBaseline leaves out, and why, is listed in its comment. Known
+// limits of the comparison: whether the dbx grew is judged by entry counts
+// (the digest only says that it changed), so a revocation replaced while the
+// count grew looks like growth; disks are matched by the path they were named with; option
+// ROM and WPBT contents are not read, so a same-size replacement of either
+// is invisible; BootNext, a one-shot redirection that updates also use, is
+// not part of the baseline.
 package bootscan
 
 import (

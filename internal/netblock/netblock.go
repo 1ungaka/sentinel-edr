@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/s-b-repo/cau/internal/netscan"
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // Backend is the firewall this host has.
@@ -408,13 +409,17 @@ func (b *Blocker) record(e Entry) {
 		strings.ReplaceAll(e.Reason, "\t", " "))
 }
 
+// maxLedgerBytes bounds the read of the ledger, which only supplies reasons: if
+// it ever grew past this the blocks would stand and lose their explanations.
+const maxLedgerBytes = 64 << 20
+
 // ledgerReasons reads back why each address was blocked, latest first.
 func (b *Blocker) ledgerReasons() map[string]string {
 	out := map[string]string{}
 	if b.opts.Ledger == "" {
 		return out
 	}
-	data, err := os.ReadFile(b.opts.Ledger)
+	data, err := safefs.ReadFile(b.opts.Ledger, maxLedgerBytes)
 	if err != nil {
 		return out
 	}

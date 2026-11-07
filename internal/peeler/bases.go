@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unsafe"
 )
 
 // baseLayer is a text encoding checked by its output. The alphabets nest (hex
@@ -257,7 +258,19 @@ func ascii85Layer() baseLayer {
 		},
 		decode: func(b []byte) ([]byte, bool) {
 			src := frame(b)
-			out := make([]byte, 4*len(src)+4)
+			// Five digits make four bytes, which is all an Adobe body without a
+			// 'z' can ever need: 4 per complete group, plus the at-most-3 of a
+			// short final group, plus the four bytes of room the decoder asks
+			// for before it commits a group. A 'z' is the one digit that
+			// decodes to four bytes on its own, so a body holding one can still
+			// need four times its length — and Decode stops (returning a short
+			// result and no error) when dst runs out, so that bound is not
+			// optional.
+			room := len(src)/5*4 + 4
+			if bytes.IndexByte(src, 'z') >= 0 {
+				room = len(src)*4 + 4
+			}
+			out := make([]byte, room)
 			n, _, err := ascii85.Decode(out, src, true)
 			return out[:n], err == nil
 		},
@@ -270,7 +283,10 @@ var base91Alphabet = newAlphabet(base91Digits, false)
 
 func decodeBase91(b []byte) ([]byte, bool) {
 	a := base91Alphabet
-	out := make([]byte, 0, len(b))
+	// Two digits carry 13 or 14 bits, so a pair yields at most 14 bits — seven
+	// eighths of a byte per digit — and a final odd digit one more byte. The
+	// old one-byte-per-digit bound was an eighth more than that.
+	out := make([]byte, 0, len(b)*7/8+2)
 	v, acc, n := -1, 0, 0
 	for _, c := range b {
 		p := int(a[c])
@@ -315,7 +331,10 @@ func base92Value(c byte) int {
 }
 
 func decodeBase92(b []byte) ([]byte, bool) {
-	out := make([]byte, 0, len(b))
+	// A pair carries 13 bits and a final odd digit 6, so the output is at most
+	// thirteen sixteenths of a byte per digit, plus the byte the odd digit
+	// finishes. The old one-byte-per-digit bound was a quarter more than that.
+	out := make([]byte, 0, len(b)*13/16+2)
 	var acc uint32
 	var have uint
 	push := func(v, bits uint32) {
@@ -406,11 +425,19 @@ func (l byteListLayer) Unwrap(b []byte, limit int64) ([]byte, error) {
 }
 
 func (byteListLayer) UnwrapAll(b []byte, limit int64) ([]Decoded, error) {
-	tokens := strings.FieldsFunc(string(b), listSeparator)
-	if len(tokens) < minListTokens {
+	// A list can be tens of millions of tokens, and an attacker chooses it. They are
+	// walked in place, because collecting them cost more than a gigabyte for a 60 MiB
+	// file, and most readings fail on the first one.
+	list := unsafe.String(unsafe.SliceData(b), len(b)) // audit:ok safe only while nothing here writes b or keeps a token; out is a separate buffer
+	tokens := 0
+	eachListToken(list, func(string) bool {
+		tokens++
+		return true
+	})
+	if tokens < minListTokens {
 		return nil, ErrNotThisLayer
 	}
-	if int64(len(tokens)) > limit {
+	if int64(tokens) > limit {
 		return nil, errBombCap
 	}
 	readings := []struct {
@@ -425,7 +452,7 @@ func (byteListLayer) UnwrapAll(b []byte, limit int64) ([]Decoded, error) {
 	}
 	var text *Decoded
 	for _, r := range readings {
-		out, ok := parseTokens(tokens, r.parse)
+		out, ok := parseTokens(list, tokens, r.parse)
 		if !ok {
 			continue
 		}
@@ -442,16 +469,55 @@ func (byteListLayer) UnwrapAll(b []byte, limit int64) ([]Decoded, error) {
 	return []Decoded{*text}, nil
 }
 
-func parseTokens(tokens []string, parse func(string) (byte, bool)) ([]byte, bool) {
-	out := make([]byte, len(tokens))
-	for i, t := range tokens {
+// parseTokens reads every token of list, of which there are count, as a byte. The
+// output is allocated by the first token that parses, so a reading that fails at
+// once costs nothing.
+func parseTokens(list string, count int, parse func(string) (byte, bool)) ([]byte, bool) {
+	var out []byte
+	ok := eachListToken(list, func(t string) bool {
 		v, ok := parse(t)
 		if !ok {
-			return nil, false
+			return false
 		}
-		out[i] = v
+		if out == nil {
+			out = make([]byte, 0, count)
+		}
+		out = append(out, v)
+		return true
+	})
+	if !ok {
+		return nil, false
 	}
 	return out, true
+}
+
+// listSeparators is listSeparator as a table.
+var listSeparators = func() (t [256]bool) {
+	for i := range 0x80 {
+		t[i] = listSeparator(rune(i))
+	}
+	return t
+}()
+
+// eachListToken calls fn with each run of s between separators, until it returns
+// false, and reports whether it reached the end. It finds what strings.FieldsFunc
+// with listSeparator finds: every separator is ASCII, and no byte of a multi-byte
+// rune, valid or not, is ASCII, so this needs no decoding.
+func eachListToken(s string, fn func(string) bool) bool {
+	start := -1
+	for i := 0; i < len(s); i++ {
+		if listSeparators[s[i]] {
+			if start >= 0 {
+				if !fn(s[start:i]) {
+					return false
+				}
+				start = -1
+			}
+		} else if start < 0 {
+			start = i
+		}
+	}
+	return start < 0 || fn(s[start:])
 }
 
 func radixToken(base, minLen, maxLen int, prefix string) func(string) (byte, bool) {

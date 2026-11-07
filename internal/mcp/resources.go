@@ -6,10 +6,11 @@ import (
 )
 
 // Resources expose read-only engine state by URI. They are deliberately a
-// small set: the signature database summary, the ATT&CK coverage matrix, and
-// per-rule metadata. cau://corpus/{sample}/report and cau://model/{name}/card
-// from the Phase 3 sketch wait on the evaluation-corpus addressing and the ML
-// ladder respectively; they are not advertised until they exist.
+// small set: the signature database summary, the ATT&CK coverage matrix, the
+// honesty index and per-rule metadata. cau://corpus/{sample}/report and
+// cau://model/{name}/card from the Phase 3 sketch wait on the
+// evaluation-corpus addressing and the ML ladder respectively; they are not
+// advertised until they exist.
 
 type resourceDesc struct {
 	URI         string `json:"uri"`
@@ -37,6 +38,12 @@ func (s *Server) onResourcesList() (interface{}, *rpcError) {
 			URI:         "cau://coverage",
 			Name:        "ATT&CK coverage matrix",
 			Description: "Techniques covered by the shipped content, per-source summary and declared gaps.",
+			MIMEType:    "application/json",
+		},
+		{
+			URI:         "cau://honesty",
+			Name:        "Honesty index",
+			Description: "What the content covers, what a recorded evaluation measured, and whether the content matches its integrity baseline; each section with its state and caveats. Same document as the honesty_index tool.",
 			MIMEType:    "application/json",
 		},
 	}
@@ -83,6 +90,8 @@ func (s *Server) onResourcesRead(raw json.RawMessage) (interface{}, *rpcError) {
 			"sources":       m.Sources,
 			"gaps":          m.Gaps,
 		})
+	case uri == "cau://honesty":
+		return s.readResource(uri, s.buildHonesty())
 	case strings.HasPrefix(uri, "cau://rules/"):
 		name := strings.TrimPrefix(uri, "cau://rules/")
 		return s.readRuleResource(uri, name)

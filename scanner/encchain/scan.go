@@ -1,5 +1,7 @@
 package encchain
 
+import "bytes"
+
 // run is an encoded region. chars is the whole run with interior whitespace
 // removed (the MIME-dewrapped form). starts holds additional decode attempts,
 // one per interior line boundary, so a plain-text preamble joined to the blob
@@ -42,6 +44,10 @@ func isWrap(c byte) bool { return c == '\r' || c == '\n' || c == '\t' }
 // attempts.
 func collectRuns(data []byte, minRun int, kind string, member func(byte) bool) []run {
 	var runs []run
+	// Reused, because nearly every run is a word far below minRun, and a file of text
+	// has millions of them.
+	var scratch []byte
+	var lineStarts []int // index into chars where each interior line begins
 	i, n := 0, len(data)
 	for i < n {
 		if !member(data[i]) {
@@ -49,8 +55,8 @@ func collectRuns(data []byte, minRun int, kind string, member func(byte) bool) [
 			continue
 		}
 		start := i
-		var chars []byte
-		var lineStarts []int // index into chars where each interior line begins
+		chars := scratch[:0]
+		lineStarts = lineStarts[:0]
 		atLineStart := false
 		for i < n {
 			c := data[i]
@@ -72,9 +78,11 @@ func collectRuns(data []byte, minRun int, kind string, member func(byte) bool) [
 			}
 		}
 	done:
+		scratch = chars[:0]
 		if len(chars) < minRun {
 			continue
 		}
+		chars = bytes.Clone(chars) // r keeps it, and scratch is about to be reused
 		r := run{offset: start, kind: kind, chars: chars}
 		for _, ls := range lineStarts {
 			if len(r.starts) >= maxLineStarts {

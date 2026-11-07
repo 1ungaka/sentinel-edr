@@ -86,7 +86,18 @@ The optional scheduled-scan units are not installed by default:
 
 ```sh
 sudo make install-systemd PREFIX=/usr
+sudo make install-config                # /etc/cau/cau.conf, the agent's configuration
+sudo make install-logrotate             # /etc/logrotate.d/cau, for cau-defend's log
 ```
+
+`cau defend` runs as `cau-defend.service`. It reads `/etc/cau/cau.conf`, and a flag
+on the command line wins over the file. It defends by default, so set
+`report-only = true` to watch a host first. That setting is only as safe as the file
+it sits in: a cau.conf the agent refuses or cannot parse leaves it on its built-in
+defaults, and those act rather than failing closed into report-only. A host that must
+never act should put `--report-only` on the unit's ExecStart line instead, because
+the command line wins over the file. Both packages install the configuration
+and the rotation policy as conffiles, so local edits survive an upgrade.
 
 ## Packages
 

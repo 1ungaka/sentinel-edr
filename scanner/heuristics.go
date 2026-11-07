@@ -8,9 +8,14 @@ import (
 	"github.com/s-b-repo/cau/internal/safefs"
 	"github.com/s-b-repo/cau/scanner/static"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf16"
+	"unsafe"
+
+	"github.com/s-b-repo/cau/internal/prefilter"
 )
 
 // Heuristic scoring model
@@ -710,19 +715,23 @@ const minStringLen = 6
 // scanStrings extracts printable ASCII and UTF-16LE strings from raw bytes and
 // returns one HeuristicMatch per pattern that occurred, in table order.
 func scanStrings(data []byte) []HeuristicMatch {
-	lowerPatterns := make([]string, len(suspiciousStrings))
-	for i, p := range suspiciousStrings {
-		lowerPatterns[i] = strings.ToLower(p.Pattern)
-	}
+	lowerPatterns, filter := stringPatterns()
 
 	hits := make(map[int]*HeuristicMatch)
 	seenExample := make(map[int]map[string]bool)
 
-	consider := func(s string) {
+	// consider is given a view into data for an ASCII string, so whatever is kept
+	// has to be copied or one short string would pin the whole file in the result.
+	consider := func(s string, patterns []int) {
 		sl := strings.ToLower(s)
-		for i, p := range lowerPatterns {
+		copied := false
+		for _, i := range patterns {
+			p := lowerPatterns[i]
 			if !strings.Contains(sl, p) {
 				continue
+			}
+			if !copied {
+				s, copied = strings.Clone(s), true
 			}
 			m, ok := hits[i]
 			if !ok {
@@ -749,11 +758,24 @@ func scanStrings(data []byte) []HeuristicMatch {
 		}
 	}
 
-	for _, s := range extractASCII(data) {
-		consider(s)
+	// An ASCII string is a contiguous run of the file, so a pattern absent from the
+	// whole file can't be in any of them. That is one pass of an automaton against
+	// every string times every pattern, and on most files nothing survives it.
+	view := unsafe.String(unsafe.SliceData(data), len(data)) // audit:ok safe only while scan buffers are never pooled or written; consider clones whatever it keeps
+	present := filter.Scan(view)
+	var asciiPatterns []int
+	for i := range lowerPatterns {
+		if present.May(i) {
+			asciiPatterns = append(asciiPatterns, i)
+		}
 	}
+	present.Release()
+	if len(asciiPatterns) > 0 {
+		forEachASCII(view, func(s string) { consider(s, asciiPatterns) })
+	}
+	// UTF-16 interleaves its bytes, so the pass above says nothing about these.
 	for _, s := range extractUTF16(data) {
-		consider(s)
+		consider(s, allStringPatterns())
 	}
 
 	out := make([]HeuristicMatch, 0, len(hits))
@@ -765,26 +787,45 @@ func scanStrings(data []byte) []HeuristicMatch {
 	return out
 }
 
-// extractASCII pulls printable ASCII sequences of minStringLen+ chars.
-func extractASCII(data []byte) []string {
-	var results []string
+// stringPatterns is suspiciousStrings lowercased, with a filter over them, built
+// once: it used to be rebuilt for every file.
+var stringPatterns = sync.OnceValues(func() ([]string, *prefilter.Set) {
+	lower := make([]string, len(suspiciousStrings))
+	exprs := make([]string, len(suspiciousStrings))
+	for i, p := range suspiciousStrings {
+		lower[i] = strings.ToLower(p.Pattern)
+		exprs[i] = regexp.QuoteMeta(lower[i])
+	}
+	return lower, prefilter.New(exprs)
+})
+
+var allStringPatterns = sync.OnceValue(func() []int {
+	all := make([]int, len(suspiciousStrings))
+	for i := range all {
+		all[i] = i
+	}
+	return all
+})
+
+// forEachASCII calls fn with each printable ASCII sequence of minStringLen+ chars,
+// as a view of text rather than a copy. A file of text is millions of them.
+func forEachASCII(text string, fn func(string)) {
 	start := -1
-	for i, b := range data {
-		if isPrintableASCII(b) {
+	for i := 0; i < len(text); i++ {
+		if isPrintableASCII(text[i]) {
 			if start == -1 {
 				start = i
 			}
 		} else {
 			if start != -1 && i-start >= minStringLen {
-				results = append(results, string(data[start:i]))
+				fn(text[start:i])
 			}
 			start = -1
 		}
 	}
-	if start != -1 && len(data)-start >= minStringLen {
-		results = append(results, string(data[start:]))
+	if start != -1 && len(text)-start >= minStringLen {
+		fn(text[start:])
 	}
-	return results
 }
 
 // extractUTF16 pulls UTF-16LE sequences of minStringLen+ chars. Both byte

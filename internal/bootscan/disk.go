@@ -93,6 +93,12 @@ const (
 // ScanDisk opens a disk image or block device read-only and analyses its
 // boot structures.
 func ScanDisk(path string) (*DiskReport, []Finding) {
+	// A disk is a regular file or a device, so the open cannot insist on a
+	// regular file; a FIFO or a socket is refused before it, because opening
+	// a FIFO for reading waits for a writer that never comes.
+	if fi, err := os.Stat(path); err == nil && fi.Mode()&(os.ModeNamedPipe|os.ModeSocket) != 0 {
+		return &DiskReport{Path: path, Error: "not a disk image or a block device (" + fi.Mode().Type().String() + ")"}, nil
+	}
 	f, err := os.Open(path) // read-only by construction
 	if err != nil {
 		return &DiskReport{Path: path, Error: err.Error()}, nil

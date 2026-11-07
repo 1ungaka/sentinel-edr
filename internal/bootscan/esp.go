@@ -122,6 +122,7 @@ func ScanESP(root string, secureBoot *bool) (*ESPReport, []Finding, []string) {
 		bin, berr := inspectEFIBinary(path, rel)
 		if berr != nil {
 			notes = append(notes, rel+" could not be read: "+berr.Error())
+			rep.Truncated = true // an EFI binary is missing from the inventory
 			return nil
 		}
 		rep.Binaries = append(rep.Binaries, bin)
@@ -174,15 +175,13 @@ func firstN(s []string, n int) []string {
 // inspectEFIBinary hashes a file and reads its PE headers.
 func inspectEFIBinary(path, rel string) (EFIBinary, error) {
 	bin := EFIBinary{Path: rel}
-	f, err := os.Open(path) // read-only by construction
+	// Read-only, a regular file, and never through a symlink: the walk saw a
+	// regular file here, and the open checks that it still is one.
+	f, fi, err := safefs.OpenNoFollow(path)
 	if err != nil {
 		return bin, err
 	}
 	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return bin, err
-	}
 	bin.Size = fi.Size()
 	bin.Modified = fi.ModTime().UTC().Format(time.RFC3339)
 

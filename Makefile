@@ -14,6 +14,21 @@ GOFLAGS  ?=
 # the same bytes.
 VERSION  ?= $(shell command git describe --tags --always --dirty 2>/dev/null || git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  := -X main.version=$(VERSION)
+# SELFTEST_PUBKEY pins the integrity-baseline signing key into the binary:
+#
+#   make build SELFTEST_PUBKEY=$$(cat pub.hex)
+#
+# Without it, "no key configured" and "this baseline is unsigned" are the same
+# state, so an attacker who rewrites detection content can replace the signed
+# baseline with an unsigned one of their own and the agent has nothing to object
+# to. With a key linked in, a signature is expected and that downgrade fails.
+# This is the public key only — the private half must never be on the host the
+# agent defends, which is the whole reason the signature is worth more than a
+# digest.
+SELFTEST_PUBKEY ?=
+ifneq ($(strip $(SELFTEST_PUBKEY)),)
+LDFLAGS += -X main.pinnedSelftestKey=$(SELFTEST_PUBKEY)
+endif
 # -trimpath strips the build directory from recorded file paths, which makes the
 # binary reproducible; -buildmode=pie makes it position-independent, which is
 # what Debian's hardening flags ask for and what lintian checks (without it both
@@ -31,7 +46,7 @@ EVAL_OUT ?= eval-out
 
 export CGO_ENABLED=1
 
-.PHONY: regex-audit eval-lab all build test test-race vet fmt fmt-check lint bench clean install \
+.PHONY: regex-audit vm-respond eval-lab all build test test-race vet fmt fmt-check lint bench clean install \
          install-systemd install-logrotate install-config \
          eval eval-validate eval-run eval-gate baseline lint-rules coverage \
          coverage-gate coverage-record fuzz ci build-mcp
@@ -61,10 +76,10 @@ vet:
 	go vet $(PKG)
 
 fmt:
-	gofmt -w $$(find . -name '*.go' -not -path './vendor/*')
+	gofmt -w $$(find . -name '*.go' -not -path './vendor/*' -not -path './cau-kernel/*')
 
 fmt-check:
-	@out=$$(gofmt -l $$(find . -name '*.go' -not -path './vendor/*')); \
+	@out=$$(gofmt -l $$(find . -name '*.go' -not -path './vendor/*' -not -path './cau-kernel/*')); \
 	if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
 lint: fmt-check vet
@@ -75,8 +90,17 @@ regex-audit:
 	python3 scripts/regex-audit.py --self-test
 	python3 scripts/regex-audit.py
 
+# Prove the response on a real kernel as real root, in QEMU, with no root on the
+# host: real stops, kills and quarantines, and what must never be touched.
+vm-respond:
+	scripts/vm-respond.sh
+
+# The peeler's benchmarks report cpu-ns/op beside ns/op, so a budget that
+# "reduces latency, not cost" (PLAN.md, DoS honesty) is visible as such. Pipe
+# through benchstat for a comparison: make bench BENCHFLAGS='-count 10' | benchstat -
+BENCHFLAGS ?=
 bench:
-	go test -run '^$$' -bench . -benchmem ./scanner/ ./scanner/static/ ./scanner/stego/
+	go test -run '^$$' -bench . -benchmem $(BENCHFLAGS) ./scanner/ ./scanner/static/ ./scanner/stego/ ./internal/peeler/
 
 # Robustness fuzzing: drive the untrusted-input parsers with coverage-guided
 # mutation. The invariant is "never panic". FUZZTIME tunes each target's run
@@ -188,8 +212,11 @@ eval-lab: build
 # ── Detection content gates ─────────────────────────────────────────────────
 
 # Rule hygiene: compile, required meta, technique ids, dead strings.
+# --strict: a warning fails the gate too. The bundled ruleset is warning-clean,
+# and keeping it that way is the point: a weak atom or a narrow string should
+# block a merge, not accumulate.
 lint-rules: build
-	./$(BINARY) rules lint --rules $(RULES)
+	./$(BINARY) rules lint --strict --rules $(RULES)
 
 # Fail if the content lost a technique, or gained one nobody recorded.
 coverage-gate: build
@@ -247,6 +274,8 @@ install-systemd:
 	install -m 0644 packaging/systemd/cau-defend.service $(DESTDIR)$(PREFIX)/lib/systemd/system/
 	install -m 0644 packaging/systemd/cau-scan.service $(DESTDIR)$(PREFIX)/lib/systemd/system/
 	install -m 0644 packaging/systemd/cau-scan.timer $(DESTDIR)$(PREFIX)/lib/systemd/system/
+	install -m 0644 packaging/systemd/cau-update.service $(DESTDIR)$(PREFIX)/lib/systemd/system/
+	install -m 0644 packaging/systemd/cau-update.timer $(DESTDIR)$(PREFIX)/lib/systemd/system/
 
 # Rotation for what the resident daemon writes. This is not optional polish for
 # a service designed to be left running: cau-defend.service appends to

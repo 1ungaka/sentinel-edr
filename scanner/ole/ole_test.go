@@ -26,6 +26,7 @@ type oleEntry struct {
 	name    string
 	storage bool   // true => storage object; else a stream
 	content []byte // stream content; nil => a zero-length stream (no sectors)
+	in      string // name of the storage that contains this entry; "" => the root
 }
 
 func u16(v uint16) []byte { b := make([]byte, 2); binary.LittleEndian.PutUint16(b, v); return b }
@@ -43,6 +44,7 @@ func buildCFB(entries ...oleEntry) []byte {
 		objType byte
 		start   uint32
 		size    uint64
+		in      string
 	}
 
 	var dataSectors [][]byte
@@ -65,9 +67,9 @@ func buildCFB(entries ...oleEntry) []byte {
 	for _, e := range entries {
 		switch {
 		case e.storage:
-			dir = append(dir, built{name: e.name, objType: objStorage, start: 0, size: 0})
+			dir = append(dir, built{name: e.name, objType: objStorage, start: 0, size: 0, in: e.in})
 		case e.content == nil:
-			dir = append(dir, built{name: e.name, objType: objStream, start: endOfChain, size: 0})
+			dir = append(dir, built{name: e.name, objType: objStream, start: endOfChain, size: 0, in: e.in})
 		default:
 			content := e.content
 			if len(content) < 4096 { // force regular-FAT storage
@@ -76,8 +78,39 @@ func buildCFB(entries ...oleEntry) []byte {
 				content = p
 			}
 			start := appendRegion(content)
-			dir = append(dir, built{name: e.name, objType: objStream, start: start, size: uint64(len(content))})
+			dir = append(dir, built{name: e.name, objType: objStream, start: start, size: uint64(len(content)), in: e.in})
 		}
+	}
+
+	// Directory tree. The children of each storage are linked as a plain
+	// right-sibling chain hanging off the storage's child id: not the balanced,
+	// name-ordered tree Office writes, but a well-formed one, which is all a
+	// reader that only asks "which storage holds this stream" needs. An entry
+	// whose `in` names no storage hangs off the root.
+	containerOf := func(i int) int {
+		if dir[i].in != "" {
+			for j := 1; j < len(dir); j++ {
+				if j != i && dir[j].objType == objStorage && dir[j].name == dir[i].in {
+					return j
+				}
+			}
+		}
+		return 0
+	}
+	firstChild := make([]uint32, len(dir))
+	rightSib := make([]uint32, len(dir))
+	lastChild := make([]int, len(dir))
+	for i := range dir {
+		firstChild[i], rightSib[i], lastChild[i] = noStream, noStream, -1
+	}
+	for i := 1; i < len(dir); i++ {
+		c := containerOf(i)
+		if lastChild[c] < 0 {
+			firstChild[c] = uint32(i)
+		} else {
+			rightSib[lastChild[c]] = uint32(i)
+		}
+		lastChild[c] = i
 	}
 
 	// Directory stream.
@@ -99,12 +132,8 @@ func buildCFB(entries ...oleEntry) []byte {
 		dirBytes[base+66] = de.objType
 		dirBytes[base+67] = 1 // color: black
 		binary.LittleEndian.PutUint32(dirBytes[base+68:], noStream)
-		binary.LittleEndian.PutUint32(dirBytes[base+72:], noStream)
-		child := noStream
-		if de.objType == objRoot && nEntries > 1 {
-			child = 1
-		}
-		binary.LittleEndian.PutUint32(dirBytes[base+76:], child)
+		binary.LittleEndian.PutUint32(dirBytes[base+72:], rightSib[i])
+		binary.LittleEndian.PutUint32(dirBytes[base+76:], firstChild[i])
 		binary.LittleEndian.PutUint32(dirBytes[base+116:], de.start)
 		binary.LittleEndian.PutUint32(dirBytes[base+120:], uint32(de.size))
 	}
@@ -481,7 +510,7 @@ func TestClassesCatalog(t *testing.T) {
 	allowed := map[string]bool{
 		techVBScript: true, techOfficeStartup: true, techUserExec: true,
 		techPowerShell: true, techCmd: true, techIngress: true,
-		techObfuscation: true, techExploit: true,
+		techObfuscation: true, techExploit: true, techStomping: true,
 	}
 	cls := Classes()
 	if len(cls) == 0 {

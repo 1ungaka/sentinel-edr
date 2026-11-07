@@ -60,9 +60,11 @@ so it recovers from failure at two levels:
   never takes the service down.
 - **A true hang, deadlock, or hard crash** (e.g. an OOM kill, a wedged CGo
   call) stops the watchdog pings; systemd then kills and restarts the service.
-  `StartLimitBurst=5` / `StartLimitIntervalSec=300` stop a crash-loop from
-  spinning forever — after 5 failures in 5 minutes it stays failed for an
-  operator. Tune `WatchdogSec` above your host's scheduler-stall tolerance; the
+  In `cau-daemon.service`, `StartLimitBurst=5` / `StartLimitIntervalSec=300` stop
+  a crash-loop from spinning forever — after 5 failures in 5 minutes it stays
+  failed for an operator. `cau-defend.service` sets `StartLimitIntervalSec=0` and
+  never gives up, because a unit left failed is a host with no EDR until someone
+  notices. Tune `WatchdogSec` above your host's scheduler-stall tolerance; the
   daemon pings every `WatchdogSec/2` on a timer independent of the scan
   interval, so a long gap between scans is never mistaken for a hang.
 
@@ -80,8 +82,37 @@ dump, and a coerced `exec` cannot escalate. It also logs the running binary's
 SHA-256 so you can compare it against the signed release (`cau verify-self`).
 The unit adds the sandbox around that: unprivileged user, `ProtectProc=invisible`
 (other users cannot even see the process), read-only system, a locked-down
-syscall filter, and `cau selftest` as `ExecStartPre` to refuse a start on
-tampered detection content. See [Anti-Tamper](../../wiki/Anti-Tamper.md).
+syscall filter, and `cau selftest` as `ExecStartPre` to report tampered detection
+content before the service starts. The leading `-` on that line is deliberate:
+tampering is reported, and never stops the defence. See
+[Anti-Tamper](../../wiki/Anti-Tamper.md).
+
+## 3. Signed updates on a timer (opt-in)
+
+`cau-update.service` + `cau-update.timer` keep the signature database current
+without anyone logging in. Each run first checks the binary against its
+release's signed `SHA256SUMS` (`cau verify-self`), then fetches the signed
+database bundle (`cau update`). A bundle is installed only if its signature
+verifies against the pinned key, its payload matches the signed manifest, it
+is not older than the installed one and this engine is new enough for it;
+otherwise the live database is left untouched and the unit fails.
+
+Nothing enables these units. Configure them first:
+
+```sh
+install -m 0644 release-pubkey.hex /etc/cau/release-pubkey.hex
+chown -R cau:cau /usr/share/cau/signatures
+systemctl edit cau-update.service
+#   [Service]
+#   Environment=CAU_UPDATE_URL=https://github.com/s-b-repo/cau/releases/latest/download
+systemctl enable --now cau-update.timer
+```
+
+The unit will not start without `/etc/cau/release-pubkey.hex`, and fails with a
+clear message if `CAU_UPDATE_URL` is empty. It runs as the unprivileged `cau`
+user with no capabilities and may write only the signature database directory.
+Air-gapped hosts do not use it: deliver the signed bundle on media and run
+`cau update --from <dir>`.
 
 ## Prevention
 

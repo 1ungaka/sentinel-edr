@@ -1,12 +1,17 @@
 // Command cau-mcp serves the CAU detection engine over the Model Context
 // Protocol (JSON-RPC 2.0 on stdio). An MCP client — an LLM agent or an IDE —
 // drives the engine through bounded tools (scan, explain, test/draft rules,
-// coverage) with file access confined to the roots passed on the command line.
+// peel, firmware and boot-chain inventory, hardware identity, evaluation
+// summaries, coverage and the honesty index) with file access confined to the
+// roots passed on the command line. The surface is analysis only: nothing
+// here executes, quarantines, blocks or kills, so `cau defend`, `cau net` and
+// quarantine are deliberately not exposed.
 //
 // No competitor ships an AV engine as MCP; this is the Phase 3 surface.
 package main
 
 import (
+	"crypto/ed25519"
 	"flag"
 	"fmt"
 	"net"
@@ -17,6 +22,8 @@ import (
 
 	"github.com/s-b-repo/cau/internal/mcp"
 	"github.com/s-b-repo/cau/internal/resources"
+	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/s-b-repo/cau/internal/selftest"
 	"github.com/s-b-repo/cau/scanner"
 	"github.com/s-b-repo/cau/scanner/static"
 )
@@ -29,11 +36,57 @@ const (
 	httpPath   = "/mcp"
 )
 
+// Defaults the honesty index reads when they exist in the working directory,
+// the same ones `cau honesty` uses: the committed evaluation baseline and the
+// committed coverage expectation.
+const (
+	honestyDefaultEval   = "baselines/smoke.json"
+	honestyDefaultExpect = "baselines/attack-coverage.txt"
+)
+
+// envSelftestKey names the environment variable `cau selftest` reads the
+// pinned public key from.
+const envSelftestKey = "CAU_SELFTEST_PUBKEY"
+
+// maxPubKeyBytes bounds a public key file: a hex Ed25519 key is 64 characters.
+const maxPubKeyBytes = 4096
+
 // stringList collects a repeatable flag (--root a --root b).
 type stringList []string
 
 func (s *stringList) String() string     { return strings.Join(*s, ", ") }
 func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
+
+func fileExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// resolvePubkey reads the baseline-verification key from the flag or the
+// environment. A key that was supplied and cannot be used is reported, not
+// quietly downgraded to "no key": the honesty index says the signature was
+// not checked and why.
+func resolvePubkey(file string) (ed25519.PublicKey, string) {
+	var raw []byte
+	var origin string
+	switch {
+	case file != "":
+		b, err := safefs.ReadOperatorFile(file, maxPubKeyBytes, 5*time.Second)
+		if err != nil {
+			return nil, fmt.Sprintf("reading the public key %s: %v", file, err)
+		}
+		raw, origin = b, file
+	case os.Getenv(envSelftestKey) != "":
+		raw, origin = []byte(os.Getenv(envSelftestKey)), "$"+envSelftestKey
+	default:
+		return nil, ""
+	}
+	k, err := selftest.ParsePublicKey(raw)
+	if err != nil {
+		return nil, fmt.Sprintf("the public key in %s is not usable: %v", origin, err)
+	}
+	return k, ""
+}
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
@@ -65,6 +118,10 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 	maxBytes := fs.Int64("max-bytes", mcp.DefaultMaxBytes, "per-file size cap for file tools")
 	maxFiles := fs.Int("max-files", mcp.DefaultMaxDirFiles, "max files a single scan_dir may enumerate")
 	httpAddr := fs.String("http", "", "serve the streamable-HTTP transport on this address (e.g. 127.0.0.1:8923) instead of stdio")
+	expect := fs.String("expect", "", "coverage expectation file for the honesty index (default: "+honestyDefaultExpect+" if present)")
+	evalPath := fs.String("eval", "", "evaluation report written by `cau eval run --out`, for the honesty index (default: "+honestyDefaultEval+" if present)")
+	manifest := fs.String("manifest", "", "integrity baseline for the honesty index (default: integrity.json next to the signature DB)")
+	pubKeyFile := fs.String("pubkey", "", "Ed25519 public key (hex) to verify the integrity baseline's signature (also read from $"+envSelftestKey+")")
 	showVersion := fs.Bool("version", false, "print version and exit")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -162,19 +219,37 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 		logf("[warn] sandbox: %s", w)
 	}
 	if len(roots) == 0 {
-		logf("no --root given: scan_file/scan_dir/explain_verdict are disabled; hash, rule and coverage tools still work")
+		logf("no --root given: the file tools (scan_file, scan_dir, explain_verdict, peel_file, firmware_image, boot_scan, hardware_identity, eval_report) are disabled; hash, rule, coverage and honesty tools still work")
 	} else {
 		logf("scan roots: %s", strings.Join(sandbox.Roots(), ", "))
 	}
 
+	// ── honesty index inputs (operator paths, never client-supplied) ──
+	if *expect == "" && fileExists(honestyDefaultExpect) {
+		*expect = honestyDefaultExpect
+	}
+	if *evalPath == "" && fileExists(honestyDefaultEval) {
+		*evalPath = honestyDefaultEval
+	}
+	pubKey, pubKeyErr := resolvePubkey(*pubKeyFile)
+	if pubKeyErr != "" {
+		logf("[warn] %s", pubKeyErr)
+	}
+
 	srv := mcp.NewServer(mcp.Deps{
-		Engine:    engine,
-		Yara:      ys,
-		SigDB:     sigDB,
-		Sandbox:   sandbox,
-		Info:      mcp.ServerInfo{Name: serverName, Version: version},
-		RulesPath: rulesPath,
-		SigDBPath: dbPath,
+		Engine:       engine,
+		Yara:         ys,
+		SigDB:        sigDB,
+		FuzzyDB:      fuzzy,
+		Sandbox:      sandbox,
+		Info:         mcp.ServerInfo{Name: serverName, Version: version},
+		RulesPath:    rulesPath,
+		SigDBPath:    dbPath,
+		ExpectPath:   *expect,
+		EvalPath:     *evalPath,
+		ManifestPath: *manifest,
+		PubKey:       pubKey,
+		PubKeyErr:    pubKeyErr,
 	})
 
 	if *httpAddr != "" {

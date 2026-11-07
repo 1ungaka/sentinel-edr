@@ -301,7 +301,7 @@ func rebaselineFeed(dest, manifestPath, signKeyFile string, stdout, stderr io.Wr
 		m.Entries = append(m.Entries, entry)
 	}
 	if signKeyFile != "" {
-		keyData, rerr := os.ReadFile(signKeyFile)
+		keyData, rerr := readPrivateKey(signKeyFile)
 		if rerr != nil {
 			fmt.Fprintf(stderr, "[WARN] the baseline was not updated: reading the signing key: %v\n", rerr)
 			return

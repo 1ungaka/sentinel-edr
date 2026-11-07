@@ -399,6 +399,10 @@ func (e *ELF) scanSyscalls(data []byte) {
 	}
 	scanned := 0
 	count := func(buf []byte) {
+		if e.Machine == 62 {
+			e.SyscallStubs += e.countSyscallsAMD64(buf)
+			return
+		}
 		e.SyscallStubs += countSyscalls(buf, e.Machine)
 	}
 	// Prefer executable sections; fall back to executable PT_LOAD segments
@@ -442,6 +446,22 @@ func (e *ELF) scanSyscalls(data []byte) {
 		count(data[off : off+sz])
 		scanned += sz
 	}
+}
+
+// countSyscallsAMD64 counts x86-64 "syscall" instructions like countSyscalls
+// and, for each, records the system-call number when the instruction directly
+// before it loaded one as an immediate (see decodeSyscallAMD64).
+func (e *ELF) countSyscallsAMD64(buf []byte) int {
+	n := 0
+	for i := 0; i+1 < len(buf); i++ {
+		if buf[i] == 0x0f && buf[i+1] == 0x05 {
+			n++
+			if nr, ok := decodeSyscallAMD64(buf, i); ok {
+				e.noteSyscallNumber(nr)
+			}
+		}
+	}
+	return n
 }
 
 // countSyscalls counts the architecture's kernel-entry instruction in buf.

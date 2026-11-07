@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -68,6 +69,7 @@ var conformanceFixtures = []struct {
 	{"ecs", "ecs.json", checkECSFixture},
 	{"ocsf", "ocsf.json", checkOCSFFixture},
 	{"otlp", "otlp.json", checkOTLPFixture},
+	{"stix", "stix.json", checkSTIXFixture},
 }
 
 func TestSinkConformanceFixtures(t *testing.T) {
@@ -494,7 +496,16 @@ func otlpAttrs(t *testing.T, list any) map[string]any {
 			case "arrayValue":
 				var items []string
 				for _, it := range v.(map[string]any)["values"].([]any) {
-					items = append(items, it.(map[string]any)["stringValue"].(string))
+					item := it.(map[string]any)
+					if s, ok := item["stringValue"].(string); ok {
+						items = append(items, s)
+						continue
+					}
+					n, ok := item["intValue"].(string)
+					if _, err := strconv.ParseInt(n, 10, 64); !ok || err != nil {
+						t.Fatalf("array item of %s is neither a stringValue nor a decimal intValue: %v", key, it)
+					}
+					items = append(items, n)
 				}
 				out[key] = strings.Join(items, ",")
 			default:
@@ -703,4 +714,472 @@ func TestNewReporterKnowsEverySinkFormat(t *testing.T) {
 	if _, err := NewReporter("splunk"); err == nil || !strings.Contains(err.Error(), "syslog-cef") {
 		t.Errorf("unknown format should list the sink formats, got %v", err)
 	}
+}
+
+// ── OCSF maps in (RenderSinkBatch) ───────────────────────────────────────────
+
+// viaJSON is what a finding looks like after it crossed a JSON boundary: the
+// shape a queue or another process hands back.
+func viaJSON(t *testing.T, v any) []map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// The contract that keeps the two entry points one format: for a scan's
+// findings, rendering the OCSF maps is byte-identical to SinkReporter.
+func TestRenderSinkEventsMatchesSinkReporter(t *testing.T) {
+	inputs := map[string]Input{
+		"full":        fullInput(),
+		"conformance": conformanceInput(),
+		"hostile":     hostileInput(),
+		"empty":       {},
+		"round-trip":  roundTripInput(),
+		"fusion": {Results: []scanner.ScanResult{stegoBreach("c"), fusionCorroboratedResult("f"), fusionRestated("g")},
+			Heuristics: []scanner.HeuristicResult{heuristicBreach("g")}},
+	}
+	for name, in := range inputs {
+		findings := NewOCSFReporter(sinkOpts()...).Build(in)
+		maps := viaJSON(t, findings)
+		if len(maps) != len(findings) {
+			t.Fatalf("%s: %d maps for %d findings", name, len(maps), len(findings))
+		}
+		for _, format := range SinkFormats() {
+			for _, indent := range []bool{false, true} {
+				want := renderFormat(t, format, in, WithIndent(indent))
+				got, n, err := RenderSinkEvents(format, maps, sinkOpts(WithIndent(indent))...)
+				if err != nil {
+					t.Fatalf("%s/%s: %v", name, format, err)
+				}
+				if n != len(findings) {
+					t.Errorf("%s/%s: rendered %d of %d", name, format, n, len(findings))
+				}
+				if !bytes.Equal(got, want) {
+					t.Errorf("%s/%s (indent %v): the map path and the scan path disagree\n got: %s\nwant: %s", name, format, indent, got, want)
+				}
+			}
+		}
+	}
+	if n := len(NewOCSFReporter(sinkOpts()...).Build(inputs["full"])); n != 3 {
+		t.Fatalf("the full input should hold 3 findings, has %d", n)
+	}
+	if _, _, err := RenderSinkEvents("splunk", nil); err == nil || !strings.Contains(err.Error(), "syslog-cef") {
+		t.Errorf("an unknown format should list the sink formats, got %v", err)
+	}
+}
+
+// incidentMap builds a correlated incident the way forward.OCSFIncident does:
+// Go-typed values, file, process and dst_endpoint evidences, the reporting
+// host in unmapped. (This package cannot import forward: forward imports it.)
+func incidentMap(uid string, confirmed bool, files []string, pids []int, peers []string) map[string]any {
+	severityID, severity := 3, "Medium"
+	if confirmed {
+		severityID, severity = 4, "High"
+	}
+	var evidences []map[string]any
+	for _, f := range files {
+		evidences = append(evidences, map[string]any{"file": map[string]any{"name": baseName(f), "path": f, "type_id": 1, "type": "Regular File"}})
+	}
+	for _, pid := range pids {
+		evidences = append(evidences, map[string]any{"process": map[string]any{"pid": pid}})
+	}
+	for _, p := range peers {
+		evidences = append(evidences, map[string]any{"dst_endpoint": map[string]any{"ip": p}})
+	}
+	ev := map[string]any{
+		"activity_id": OCSFActivityID, "activity_name": OCSFActivityName,
+		"category_uid": OCSFCategoryUID, "category_name": OCSFCategoryName,
+		"class_uid": OCSFClassUID, "class_name": OCSFClassName,
+		"type_uid": OCSFTypeUID, "type_name": OCSFTypeName,
+		"time":        fixedTime.UnixMilli(),
+		"severity_id": severityID, "severity": severity,
+		"status_id": OCSFStatusNew, "status": "New", "is_alert": confirmed,
+		"message": "CONFIRMED incident (file+network) reverse shell",
+		"metadata": map[string]any{
+			"version":     OCSFVersion,
+			"product":     map[string]any{"name": "CAU EDR", "version": "9.9.9-test", "vendor_name": "CAU"},
+			"logged_time": fixedTime.UnixMilli(),
+		},
+		"finding_info": map[string]any{
+			"title": "CONFIRMED incident (file+network) reverse shell",
+			"uid":   uid,
+			"desc":  "a shell script opened a socket to a peer",
+			"analytic": map[string]any{
+				"name": "cau defend correlation", "type_id": 4, "type": "Behavioral", "uid": "inc-0001", "desc": "why",
+			},
+			"attacks": []map[string]any{{
+				"technique": map[string]any{"uid": "T1059.004", "name": "Unix Shell"},
+				"version":   "v15",
+				"tactics":   []map[string]any{{"name": "Execution"}},
+			}},
+			"data_sources": []string{"file", "network"},
+		},
+		"unmapped": map[string]any{"agent_host": "edr-agent-7", "confirmed": confirmed, "score": 9, "layers": []string{"file", "network"}},
+	}
+	if len(evidences) > 0 {
+		ev["evidences"] = evidences
+	}
+	if len(peers) == 1 {
+		ev["dst_endpoint"] = map[string]any{"ip": peers[0]}
+	}
+	return ev
+}
+
+func renderIncident(t *testing.T, format string, m map[string]any) []byte {
+	t.Helper()
+	b, err := RenderSinkBatch(format, []map[string]any{m}, sinkOpts()...)
+	if err != nil || b.Rendered != 1 || len(b.Skipped) != 0 {
+		t.Fatalf("%s: rendered %d, skipped %v, err %v", format, b.Rendered, b.Skipped, err)
+	}
+	// A map that crossed JSON must render to the same bytes as the Go-typed one.
+	again, err := RenderSinkBatch(format, viaJSON(t, []map[string]any{m}), sinkOpts()...)
+	if err != nil || !bytes.Equal(again.Payload, b.Payload) {
+		t.Fatalf("%s: the JSON round-trip of an incident renders differently (err %v)\n native: %s\n json:   %s", format, err, b.Payload, again.Payload)
+	}
+	return b.Payload
+}
+
+func otlpRecordAttrs(t *testing.T, raw []byte) (resource, record map[string]any) {
+	t.Helper()
+	rl := decodeObject(t, raw)["resourceLogs"].([]any)[0].(map[string]any)
+	rec := rl["scopeLogs"].([]any)[0].(map[string]any)["logRecords"].([]any)[0].(map[string]any)
+	return otlpAttrs(t, dig(t, rl, "resource", "attributes")), otlpAttrs(t, rec["attributes"])
+}
+
+// What an incident names and a file finding does not (the peer, the process,
+// a second file) reaches every format that has a place for it.
+func TestRenderSinkBatchCarriesIncidentFields(t *testing.T) {
+	const peer = "203.0.113.7"
+	one := incidentMap("fp-one", true, []string{"/tmp/a.sh", "/tmp/b.sh"}, []int{4242}, []string{peer})
+
+	ecs := decodeObject(t, []byte(oneLine(t, renderIncident(t, "ecs", one))))
+	if dig(t, ecs, "destination", "ip") != peer || dig(t, ecs, "destination", "address") != peer {
+		t.Errorf("ecs destination: %v", ecs["destination"])
+	}
+	if ips := dig(t, ecs, "related", "ip").([]any); len(ips) != 1 || ips[0] != peer {
+		t.Errorf("ecs related.ip: %v", ips)
+	}
+	if dig(t, ecs, "process", "pid") != float64(4242) {
+		t.Errorf("ecs process: %v", ecs["process"])
+	}
+	if files := dig(t, ecs, "cau", "files").([]any); len(files) != 2 || files[0] != "/tmp/a.sh" || files[1] != "/tmp/b.sh" {
+		t.Errorf("ecs cau.files: %v", files)
+	}
+	if dig(t, ecs, "file", "path") != "/tmp/a.sh" || dig(t, ecs, "host", "name") != "edr-agent-7" {
+		t.Errorf("ecs file/host: %v %v", ecs["file"], ecs["host"])
+	}
+	if dig(t, ecs, "event", "id") != "fp-one" || dig(t, ecs, "event", "severity") != float64(8) || dig(t, ecs, "rule", "id") != "inc-0001" {
+		t.Errorf("ecs event/rule: %v %v", ecs["event"], ecs["rule"])
+	}
+	if ids := dig(t, ecs, "threat", "technique", "id").([]any); len(ids) != 1 || ids[0] != "T1059.004" {
+		t.Errorf("ecs threat: %v", ecs["threat"])
+	}
+	if cat := dig(t, ecs, "event", "category").([]any); cat[0] != "malware" {
+		t.Errorf("ecs category with a file: %v", cat)
+	}
+
+	_, ext := parseCEF(t, oneLine(t, renderIncident(t, "cef", one)))
+	if ext["dst"] != peer || ext["spid"] != "4242" || ext["filePath"] != "/tmp/a.sh" || ext["dvchost"] != "edr-agent-7" {
+		t.Errorf("cef: %v", ext)
+	}
+	_, attrs := parseLEEF(t, oneLine(t, renderIncident(t, "leef", one)))
+	if attrs["dst"] != peer || attrs["pids"] != "4242" || attrs["files"] != "/tmp/a.sh,/tmp/b.sh" {
+		t.Errorf("leef: %v", attrs)
+	}
+	sys := parseSyslog(t, oneLine(t, renderIncident(t, "syslog", one)))
+	if sys.params["dst"] != peer || sys.params["pids"] != "4242" || sys.params["files"] != "/tmp/a.sh,/tmp/b.sh" || sys.host != "edr-agent-7" || sys.pri != 83 {
+		t.Errorf("syslog: %+v", sys)
+	}
+	gelf := decodeObject(t, []byte(oneLine(t, renderIncident(t, "gelf", one))))
+	if gelf["_destination_ip"] != peer || gelf["_pids"] != "4242" || gelf["_files"] != "/tmp/a.sh,/tmp/b.sh" || gelf["host"] != "edr-agent-7" {
+		t.Errorf("gelf: %v", gelf)
+	}
+	checkGELFAdditionalFields(t, gelf)
+	res, rec := otlpRecordAttrs(t, renderIncident(t, "otlp", one))
+	if rec["destination.ip"] != peer || rec["related.ip"] != peer || rec["process.pid"] != "4242" ||
+		rec["cau.files"] != "/tmp/a.sh,/tmp/b.sh" || res["host.name"] != "edr-agent-7" {
+		t.Errorf("otlp: %v / %v", res, rec)
+	}
+	// The wrapped profiles carry the same payloads.
+	if m := parseSyslog(t, oneLine(t, renderIncident(t, "syslog-ecs", one))); m.msg != oneLine(t, renderIncident(t, "ecs", one)) {
+		t.Errorf("syslog-ecs MSG is not the ecs document")
+	}
+
+	// Several peers and processes, no file: no single "destination" is named.
+	many := incidentMap("fp-many", false, nil, []int{10, 11}, []string{"198.51.100.9", "2001:db8::5"})
+	ecs = decodeObject(t, []byte(oneLine(t, renderIncident(t, "ecs", many))))
+	if _, has := ecs["destination"]; has {
+		t.Errorf("ecs named one of two peers as the destination: %v", ecs["destination"])
+	}
+	if _, has := ecs["file"]; has {
+		t.Errorf("ecs wrote a file object for an incident without one: %v", ecs["file"])
+	}
+	if ips := dig(t, ecs, "related", "ip").([]any); len(ips) != 2 || ips[1] != "2001:db8::5" {
+		t.Errorf("ecs related.ip: %v", ips)
+	}
+	if pids := dig(t, ecs, "cau", "pids").([]any); len(pids) != 2 || pids[0] != float64(10) || pids[1] != float64(11) {
+		t.Errorf("ecs cau.pids: %v", pids)
+	}
+	if cat := dig(t, ecs, "event", "category").([]any); cat[0] != "intrusion_detection" {
+		t.Errorf("ecs category without a file: %v", cat)
+	}
+	if dig(t, ecs, "event", "severity") != float64(5) {
+		t.Errorf("ecs severity for an unconfirmed incident: %v", dig(t, ecs, "event", "severity"))
+	}
+	_, ext = parseCEF(t, oneLine(t, renderIncident(t, "cef", many)))
+	if ext["flexString1"] != "198.51.100.9,2001:db8::5" || ext["flexString1Label"] != "destinationAddresses" ||
+		ext["flexString2"] != "10,11" || ext["flexString2Label"] != "processIds" || ext["dst"] != "" || ext["spid"] != "" || ext["filePath"] != "" {
+		t.Errorf("cef: %v", ext)
+	}
+	_, attrs = parseLEEF(t, oneLine(t, renderIncident(t, "leef", many)))
+	if attrs["peers"] != "198.51.100.9,2001:db8::5" || attrs["pids"] != "10,11" || attrs["dst"] != "" {
+		t.Errorf("leef: %v", attrs)
+	}
+	gelf = decodeObject(t, []byte(oneLine(t, renderIncident(t, "gelf", many))))
+	if gelf["_peers"] != "198.51.100.9,2001:db8::5" || gelf["_pids"] != "10,11" || gelf["level"] != float64(4) {
+		t.Errorf("gelf: %v", gelf)
+	}
+	if _, has := gelf["_file_path"]; has {
+		t.Errorf("gelf wrote a file path for an incident without one")
+	}
+	checkGELFAdditionalFields(t, gelf)
+	_, rec = otlpRecordAttrs(t, renderIncident(t, "otlp", many))
+	if rec["related.ip"] != "198.51.100.9,2001:db8::5" || rec["cau.pids"] != "10,11" || rec["destination.ip"] != nil || rec["file.path"] != nil {
+		t.Errorf("otlp: %v", rec)
+	}
+
+	// One IPv6 peer, and one peer that is a name: typed address fields only
+	// ever receive an address of their type.
+	v6 := incidentMap("fp-v6", true, nil, nil, []string{"2001:db8::5"})
+	_, ext = parseCEF(t, oneLine(t, renderIncident(t, "cef", v6)))
+	if ext["c6a3"] != "2001:db8::5" || ext["c6a3Label"] != "Destination IPv6 Address" || ext["dst"] != "" {
+		t.Errorf("cef ipv6: %v", ext)
+	}
+	named := incidentMap("fp-name", true, nil, nil, []string{"c2.example.net"})
+	ecs = decodeObject(t, []byte(oneLine(t, renderIncident(t, "ecs", named))))
+	if dig(t, ecs, "destination", "address") != "c2.example.net" || dig(t, ecs, "destination", "ip") != nil {
+		t.Errorf("ecs put a name in destination.ip: %v", ecs["destination"])
+	}
+	if hosts := dig(t, ecs, "related", "hosts").([]any); len(hosts) != 1 || hosts[0] != "c2.example.net" || dig(t, ecs, "related", "ip") != nil {
+		t.Errorf("ecs related: %v", ecs["related"])
+	}
+	_, ext = parseCEF(t, oneLine(t, renderIncident(t, "cef", named)))
+	if ext["dhost"] != "c2.example.net" || ext["dst"] != "" {
+		t.Errorf("cef name: %v", ext)
+	}
+	gelf = decodeObject(t, []byte(oneLine(t, renderIncident(t, "gelf", named))))
+	if gelf["_peers"] != "c2.example.net" || gelf["_destination_ip"] != nil {
+		t.Errorf("gelf name: %v", gelf)
+	}
+}
+
+func checkGELFAdditionalFields(t *testing.T, m map[string]any) {
+	t.Helper()
+	std := map[string]bool{"version": true, "host": true, "short_message": true, "full_message": true, "timestamp": true, "level": true}
+	for k, v := range m {
+		if std[k] {
+			continue
+		}
+		if !gelfField.MatchString(k) || k == "_id" {
+			t.Errorf("additional field %q is not a legal GELF field name", k)
+		}
+		switch v.(type) {
+		case string, float64:
+		default:
+			t.Errorf("additional field %s must be a string or number, is %T", k, v)
+		}
+	}
+}
+
+// An incident's own strings are as attacker-reachable as a file name: a peer
+// or a second path with a newline must not forge an event either.
+func TestRenderSinkBatchHostileIncident(t *testing.T) {
+	m := incidentMap("fp-hostile", true, []string{"/tmp/ok.sh", hostilePath}, []int{7}, []string{hostilePath})
+	for _, format := range SinkFormats() {
+		out := string(renderIncident(t, format, m))
+		if format != "otlp" && strings.Count(out, "\n") != 1 {
+			t.Errorf("%s: %d lines for one incident:\n%s", format, strings.Count(out, "\n"), out)
+		}
+		if strings.ContainsAny(strings.TrimSuffix(out, "\n"), "\x1b\u202e\r") {
+			t.Errorf("%s: a raw control or bidi character reached the output", format)
+		}
+	}
+	ecs := decodeObject(t, renderIncident(t, "ecs", m))
+	if files := dig(t, ecs, "cau", "files").([]any); files[1] != hostilePath {
+		t.Errorf("ecs does not carry the second path byte for byte: %q", files[1])
+	}
+	if dig(t, ecs, "destination", "address") != hostilePath || dig(t, ecs, "destination", "ip") != nil {
+		t.Errorf("ecs destination: %v", ecs["destination"])
+	}
+	sys := parseSyslog(t, oneLine(t, renderIncident(t, "syslog", m)))
+	if sys.params["pids"] != "7" || sys.params["product"] != "CAU EDR" {
+		t.Errorf("syslog: the hostile strings displaced other parameters: %v", sys.params)
+	}
+}
+
+// A map that is not a finding is skipped and reported by index; a finding
+// with fields of the wrong type renders with what could be read. Nothing
+// panics.
+func TestRenderSinkBatchMalformedMaps(t *testing.T) {
+	good := incidentMap("fp-good", true, []string{"/tmp/a.sh"}, []int{1}, []string{"203.0.113.7"})
+	noUID := incidentMap("", true, nil, nil, nil)
+	wrongClass := incidentMap("fp-net", true, nil, nil, nil)
+	wrongClass["class_uid"] = 4001
+	classAsText := incidentMap("fp-text", true, nil, nil, nil)
+	classAsText["class_uid"] = "2004"
+	// Every field present and of the wrong type, around a valid class and uid.
+	garbled := map[string]any{
+		"class_uid":   float64(2004),
+		"time":        "yesterday",
+		"severity_id": 99,
+		"severity":    []string{"High"},
+		"confidence":  7,
+		"metadata":    "none",
+		"finding_info": map[string]any{
+			"uid": "fp-garbled", "title": 12, "desc": nil, "analytic": []any{"x"},
+			"types":   []any{"file", 3, nil, map[string]any{}},
+			"attacks": []any{"T1059", map[string]any{"technique": "T1059"}, map[string]any{"technique": map[string]any{"uid": 5}}, map[string]any{"technique": map[string]any{"uid": "T1105"}, "tactics": "Execution"}},
+		},
+		"evidences": []any{
+			nil, "file", map[string]any{"file": "a"}, map[string]any{"process": map[string]any{"pid": "12"}},
+			map[string]any{"process": map[string]any{"pid": 12.5}}, map[string]any{"process": map[string]any{"pid": float64(12)}},
+			map[string]any{"file": map[string]any{"path": 9, "size": -1.5, "hashes": []any{1, map[string]any{"algorithm_id": "3", "value": "x"}, map[string]any{"algorithm_id": 3, "value": fixtureSHA256}}}},
+			map[string]any{"dst_endpoint": map[string]any{"ip": 16}},
+		},
+		"dst_endpoint": []string{"203.0.113.7"},
+		"malware":      map[string]any{"name": "x"},
+		"unmapped":     []any{},
+	}
+	batch := []map[string]any{nil, good, {}, noUID, garbled, wrongClass, classAsText, {"finding_info": "x", "class_uid": 2004}}
+	for _, format := range SinkFormats() {
+		b, err := RenderSinkBatch(format, batch, sinkOpts()...)
+		if err != nil {
+			t.Fatalf("%s: %v", format, err)
+		}
+		if want := []int{0, 2, 3, 5, 6, 7}; b.Rendered != 2 || !reflect.DeepEqual(b.Skipped, want) {
+			t.Errorf("%s: rendered %d, skipped %v; want 2 and %v", format, b.Rendered, b.Skipped, want)
+		}
+		out := string(b.Payload)
+		if format != "otlp" && strings.Count(out, "\n") != 2 {
+			t.Errorf("%s: %d lines for 2 events", format, strings.Count(out, "\n"))
+		}
+		if !strings.Contains(out, "fp-good") || !strings.Contains(out, "fp-garbled") || strings.Contains(out, "fp-net") {
+			t.Errorf("%s: wrong events rendered:\n%s", format, out)
+		}
+	}
+
+	// What the garbled finding still says.
+	b, _ := RenderSinkBatch("ecs", []map[string]any{garbled}, sinkOpts()...)
+	doc := decodeObject(t, b.Payload)
+	if ts, err := time.Parse(time.RFC3339Nano, doc["@timestamp"].(string)); err != nil || !ts.Equal(fixedTime) {
+		t.Errorf("an unreadable time should be the reporter's clock, got %v", doc["@timestamp"])
+	}
+	if dig(t, doc, "host", "name") != "edr-host-01" {
+		t.Errorf("host should fall back to the configured name: %v", doc["host"])
+	}
+	if dig(t, doc, "file", "hash", "sha256") != fixtureSHA256 || dig(t, doc, "file", "size") != nil || dig(t, doc, "file", "path") != "" {
+		t.Errorf("file: %v", doc["file"])
+	}
+	if dig(t, doc, "process", "pid") != float64(12) {
+		t.Errorf("only the one whole-number pid should be read: %v", doc["process"])
+	}
+	if ids := dig(t, doc, "threat", "technique", "id").([]any); len(ids) != 1 || ids[0] != "T1105" {
+		t.Errorf("techniques: %v", ids)
+	}
+	if det := dig(t, doc, "cau", "detectors").([]any); len(det) != 1 || det[0] != "file" {
+		t.Errorf("detectors: %v", det)
+	}
+	if _, has := doc["destination"]; has {
+		t.Errorf("a dst_endpoint of the wrong type became a destination: %v", doc["destination"])
+	}
+	// severity_id 99 ("Other") names no tier: it must not read as high.
+	if dig(t, doc, "event", "severity") != float64(5) {
+		t.Errorf("severity: %v", dig(t, doc, "event", "severity"))
+	}
+}
+
+func TestMapIntAcceptsOnlyWholeNumbers(t *testing.T) {
+	for _, v := range []any{int(5), int8(5), int16(5), int32(5), int64(5), uint(5), uint8(5), uint16(5), uint32(5), uint64(5), float32(5), float64(5), json.Number("5")} {
+		if n, ok := mapInt(v); !ok || n != 5 {
+			t.Errorf("mapInt(%T) = %d, %v", v, n, ok)
+		}
+	}
+	nan := 0.0
+	for _, v := range []any{nil, "5", true, 5.5, 1e19, -1e19, nan / nan, uint64(1 << 63), json.Number("5.5"), json.Number("x"), []int{5}} {
+		if n, ok := mapInt(v); ok {
+			t.Errorf("mapInt(%v) accepted as %d", v, n)
+		}
+	}
+	if n, ok := mapInt(float64(-1 << 63)); !ok || n != -1<<63 {
+		t.Errorf("the smallest int64 is a whole number: %d %v", n, ok)
+	}
+	big := make([]string, maxSinkListItems+50)
+	if got := len(mapList(big)); got != maxSinkListItems {
+		t.Errorf("mapList read %d items, cap is %d", got, maxSinkListItems)
+	}
+	if got := len(mapList(make([]any, maxSinkListItems+50))); got != maxSinkListItems {
+		t.Errorf("mapList read %d items, cap is %d", got, maxSinkListItems)
+	}
+}
+
+// FuzzRenderSinkBatch: any JSON whatsoever, in every format. Invariants: no
+// panic, every finding is either rendered or listed as skipped, a line format
+// has exactly one line per rendered event, and no output holds a raw escape.
+func FuzzRenderSinkBatch(f *testing.F) {
+	seed := func(v any) {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(raw)
+	}
+	seed([]map[string]any{incidentMap("fp-seed", true, []string{"/tmp/a.sh", "/tmp/b.sh"}, []int{1, 2}, []string{"203.0.113.7"})})
+	seed(NewOCSFReporter(sinkOpts()...).Build(fullInput()))
+	seed(NewOCSFReporter(sinkOpts()...).Build(hostileInput()))
+	f.Add([]byte(`[{"class_uid":2004,"finding_info":{"uid":"u","attacks":[{"technique":{"uid":"T1"},"tactics":[{"name":"\u001b[2K"}]}]},"evidences":[{"file":{"path":"a\nb","hashes":[{"algorithm_id":3,"value":"\u202e"}]}},{"process":{"pid":1e300}},{"dst_endpoint":{"hostname":"x\ty"}}],"time":1e30,"severity_id":-4}]`))
+	f.Add([]byte(`[null,{},{"class_uid":"2004"},{"class_uid":2004,"finding_info":[]}]`))
+	f.Add([]byte(`{"class_uid":2004,"finding_info":{"uid":"single object, not a list"}}`))
+	f.Add([]byte(`[`))
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		if len(raw) > 1<<16 {
+			return
+		}
+		var findings []map[string]any
+		if json.Unmarshal(raw, &findings) != nil {
+			var one map[string]any
+			if json.Unmarshal(raw, &one) != nil {
+				return
+			}
+			findings = []map[string]any{one}
+		}
+		for _, format := range SinkFormats() {
+			b, err := RenderSinkBatch(format, findings, sinkOpts()...)
+			if err != nil {
+				t.Fatalf("%s: %v", format, err)
+			}
+			if b.Rendered+len(b.Skipped) != len(findings) {
+				t.Fatalf("%s: %d rendered + %d skipped != %d findings", format, b.Rendered, len(b.Skipped), len(findings))
+			}
+			if bytes.IndexByte(b.Payload, 0x1b) >= 0 {
+				t.Fatalf("%s: a raw escape byte reached the output", format)
+			}
+			if format == "otlp" {
+				var doc map[string]any
+				if err := json.Unmarshal(b.Payload, &doc); err != nil {
+					t.Fatalf("otlp is not JSON: %v", err)
+				}
+				continue
+			}
+			if n := bytes.Count(b.Payload, []byte{'\n'}); n != b.Rendered {
+				t.Fatalf("%s: %d lines for %d events:\n%s", format, n, b.Rendered, b.Payload)
+			}
+		}
+	})
 }

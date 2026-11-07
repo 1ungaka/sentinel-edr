@@ -26,7 +26,7 @@ alone.
 |---|---|
 | Detection | all sixteen detectors plus the fusion lattice, shipped as content with measured false-positive rates |
 | Prevention | the full on-host response set: quarantine vault, restore, block, kill, canary tamper checks |
-| Output | text (control-char / bidi escaped), JSON schema 1.11.0, SARIF 2.1.0, OCSF 1.3.0 Detection Findings, CI exit codes |
+| Output | text (control-char / bidi escaped), JSON schema 1.13.0, SARIF 2.1.0, OCSF 1.3.0 Detection Findings, CI exit codes |
 | SIEM forwarders | the agent speaks SIEMs directly, so SIEM delivery is free. `cau scan --wazuh-url <manager>` posts the scan's OCSF findings to the Wazuh Manager REST API (`/security/user/authenticate` + `/events`) with JWT auth and a configurable CA bundle. syslog, Splunk HEC, Elastic/OpenSearch `_bulk` and OCSF-Lake sinks follow the same rule and ship free when added. The resident agent forwards too, not just one-off scans: `cau defend --wazuh-url <manager>` posts every correlated incident as it is raised, asynchronously and with a bounded local queue, so continuous delivery to your own SIEM needs no control plane |
 | Tooling | `cau-mcp` (the Model Context Protocol server), the evaluation harness, the rule linter, the coverage matrix |
 | Updates | the signed update channel, including the air-gapped bundle path — verified fail-closed before install |
@@ -122,7 +122,7 @@ a fleet that crosses a band mid-term is trued-up at renewal.
 
 ## Service levels
 
-Service levels match [SUPPORT.md](SUPPORT.md) exactly; the free engine is
+Service levels match [SUPPORT.md](../SUPPORT.md) exactly; the free engine is
 community support through the issue tracker at every scale, because it is a
 complete product, not a trial.
 

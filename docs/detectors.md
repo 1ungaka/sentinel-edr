@@ -18,6 +18,7 @@ joins their outcomes. Each detector answers a different question:
 | [Static structure](#static-structure) | is it *built* like something that hides? | SUSPICIOUS |
 | [Invisible codepoints](#invisible-codepoints-stego) | does this text or code carry hidden codepoints? | SUSPICIOUS |
 | [Encoded executable](#encoded-executable) | is an executable hidden behind text encoding? | SUSPICIOUS |
+| [Obfuscation-chain peeler](#obfuscation-chain-peeler) | is a payload stacked behind several layers? | SUSPICIOUS |
 | [Shell Link (.lnk)](#shell-link-lnk) | is this Windows shortcut a weaponised launcher? | SUSPICIOUS |
 | [OLE macro](#ole-macro) | does this Office document carry a malicious VBA macro? | SUSPICIOUS |
 | [PDF document](#pdf-document) | does this PDF auto-run code or carry a payload? | SUSPICIOUS |
@@ -338,6 +339,44 @@ Measured over 159,339 benign files from a Kali install, it fired on 32
 (0.020 %), every one a genuine embedded encoded executable in offensive
 tooling or exploit documentation. `--no-encchain` disables it and
 `--encchain-threshold` tunes the score.
+
+## Obfuscation-chain peeler
+
+`internal/peeler` asks what the other detectors cannot: not what a payload is, but
+how many layers it is hidden behind. The depth of a chain is evidence by itself.
+The [ADS](ads/obfuscation-chain.md) covers strategy and blind spots, and
+[`cau peel`](cli.md#cau-peel) runs it alone.
+
+It walks a tree. At each node every layer that applies decodes at once, and each
+result opens a branch, so layers chain in any order and one blob can open several
+branches. A branch ends at a recognised executable or script, and scripts are
+recognised without a shebang.
+
+| Layers | |
+|---|---|
+| Bases | 2, 8, 10, 16 (bare or as lists such as `72 101`, `0x48,0x65`, `\x48\x65`, `%48%65`); 32 (RFC 4648, lower case, hex, Crockford, z-base-32); 36; 45; 58 (Bitcoin, Flickr, Ripple); 62; 64 (standard, URL-safe, line-wrapped); 85 (RFC 1924, Ascii85, Z85); 91; 92 |
+| Substitutions | every Caesar shift, rot5, rot18, rot47, atbash, reversal |
+| Other | gzip, zlib, raw deflate, bzip2, UTF-16, and blobs carved out of a surrounding script |
+
+A substitution has to reveal something, because rotating text only gives more text
+and every layer adds to the score. A rotation is judged on the first 4 KiB, and on
+text it is chosen by letter frequency instead of being tried 25 times, which keeps
+this cheap on every file a scan reads. A carve needs a run of at least 64 characters
+with a payload inside it, and it is not counted as a layer, because it decodes
+nothing: one base64 blob in a script is the same packaging as one base64 file.
+
+| Class | Weight | Fires when |
+|---|---|---|
+| `peel.revealed-executable` | 60 | a PE or ELF at depth 2 or more, or behind a substitution |
+| `peel.revealed-script` | 40 | a script at depth 2 or more, or behind a substitution |
+| `peel.exhausted` | 30 | a chain outlived the budget, which is never reported as clean |
+
+Depth past 2 adds 15 per layer, and a substitution adds 15 at any depth, because no
+packaging tool writes one. The threshold is 50. One budget covers the whole tree:
+512 nodes, 64 MiB of decoded output, depth 32, 6 branches per node, 5 seconds.
+Everything is T1027 and NOVEL-012, and the chain signature, such as
+`base64>rot13>flate`, is the family key. Over 116,885 benign files it flagged 10, all
+real payloads inside offensive tooling.
 
 ## Shell Link (.lnk)
 
@@ -665,9 +704,12 @@ implant blocklist.
 
 It is deliberately conservative: the engine ships **no implant truth set**
 (firmware is overwhelmingly legitimate PEI/DXE/SMM drivers, so scoring module
-shapes would be a false-positive machine), so only two classes score —
+shapes would be a false-positive machine), so only known evidence scores —
 `uefi.volume-checksum-invalid` (a tampered or hand-built FV header, weight 3)
 and `uefi.known-implant-guid` (a `--implants` blocklist match, weight 8,
-T1542.001). Everything else is inventory. Module bodies are not disassembled,
-compressed/GUIDed sections are not decompressed, and NVRAM, signatures and boot
-policy are not analysed. See [the CLI reference](cli.md#cau-firmware).
+T1542.001). `uefi.module-rule-match` runs every module's executable body through
+the YARA rules. Everything else is inventory. An in-tree, bounded LZMA decoder opens
+the compressed sections modern images keep their driver volumes in, and nested
+volumes are walked. Module bodies are not disassembled, and NVRAM, signatures and
+boot policy are not analysed. The boot chain of a live host is
+[`cau boot-scan`](cli.md#cau-boot-scan). See [the CLI reference](cli.md#cau-firmware).

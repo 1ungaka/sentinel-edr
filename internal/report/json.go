@@ -9,6 +9,7 @@ import (
 
 	"github.com/s-b-repo/cau/internal/frameworks"
 	"github.com/s-b-repo/cau/internal/peeler"
+	"github.com/s-b-repo/cau/internal/provenance"
 	"github.com/s-b-repo/cau/scanner"
 	"github.com/s-b-repo/cau/scanner/archive"
 	"github.com/s-b-repo/cau/scanner/chm"
@@ -71,7 +72,17 @@ import (
 // 1.11.0 added the optional per-file "tradecraft" object (behavioural analysis
 // of scripts and payload bytes) and the summary fields "tradecraft_detections" /
 // "tradecraft_threshold" (additive: minor bump).
-const JSONSchemaVersion = "1.11.0"
+//
+// 1.12.0 added the optional per-file "provenance" object (package-manager
+// ownership and shipped-digest verification, --provenance) and the optional
+// summary fields "provenance_resolved" / "provenance_modified_binaries"
+// (additive: minor bump; absent from a run without --provenance).
+//
+// 1.13.0 added the optional "vba_member" / "embedded_vba" fields of the
+// per-file "archive" object and the optional "via" field of its findings
+// (an Office document's vbaProject.bin member run through the OLE pass;
+// additive: minor bump).
+const JSONSchemaVersion = "1.13.0"
 
 // Overall and per-file verdict strings carried by the JSON document. They are
 // lower-case on purpose: they are enum values for machines, not banners.
@@ -120,26 +131,31 @@ type Summary struct {
 	TradecraftDetections int `json:"tradecraft_detections"`
 	// FusionDetections counts files the fusion lattice reports as suspicious
 	// although no single detector crossed its own threshold.
-	FusionDetections    int    `json:"fusion_detections"`
-	Errors              int    `json:"errors"`
-	ElapsedMS           int64  `json:"elapsed_ms"`
-	HeuristicThreshold  int    `json:"heuristic_threshold"`
-	StaticThreshold     int    `json:"static_threshold"`
-	StegoThreshold      int    `json:"stego_threshold"`
-	EncChainThreshold   int    `json:"encchain_threshold"`
-	LNKThreshold        int    `json:"lnk_threshold"`
-	OLEThreshold        int    `json:"ole_threshold"`
-	PDFThreshold        int    `json:"pdf_threshold"`
-	ISOThreshold        int    `json:"iso_threshold"`
-	LinuxPkgThreshold   int    `json:"linuxpkg_threshold"`
-	PeelThreshold       int    `json:"peel_threshold"`
-	ArchiveThreshold    int    `json:"archive_threshold"`
-	CHMThreshold        int    `json:"chm_threshold"`
-	TradecraftThreshold int    `json:"tradecraft_threshold"`
-	Verdict             string `json:"verdict"`
-	FailOn              string `json:"fail_on"`
-	ExitCode            int    `json:"exit_code"`
-	ExitReason          string `json:"exit_reason"`
+	FusionDetections int `json:"fusion_detections"`
+	// ProvenanceResolved counts the files with a provenance object and
+	// ProvenanceModifiedBinaries those carrying the modified-system-binary
+	// observation. Both are omitted when the run did not resolve provenance.
+	ProvenanceResolved         int    `json:"provenance_resolved,omitempty"`
+	ProvenanceModifiedBinaries int    `json:"provenance_modified_binaries,omitempty"`
+	Errors                     int    `json:"errors"`
+	ElapsedMS                  int64  `json:"elapsed_ms"`
+	HeuristicThreshold         int    `json:"heuristic_threshold"`
+	StaticThreshold            int    `json:"static_threshold"`
+	StegoThreshold             int    `json:"stego_threshold"`
+	EncChainThreshold          int    `json:"encchain_threshold"`
+	LNKThreshold               int    `json:"lnk_threshold"`
+	OLEThreshold               int    `json:"ole_threshold"`
+	PDFThreshold               int    `json:"pdf_threshold"`
+	ISOThreshold               int    `json:"iso_threshold"`
+	LinuxPkgThreshold          int    `json:"linuxpkg_threshold"`
+	PeelThreshold              int    `json:"peel_threshold"`
+	ArchiveThreshold           int    `json:"archive_threshold"`
+	CHMThreshold               int    `json:"chm_threshold"`
+	TradecraftThreshold        int    `json:"tradecraft_threshold"`
+	Verdict                    string `json:"verdict"`
+	FailOn                     string `json:"fail_on"`
+	ExitCode                   int    `json:"exit_code"`
+	ExitReason                 string `json:"exit_reason"`
 }
 
 // File is one scanned path.
@@ -164,9 +180,43 @@ type File struct {
 	CHM        *CHM        `json:"chm,omitempty"`
 	Tradecraft *Tradecraft `json:"tradecraft,omitempty"`
 	Fusion     *Fusion     `json:"fusion,omitempty"`
+	Provenance *Provenance `json:"provenance,omitempty"`
 	Warnings   []string    `json:"warnings,omitempty"`
 	Error      string      `json:"error,omitempty"`
 	ScanTimeMS int64       `json:"scan_time_ms"`
+}
+
+// Provenance is the package-manager provenance of one file (--provenance):
+// whether the host's package database owns the path and whether the scanned
+// digest still matches the one the package recorded. It is context, not a
+// verdict: "intact" means the database and the file agree per the host's own
+// package database, which root can rewrite; it says nothing about whether the
+// package is trustworthy.
+type Provenance struct {
+	// Manager is "dpkg", "pacman" or "rpm" (present but unsupported); empty
+	// when no package database was found.
+	Manager string `json:"manager,omitempty"`
+	Package string `json:"package,omitempty"`
+	Version string `json:"version,omitempty"`
+	// State is one of owned-intact, owned-modified, owned-conffile,
+	// owned-unverifiable, unowned, unsupported, unknown.
+	State string `json:"state"`
+	// ShippedDigest is the digest the package database recorded for the path
+	// (DigestAlgo "md5" for dpkg, "sha256" or "md5" for pacman).
+	ShippedDigest string `json:"shipped_digest,omitempty"`
+	DigestAlgo    string `json:"digest_algo,omitempty"`
+	// Finding is the modified-system-binary observation: set when an owned,
+	// non-conffile executable or library no longer matches the package's
+	// digest. It is reported beside the verdict and never changes it.
+	Finding *ProvenanceFinding `json:"finding,omitempty"`
+}
+
+// ProvenanceFinding is the modified-system-binary observation.
+type ProvenanceFinding struct {
+	Class     string `json:"class"`
+	Technique string `json:"technique,omitempty"`
+	Kind      string `json:"kind,omitempty"`
+	Detail    string `json:"detail,omitempty"`
 }
 
 // Hashes are the digests the scanner computed.
@@ -642,17 +692,22 @@ type ISOFinding struct {
 
 // Archive is the per-file compressed-container analysis (ZIP/TAR/gzip).
 type Archive struct {
-	Score        int              `json:"score"`
-	Threshold    int              `json:"threshold"`
-	Detected     bool             `json:"detected"`
-	Skipped      string           `json:"skipped,omitempty"`
-	Format       string           `json:"format,omitempty"`
-	Members      int              `json:"members,omitempty"`
-	Uncompressed int64            `json:"uncompressed_bytes,omitempty"`
-	Encrypted    int              `json:"encrypted_members,omitempty"`
-	Executables  int              `json:"executable_members,omitempty"`
-	NotInspected string           `json:"not_inspected,omitempty"`
-	Findings     []ArchiveFinding `json:"findings,omitempty"`
+	Score        int    `json:"score"`
+	Threshold    int    `json:"threshold"`
+	Detected     bool   `json:"detected"`
+	Skipped      string `json:"skipped,omitempty"`
+	Format       string `json:"format,omitempty"`
+	Members      int    `json:"members,omitempty"`
+	Uncompressed int64  `json:"uncompressed_bytes,omitempty"`
+	Encrypted    int    `json:"encrypted_members,omitempty"`
+	Executables  int    `json:"executable_members,omitempty"`
+	NotInspected string `json:"not_inspected,omitempty"`
+	// VBAMember names the vbaProject.bin member an Office document carried,
+	// and EmbeddedVBA is the OLE pass's result over it (schema 1.13.0). Its
+	// findings are also in Findings, prefixed archive.ooxml; this is detail.
+	VBAMember   string           `json:"vba_member,omitempty"`
+	EmbeddedVBA *OLE             `json:"embedded_vba,omitempty"`
+	Findings    []ArchiveFinding `json:"findings,omitempty"`
 }
 
 // ArchiveFinding is one container detection signal.
@@ -662,6 +717,9 @@ type ArchiveFinding struct {
 	Technique string `json:"technique,omitempty"`
 	Detail    string `json:"detail"`
 	Evidence  string `json:"evidence,omitempty"`
+	// Via is the archive member the finding was read from, when it came
+	// from inside a member rather than from the container itself.
+	Via string `json:"via,omitempty"`
 }
 
 // Tradecraft is the per-file behavioural analysis of scripts and payload bytes.
@@ -841,42 +899,44 @@ func (c config) buildDocument(in Input) Document {
 		GeneratedAt: c.timestamp(),
 		Root:        c.root,
 		Summary: Summary{
-			FilesScanned:         len(in.AllPaths()),
-			HashDetections:       in.HashDetectionCount(),
-			YaraDetections:       in.YaraDetectionCount(),
-			HeuristicDetections:  len(in.HeuristicBreach(c.heuristicThreshold)),
-			StaticDetections:     len(in.StaticBreach(c.staticThreshold)),
-			StegoDetections:      len(in.StegoBreach(c.stegoThreshold)),
-			EncChainDetections:   len(in.EncChainBreach(c.encChainThreshold)),
-			LNKDetections:        len(in.LNKBreach(c.lnkThreshold)),
-			OLEDetections:        len(in.OLEBreach(c.oleThreshold)),
-			PDFDetections:        len(in.PDFBreach(c.pdfThreshold)),
-			ISODetections:        len(in.ISOBreach(c.isoThreshold)),
-			ArchiveDetections:    len(in.ArchiveBreach(c.archiveThreshold)),
-			CHMDetections:        len(in.CHMBreach(c.chmThreshold)),
-			TradecraftDetections: len(in.TradecraftBreach(c.tradecraftThreshold)),
-			LinuxPkgDetections:   len(in.LinuxPkgBreach(c.linuxPkgThreshold)),
-			PeelDetections:       len(in.PeelBreach(c.peelThreshold)),
-			FusionDetections:     len(in.FusionCorroborated()),
-			Errors:               in.ErrorCount(),
-			ElapsedMS:            in.Elapsed.Milliseconds(),
-			HeuristicThreshold:   c.heuristicThreshold,
-			StaticThreshold:      c.staticThreshold,
-			StegoThreshold:       c.stegoThreshold,
-			EncChainThreshold:    c.encChainThreshold,
-			LNKThreshold:         c.lnkThreshold,
-			OLEThreshold:         c.oleThreshold,
-			PDFThreshold:         c.pdfThreshold,
-			ISOThreshold:         c.isoThreshold,
-			ArchiveThreshold:     c.archiveThreshold,
-			CHMThreshold:         c.chmThreshold,
-			TradecraftThreshold:  c.tradecraftThreshold,
-			LinuxPkgThreshold:    c.linuxPkgThreshold,
-			PeelThreshold:        c.peelThreshold,
-			Verdict:              c.overallVerdict(in),
-			FailOn:               c.failOn.String(),
-			ExitCode:             code,
-			ExitReason:           reason,
+			FilesScanned:               len(in.AllPaths()),
+			HashDetections:             in.HashDetectionCount(),
+			YaraDetections:             in.YaraDetectionCount(),
+			HeuristicDetections:        len(in.HeuristicBreach(c.heuristicThreshold)),
+			StaticDetections:           len(in.StaticBreach(c.staticThreshold)),
+			StegoDetections:            len(in.StegoBreach(c.stegoThreshold)),
+			EncChainDetections:         len(in.EncChainBreach(c.encChainThreshold)),
+			LNKDetections:              len(in.LNKBreach(c.lnkThreshold)),
+			OLEDetections:              len(in.OLEBreach(c.oleThreshold)),
+			PDFDetections:              len(in.PDFBreach(c.pdfThreshold)),
+			ISODetections:              len(in.ISOBreach(c.isoThreshold)),
+			ArchiveDetections:          len(in.ArchiveBreach(c.archiveThreshold)),
+			CHMDetections:              len(in.CHMBreach(c.chmThreshold)),
+			TradecraftDetections:       len(in.TradecraftBreach(c.tradecraftThreshold)),
+			LinuxPkgDetections:         len(in.LinuxPkgBreach(c.linuxPkgThreshold)),
+			PeelDetections:             len(in.PeelBreach(c.peelThreshold)),
+			FusionDetections:           len(in.FusionCorroborated()),
+			ProvenanceResolved:         in.ProvenanceResolvedCount(),
+			ProvenanceModifiedBinaries: len(in.ProvenanceModifiedBinaries()),
+			Errors:                     in.ErrorCount(),
+			ElapsedMS:                  in.Elapsed.Milliseconds(),
+			HeuristicThreshold:         c.heuristicThreshold,
+			StaticThreshold:            c.staticThreshold,
+			StegoThreshold:             c.stegoThreshold,
+			EncChainThreshold:          c.encChainThreshold,
+			LNKThreshold:               c.lnkThreshold,
+			OLEThreshold:               c.oleThreshold,
+			PDFThreshold:               c.pdfThreshold,
+			ISOThreshold:               c.isoThreshold,
+			ArchiveThreshold:           c.archiveThreshold,
+			CHMThreshold:               c.chmThreshold,
+			TradecraftThreshold:        c.tradecraftThreshold,
+			LinuxPkgThreshold:          c.linuxPkgThreshold,
+			PeelThreshold:              c.peelThreshold,
+			Verdict:                    c.overallVerdict(in),
+			FailOn:                     c.failOn.String(),
+			ExitCode:                   code,
+			ExitReason:                 reason,
 		},
 		RunError: c.errorString(in.RunError),
 		Files:    []File{},
@@ -900,9 +960,38 @@ func (c config) buildDocument(in Input) Document {
 		if hasResult {
 			rp = &res
 		}
-		doc.Files = append(doc.Files, c.buildFile(p, rp, hp))
+		f := c.buildFile(p, rp, hp)
+		if hasResult {
+			if prov, ok := in.ProvenanceFor(p); ok {
+				f.Provenance = c.buildProvenance(prov)
+			}
+		}
+		doc.Files = append(doc.Files, f)
 	}
 	return doc
+}
+
+// buildProvenance renders one provenance answer. Every string came from the
+// host's package database, which is attacker-writable with root, so each is
+// bounded like any other file-derived field.
+func (c config) buildProvenance(p provenance.Provenance) *Provenance {
+	out := &Provenance{
+		Manager:       c.boundedMessage(p.Manager),
+		Package:       c.boundedMessage(p.Package),
+		Version:       c.boundedMessage(p.Version),
+		State:         c.boundedMessage(string(p.State)),
+		ShippedDigest: c.boundedHash(p.ShippedDigest),
+		DigestAlgo:    c.boundedMessage(p.DigestAlgo),
+	}
+	if p.Finding != nil {
+		out.Finding = &ProvenanceFinding{
+			Class:     c.boundedMessage(p.Finding.Class),
+			Technique: c.boundedMessage(p.Finding.Technique),
+			Kind:      c.boundedMessage(p.Finding.Kind),
+			Detail:    c.boundedMessage(p.Finding.Detail),
+		}
+	}
+	return out
 }
 
 // overallVerdict folds the run into one word. "error" is reserved for a run
@@ -1497,12 +1586,17 @@ func (c config) buildArchive(a *archive.Result) *Archive {
 		out.Encrypted = a.Parsed.Encrypted
 		out.Executables = a.Parsed.Executables
 		out.NotInspected = c.boundedMessage(a.Parsed.NotInspected)
+		out.VBAMember = c.boundedMessage(a.Parsed.VBAMember)
+	}
+	if a.EmbeddedVBA != nil {
+		out.EmbeddedVBA = c.buildOLE(a.EmbeddedVBA)
 	}
 	for _, f := range a.Findings {
 		out.Findings = append(out.Findings, ArchiveFinding{
 			Class: c.boundedMessage(f.Class), Score: f.Score,
 			Technique: c.boundedMessage(f.Technique),
 			Detail:    c.boundedMessage(f.Detail), Evidence: c.boundedMessage(f.Evidence),
+			Via: c.boundedMessage(f.Via),
 		})
 	}
 	return out

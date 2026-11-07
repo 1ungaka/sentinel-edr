@@ -243,7 +243,7 @@ func NewSignatureDB() *SignatureDB {
 // Warnings(); they are not fatal because one bad line must not disable hash
 // detection entirely. An unreadable file is fatal.
 func LoadSignatures(path string) (*SignatureDB, error) {
-	f, err := os.Open(path)
+	f, _, err := safefs.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("could not open signature database: %w", err)
 	}
@@ -466,14 +466,34 @@ func hashReader(r io.Reader) (digests, error) {
 	hMD5 := md5.New()
 	hSHA1 := sha1.New()
 	hSHA256 := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(hMD5, hSHA1, hSHA256), r); err != nil {
-		return digests{}, fmt.Errorf("could not hash file: %w", err)
+	buf := make([]byte, 1<<20)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			chunk := buf[:n]
+			// One hash per core per chunk: three in a row is three times the wait.
+			parallel.Do(
+				func() { hMD5.Write(chunk) },
+				func() { hSHA1.Write(chunk) },
+				func() { hSHA256.Write(chunk) },
+			)
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return digests{}, fmt.Errorf("could not hash file: %w", err)
+		}
 	}
 	return digests{hashHex(hMD5), hashHex(hSHA1), hashHex(hSHA256)}, nil
 }
 
 // hashBytes computes the three digests of an in-memory buffer.
 func hashBytes(data []byte) digests {
+	if len(data) < hashInParallelFrom {
+		m, s1, s2 := md5.Sum(data), sha1.Sum(data), sha256.Sum256(data)
+		return digests{hex.EncodeToString(m[:]), hex.EncodeToString(s1[:]), hex.EncodeToString(s2[:])}
+	}
 	var m [md5.Size]byte
 	var s1 [sha1.Size]byte
 	var s2 [sha256.Size]byte
@@ -484,6 +504,10 @@ func hashBytes(data []byte) digests {
 	)
 	return digests{hex.EncodeToString(m[:]), hex.EncodeToString(s1[:]), hex.EncodeToString(s2[:])}
 }
+
+// hashInParallelFrom is where three goroutines start to beat three function calls.
+// Nearly every file a scan meets is below it.
+const hashInParallelFrom = 256 << 10
 
 func hashHex(h hash.Hash) string {
 	return hex.EncodeToString(h.Sum(nil))

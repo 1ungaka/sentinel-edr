@@ -11,15 +11,15 @@ written in Go. These pages are the reference; the repository
 | [MCP server](mcp.md) | `cau-mcp`: the engine over the Model Context Protocol, its tools/resources/prompts and the scan-root sandbox |
 | [Network plane](network.md) | the NDR sensor's classes, the blocker (nftables/iptables, expiring, reversible), and how telemetry from other hosts and sensors is joined on the peer address |
 | [Detectors](detectors.md) | hash signatures, YARA, heuristics, static structure, invisible codepoints, encoded executables, tradecraft (web/net/in-memory shells, LOLBAS/GTFOBins, trusted-SaaS C2, EDR-bypass primitives), the fusion lattice |
-| [Output formats](output-formats.md) | the text report, the JSON document (schema 1.11.0), SARIF 2.1.0, OCSF Detection Findings, the `--fail-on` policy |
+| [Output formats](output-formats.md) | the text report, the JSON document (schema 1.13.0), SARIF 2.1.0, OCSF Detection Findings, the `--fail-on` policy |
 | [Detection content](detection-content.md) | signature databases, YARA rule conventions and the linter, the fuzzy-hash database, external rule sets |
 | [Detection engineering](detection-engineering.md) | ADS documents per detector, the ATT&CK coverage matrix and its gate, Pyramid of Pain levels, OCSF |
-| [ADS](ads/README.md) | one Alerting and Detection Strategy per detector |
+| [ADS](ads/README.md) | one Alerting and Detection Strategy per detector, the obfuscation-chain peeler included |
 | [Evaluation harness](evaluation.md) | corpora, manifests, baselines, regression policies, the measurements behind every number |
 | [Library usage](library.md) | using the engine from Go |
 | [Architecture](architecture.md) | the single-read pipeline, verdict tiers, design rules, repository layout |
 | [Limitations](limitations.md) | what each detector cannot do, the documented false-positive classes |
-| [Contributing](contributing.md) | development environment, tests, the measure-or-don't-ship rule, corpus policy |
+| [Contributing](contributing.md) | development environment, tests, the measure-or-don't-ship rule, corpus policy, the regex audit |
 
 Roadmap and design reasoning live in [PLAN.md](../PLAN.md); release notes in
 [CHANGELOG.md](../CHANGELOG.md).

@@ -67,6 +67,32 @@ All notable changes to CAU EDR. The format follows
   tested as the policy it is. `--dry-run` renders every command and runs none.
   Blocks are appended to `/var/lib/cau/netblock.log` with their reason, which
   `cau net blocks` reads back.
+- **Measured as root on a stock host, which found a false positive at the
+  shipped threshold.** NetworkManager holds a raw socket for ICMPv6 and a packet
+  socket for ARP; both are its job, and the two scored 3 and 2, sharing one
+  subject — the process — for a total of exactly the reporting threshold. So a
+  packaged system daemon was a reported finding on an untouched machine. No
+  unprivileged run could have shown it, because a socket whose holder cannot be
+  read has no executable to group by. The capture classes now weigh who holds
+  the socket over what the socket is (a packaged binary scores 2 for a raw
+  socket and 1 for a filtered packet socket; an unpackaged one still scores 6
+  and 3), which is the discriminator the rest of the sensor already used.
+  `TestNetworkManagerShapeStaysQuiet` pins the shape. After the fix: 48 sockets
+  read, 40 attributed, 0 findings at the shipped threshold, and the four
+  plumbing sockets still listed at `--threshold 1` for inventory.
+- The time-based analytics measured against real traffic for the first time: 10
+  samples at 20-second intervals over 3.3 minutes of ordinary desktop use, 0
+  beaconing, gateway-churn and sweep findings. The window was capable of
+  producing a beacon (a 20-second poller makes 10 connections in it, against the
+  4 the analytic needs) and says nothing about a 60-second cadence, which makes
+  only 3 and so was not reachable either way.
+- The blocker verified against a real kernel rather than a fake runner: the
+  `inet cau` table carried both test elements with kernel-side expiry, `cau net
+  blocks` read them back through real `nft -j` output (the parser had only been
+  tested against a hand-written fixture), re-applying the ruleset left 8 rules
+  rather than 16 and did not release the live element, and after `cau net clear`
+  the `nft list ruleset` digest was byte-identical to the one taken before the
+  first block.
 - Three findings from review, fixed and tested: a FIFO in an ingest directory
   hung the ingest layer, shutdown and `--once` on a blocking open, so telemetry
   is now read through `internal/safefs`, whose package doc describes that exact
@@ -104,7 +130,7 @@ All notable changes to CAU EDR. The format follows
 
 - **First real detection rate.** `corpus/smoke`'s 100 % is synthetic and
   `corpus/heldout` was never populated, so a local lab corpus now measures real
-  offensive tooling split by tool: held-out detection went from **25.4 % to 61.4 %**
+  offensive tooling split by tool: held-out detection went from **25.4 % to 61.1 %**
   with 6/2,431 false positives, 0.15 % over a 25,000-file benign sweep. This is
   public tooling, not a malware detection rate; see `docs/evaluation.md`.
 - `cau eval` ran 7 of the engine's detectors, so its numbers described something
@@ -231,6 +257,104 @@ All notable changes to CAU EDR. The format follows
   rewritten under a signed baseline, forwarding went to the pinned address and
   two confirmed incidents were raised; restoring the file and re-recording
   produced no alerts at all.
+- **Two defects in the forwarded OCSF envelope**, found by the agent cau-00 had
+  build a wire-format Sender over it — the value of someone consuming your
+  output being that they notice what you encoded rather than what you meant:
+  - `finding_info.analytic.uid` carried the *incident* id. An analytic uid names
+    what detected something, not which thing was detected, and CEF and LEEF use
+    that field as their event id — so every incident looked like a different
+    kind of event and an ArcSight or QRadar class map had a value it could never
+    group on. It is now the lead signal's class, which is stable across
+    incidents of the same kind. The incident's own identity remains
+    `finding_info.uid` (its fingerprint) and its id remains in
+    `unmapped.incident.id`. Two tests pin both halves: like detections share an
+    analytic uid while staying individually identifiable, and unlike ones do not
+    share it.
+  - `unmapped.verdict` was missing, so formats derived from this envelope
+    carried the tier in `severity` alone and lost the distinction the daemon
+    acts on. It now holds CONFIRMED or ALERT, in the same field `cau scan` uses
+    for a file's verdict.
+- **A hardening check could hang the daemon at startup.** The scan for a signing
+  key left on the host read candidate files with `os.ReadFile` after a
+  stat-based size check. That check was not protection: it is a stat before an
+  open, so the file can change in between, and a FIFO reports a size of zero and
+  passed it outright — after which an unbounded read blocks forever on a writer
+  that never comes. Measured rather than reasoned about: a FIFO reports 0 bytes
+  and `os.ReadFile` on it was still blocked after 3 seconds. So a named pipe
+  called `priv.hex` in `/etc/cau` would have hung `cau defend` before its
+  watchers were even armed — a denial of service dressed as a hardening check,
+  in code added the same day to make the agent harder to tamper with. It now
+  reads through `safefs.ReadFileNoFollow` with a bound and skips anything that
+  is not a regular file, with a regression test on a real FIFO. Found by the
+  `make regex-audit` gate (`memory/go-readfile`), relayed by cau-47.
+  The policy on pipes deliberately differs by who named the path. A walked
+  directory refuses them, because the agent is reading whatever it finds and a
+  pipe is something nobody asked it to read. A path the operator named allows
+  them, with a bound and a deadline, so that `--sign-key <(pass show cau/key)`
+  can keep a signing key off disk entirely — which is the one practice that
+  makes a signed baseline worth more than a digest in the first place. That
+  split, and the bounded reads behind it, are cau-c9's.
+- **Two more integrity limitations closed, both previously listed as
+  unfixable-here.**
+  - *A self-built binary can now pin a key.* `pinnedSelftestKey` became a `var`
+    so `-ldflags -X` can write it, and the Makefile takes
+    `make build SELFTEST_PUBKEY=$(cat pub.hex)`. Before this the anti-downgrade
+    protection only existed in official releases, which left it absent on
+    exactly the installs whose owner cared enough to compile from source.
+    Demonstrated: a binary built with a key exits 1 on an unsigned baseline
+    ("manifest is not signed") where the same binary without one exits 0.
+  - *Pinning where incidents go now also says who may receive them*
+    (`siem-cert-pin`, `internal/forward/wazuh/pin.go`). The address pin was only
+    half the control: TLS verification is what identifies the server, and that
+    holds only while every CA in the host's trust store does, so anyone able to
+    obtain a certificate for the manager's name — or add a CA — received this
+    agent's incidents with verification nominally passing. The manager's public
+    key is now pinned as a SHA-256 over the DER SubjectPublicKeyInfo, in
+    addition to chain verification and never instead of it. It pins the key
+    rather than the certificate so the manager can renew without an outage;
+    several pins may be listed to rotate one; any certificate in the chain may
+    match, so an operator can pin their own issuing CA; hex and base64 are both
+    accepted because operators arrive with both; and on a mismatch the agent
+    logs the pin the manager actually presented, which is the one string needed
+    to either fix the config or evidence the interception. The pin value is
+    itself signed into the baseline (`PinSIEMCert`), since an attacker who could
+    edit it on disk would just substitute their own collector's. A pin together
+    with `--wazuh-insecure` is refused as a contradiction rather than silently
+    resolved. With no pins configured the forwarder behaves exactly as before,
+    so `cau scan --wazuh-url` is unaffected.
+- **Four of the documented integrity limitations are now closed.** The way this
+  kind of checking fails in practice is not that somebody defeats it, but that
+  it was quietly worth nothing all along, so each of these turns a silent hollow
+  guarantee into something an operator is told about:
+  - *An unsigned baseline no longer satisfies a build that expects a signature.*
+    New `pinnedSelftestKey`, empty in source and set by a release exactly as
+    `pinnedUpdateKey` already is for the update channel. Without it, "no key
+    configured" and "this baseline is unsigned" were the same state, so an
+    attacker who rewrote the content could replace the signed baseline with an
+    unsigned one of their own and the agent had nothing to object to — the
+    strongest check turned itself off quietly. Deleting the operator's key file
+    no longer helps either, because the build still carries one.
+  - *A signing key left on the host is detected* (`internal/trust.SigningKeysNearby`,
+    class `defend.weak.signing-key-on-host`). A key in `/etc/cau` beside the
+    manifest it signed reduces the signed case to the unsigned one exactly, and
+    it was invisible. It reports rather than refuses, since the file may be a
+    decoy or a fixture and a security tool that will not start over a file it
+    found is its own kind of outage.
+  - *Overriding the pinned SIEM address is reported* (`defend.weak.siem-pin-overridden`).
+    `--siem` and `$CAU_SIEM` still take precedence, deliberately — an operator
+    moving their SIEM must not need a re-recorded baseline first — but that was
+    the one remaining way to redirect the incident stream without the config
+    digest changing, and it was silent.
+  - *The other half of that redirect is covered too.* The CA bundle is baselined
+    alongside the address, since swapping it for one you control sends the
+    stream elsewhere with TLS verification still nominally on, and
+    `--wazuh-insecure` now raises `defend.weak.siem-tls-unverified`.
+  Weaknesses score 5 and are not live, so they corroborate and never confirm: a
+  misconfiguration must not arm a response. They are reported once per state,
+  like a tamper, so a long-running daemon does not repeat them every cycle.
+  `docs/limitations.md` has been rewritten to say what is actually left, which
+  is root being able to replace the binary and the key in it, a source build
+  pinning no key, and drift recording *when* but not *who*.
 - **Five fixes to the integrity path, from an independent review (cau-47,
   cau-b0).** Each was reproduced in the code before being changed:
   - *A redirected path defeated the feed check entirely.* `Guard.VerifyFile`
@@ -317,6 +441,22 @@ All notable changes to CAU EDR. The format follows
 - Static: `elf.tiny-loader` for hand-built ELF stubs.
 - `cau-mcp` now runs the archive, CHM and tradecraft passes.
 
+### Windows false positives
+
+- Measured on 5,701 public Windows admin scripts: 1.03 % false positives, 15 of
+  them MALICIOUS. `obfuscated_powershell` now needs execution and download on one
+  line, and Chocolatey and Scoop bootstrap URLs are excused line by line: 0.63 %,
+  4 MALICIOUS, for one heldout detection.
+
+### Kernel guards
+
+- The kill guard is self-contained and proven in QEMU: root cannot kill, stop or
+  ptrace a protected process, an unprotected one still dies, and detaching lifts
+  protection. `make vm-test` runs 54 scenarios.
+- **Fixed:** with the file guard loaded, `enforce on` refused every file open, so
+  logs, reads and the `enforce off` binary itself were locked out. The freeze now
+  refuses only opens that load a program.
+
 ### Layered defence
 
 - New `cau defend` chains every layer in one loop. `internal/correlate` joins
@@ -377,6 +517,48 @@ All notable changes to CAU EDR. The format follows
 - An incident is reported even if its response panics, with what the other actions
   did, and a hung `cau-kernel`, `nft` or `iptables` gives up after 30 s rather than
   holding the alert.
+- A response that failed is tried again: a quarantine or block that failed raises its
+  incident again after 5, 10 and 20 seconds, through the same gate. It used to be
+  reported once and never tried again.
+- A consumer that stops reading `cau defend`'s output no longer stops anything else.
+  Reports are written on their own goroutine, the oldest are dropped past 4,096, and
+  shutdown waits 2 seconds for it. Before, one stalled pipe held up every response,
+  the SIEM forward and the exit.
+- The memory of raised incidents rotates in two generations rather than being wiped
+  when full, which raised every live incident again at once, and flagged files are
+  capped at 65,536.
+- `make vm-respond` proves the response on a real kernel as real root, in QEMU, with
+  no root on the host: real stops, kills and quarantines, and what must be left alone.
+- **Scanning is several times faster and uses far less memory, with identical
+  findings.** `tradecraft` was 77 % of scan CPU, nearly all of it regexes proving they
+  didn't match, so `internal/prefilter` reduces each expression to literals any match
+  must contain and finds which are present in one pass of an automaton, and the rest
+  never run. A mixed 10,410-file set took about 100 s rather than 529 s at higher load,
+  and its full results were compared against a build without these changes: no
+  difference in any result, finding class or verdict. The same filter covers `linuxpkg`
+  script vectors and `heuristics` string patterns.
+- A 60 MiB text file peaks at about 310 MB of heap rather than 855 MB, allocating 68 MB
+  rather than 952 MB, and a 60 MiB list of hex numbers at 306 MB rather than about
+  1.2 GB, allocating 129 MB rather than 2.3 GB: `stego` had reallocated a 16-rune
+  window for every rune, `encchain` a buffer for every word, `heuristics` a string for
+  every line, and `tradecraft` and `peeler` a string header for every number in a
+  list. A 60 MiB run of base64 still peaks around 840 MB.
+- A 60 MiB run of base64 peaks at 567 MB of heap rather than 642 MB, and a 60 MiB-scale
+  run of hex numbers at 461 MB rather than 778 MB: every text decoder now sizes its
+  output to its encoding's own expansion ratio and decodes in place instead of copying
+  the text first. The worst of them was `ascii85`, which reserved four times the length
+  of its input for a body that decodes to four fifths of it — 324 MB of buffer for the
+  65 MB it decodes out of 81 MB of Adobe text, now 65 MB. No decode is refused earlier
+  than it was, so no verdict moved: `make eval` still holds at 100 % recall and no
+  false positives.
+- Tradecraft expressions compile on first use, which takes start-up from 54 ms of CPU
+  and 26 MB to 17 ms and 19 MB for every command. `cau defend` builds them before
+  taking work, so the first file to land does not pay for it.
+- `ScanDirectory` scans as it walks, so a large tree has results at once. Nested
+  parallel work borrows idle CPUs rather than stacking goroutines, large files are
+  hashed in parallel, and worker counts respect a CPU quota.
+- `cau defend` gives a sweep half the workers, stops within 5 seconds of a scan that
+  can't be interrupted, and passes the threat feed to the engine as `cau scan` does.
 - `correlate.PlanFor` acts on less. Nothing under `/etc` is quarantined, however it
   was flagged, since a PAM stack or a cron table going missing locks an operator out.
   A process is stopped only on its own live or exact evidence, or when another layer
@@ -509,6 +691,34 @@ All notable changes to CAU EDR. The format follows
   release is `v0.1.0` and a default that outranks it is a version lie, so
   `main.go` and `cmd/cau-mcp/main.go` now report the pre-release stamp and let
   the ldflags override supply the real version.
+- **No file can stop `cau defend`.** A corrupted or planted public key, baseline,
+  `cau.conf`, signature database, fuzzy database or rule file used to make it
+  refuse to start or hang, and `StartLimitBurst=5` then made systemd give up, so
+  one file left the host with no EDR. It now always starts, keeps detecting with
+  what it still has, and raises a score-10 `defend.tamper.*` signal. A key or
+  baseline it cannot check vouches for nothing, is never reported as verified, and
+  is retried every selftest cycle, so a repair needs no restart. The key must now
+  pass `CheckFile`, so a key other users can replace is not believed. These reads
+  no longer block on a FIFO, including `cau selftest`, which runs as
+  `ExecStartPre`, and an unreadable canary manifest now raises tamper. A mistake on
+  the command line still stops it. `cau selftest` stays strict. If `cau.conf` is
+  broken the daemon runs on built-in defaults, which act, so set `--report-only` on
+  the command line rather than only in that file.
+- **A key file can no longer hang or exhaust a run.** `--sign-key` on `selftest`,
+  `bundle` and `feed update`, `--pubkey` on `selftest` and `update`, and
+  `heldout --key-file` now share `safefs.ReadOperatorFile`. Each takes a regular
+  file or a pipe, up to 64 KiB. A pipe gets two minutes for a private key or
+  passphrase and five seconds for a public key, which `cau defend` reads at
+  startup. A FIFO with no writer is an immediate error and a device is refused,
+  where these could block
+  forever or read `/dev/zero` until the host ran out of memory.
+  `--sign-key <(pass show cau/key)` keeps working; `boot-scan` still takes regular
+  files only.
+- **The docs caught up with the changelog.** The README, man pages, wiki and
+  `docs/` now cover every new command, the architecture page no longer calls
+  `cau-mcp` planned or `cau defend` a separate product, `docs/detectors.md` and an
+  ADS document the peeler, and the firmware page no longer says compressed sections
+  are skipped. `cau --help` lists `cau peel <file>...` and `bundle sbom`.
 - **The docs match the repository.** `docs/installation.md` no longer says no
   tag has been cut: it names `v0.1.0` (2026-11-02), where its artifacts are
   attached and where the maintainer checklist lives. `docs/README.md` and
@@ -702,6 +912,83 @@ All notable changes to CAU EDR. The format follows
   hardware identity (DMI, NIC addresses, TPM PCRs, entropy source) with a
   state per field, a list of what could not be verified, `--record` / `--check`
   against a baseline and `--redact` for sharing.
+- **Opt-in periodic update.** `packaging/systemd/cau-update.service` and
+  `cau-update.timer` run `cau verify-self` then `cau update` weekly, sandboxed
+  and unprivileged. Nothing enables them; the unit refuses to run until the
+  release URL and public key are configured.
+- **RPM packaging** (`packaging/rpm/cau.spec`): offline build from the release
+  tarball, same install targets as the Debian and Arch packages. Built locally
+  with `rpmbuild --nodeps`; not yet built on an RPM distribution.
+- **Reproducible-build lane.** CI builds the same checkout in two directories
+  and fails if `cau` or `cau-mcp` differ; releases depend on it.
+- **Intake keeps galaxy tags.** MISP galaxy-cluster tags and the Malpedia
+  family a feed attaches are recorded in the intake provenance file.
+- **Docs test widened.** Man pages, inline code spans, completion scripts and
+  every `--help` text are now checked against the flags the code defines. It
+  found and fixed 38 mismatches (bash and fish completions offering flags that
+  `hash`, `cluster`, `rules`, `coverage`, `peel`, `firmware`, `add-hash` and
+  `add-fuzzy` reject; `-no-heur` in the man page).
+- **Strict rule lint.** `make lint-rules` fails on warnings as well as errors.
+- **`--format stix`.** `cau scan` can write its findings as one STIX 2.1
+  bundle; `cau intake --format stix` reads it back.
+- **Intake takes only malicious STIX indicators.** An indicator whose
+  `indicator_types` say `benign`, or do not include `malicious-activity` or
+  `compromised`, is no longer turned into a signature. Untyped indicators are
+  taken as before.
+- **Daemon forwarding seam.** `collector.NewSender` lets the resident agent's
+  queue deliver any SIEM sink format; no `cau defend` flag uses it yet.
+- **OpenSearch `_bulk` results are read per document.** `--sink-url` now
+  reports how many documents were indexed instead of treating a chunk as all
+  or nothing.
+- **`cau boot-scan --record / --check`.** A baseline of the boot chain, with
+  optional Ed25519 signing, and typed differences: only security-relevant
+  changes fail the check. All of boot-scan's file reads now go through the
+  bounded, non-blocking reader, so a named pipe can no longer hang it.
+- **Hybrid post-quantum signatures.** Update bundles and `SHA256SUMS` can be
+  signed with Ed25519 + ML-DSA-65 (`cau bundle keygen --hybrid`); a hybrid
+  verifier requires both. Ed25519-only keys and releases behave as before.
+  Needs a binary built with Go 1.27 or later; CI is still on 1.24, so releases
+  remain Ed25519-only for now.
+- `cau update` and `cau verify-self` now print which signatures were checked.
+- **VBA stomping** (T1564.007): the OLE pass parses the VBA `dir` stream and
+  reports modules whose compiled p-code and source disagree
+  (`ole.vba.stomp.source-missing`, `source-blank`, `mismatch`). Weighted so
+  that structure alone does not cross the threshold: only six VBA-bearing
+  documents were available to measure on.
+- **Peeler: zip as a layer, depth as a signal.** The obfuscation-chain peeler
+  opens zip archives through its own bounded reader (nothing written to disk,
+  encrypted members skipped and counted, bomb caps shared with the rest of
+  the walk), scores chains four or more layers deep (`peel.deep-chain`,
+  measured at 0 hits on 131,253 benign files), cancels speculative branches
+  when a budget is nearly spent, and enforces its task-graph bounds as
+  checked invariants. xz is recognised and reported as opaque, not opened.
+  `cau peel` exits 1 on the new `deep-chain` outcome.
+- **ELF content classes.** The static pass now reads what a Linux binary
+  carries: raw syscall stubs in a dynamically linked image for calls it does
+  not import (`content.direct-syscalls`), an embedded SSH key next to an
+  `authorized_keys` path, an `sshd_config` directive set to yes, a crontab
+  line, a systemd unit body, several autostart mechanisms at once. A location
+  string alone is never enough, and a new `Persistence` category is capped so
+  content alone cannot cross the threshold. Measured on 11,519 system ELF
+  files: no new detection.
+- **MCP surface.** `cau-mcp` exposes six more read-only analyses as tools
+  (`honesty_index`, `eval_report`, `peel_file`, `firmware_image`, `boot_scan`,
+  `hardware_identity`), a `frameworks` view on `mitre_coverage`, the
+  `cau://honesty` resource and a `boot_chain_review` prompt, all behind the
+  same path sandbox and bounding. New `cau-mcp` flags `--expect`, `--eval`,
+  `--manifest`, `--pubkey`. Nothing that acts on the host is exposed.
+- **Macro-enabled Office documents.** The archive pass recognises
+  `.docm`/`.xlsm`/`.pptm`, opens the embedded `vbaProject.bin` and runs the
+  full OLE/VBA analysis over it (classes prefixed `archive.ooxml.`, with the
+  member in `via`), and reports remote-template injection
+  (`archive.ooxml.remote-template`, T1221). JSON schema 1.13.0 adds
+  `archive.vba_member`, `archive.embedded_vba` and `via` on archive findings.
+- **`cau scan --provenance`.** Every scanned file can carry its package owner
+  and whether its content matches what the package shipped (dpkg and pacman;
+  usr-merge, diversions and conffiles handled). A package-owned executable
+  that no longer matches is reported as the unscored observation
+  `provenance.modified-system-binary` (T1554). Carried in every output
+  format. Off by default: the database load costs a few seconds and ~70 MB.
 - **Nightly fuzzing budget.** The scheduled CI run now fuzzes each target for
   4 minutes instead of 30 seconds; pushes and pull requests keep the 30-second
   smoke hunt. `make fuzz` gained the two boot-scan targets.

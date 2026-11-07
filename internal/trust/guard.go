@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 
 	"github.com/s-b-repo/cau/internal/selftest"
 )
@@ -12,8 +13,8 @@ import (
 // Guard is the agent's view of its own signed baseline: what its detection
 // content and configuration looked like when somebody trusted it.
 //
-// It is deliberately usable in three states, because a host can be in any of
-// them and the agent has to keep defending in all three:
+// It is deliberately usable in four states, because a host can be in any of
+// them and the agent has to keep defending in all four:
 //
 //	no baseline      nothing was recorded. Nothing can be verified, and the
 //	                 caller is told so once rather than silently believing
@@ -25,12 +26,35 @@ import (
 //	                 rewriting the manifest to match tampered content fails
 //	                 too. This is the only state that resists an attacker who
 //	                 already has the privileges to edit both files.
+//	distrusted       a baseline should be checkable and is not: the pinned key
+//	                 is unusable, or the manifest is unsafe, unreadable or badly
+//	                 signed. It vouches for nothing, and Fault says why. This is
+//	                 not "baseline only" with a warning: corrupting one file
+//	                 must not leave an attacker's manifest believed as a digest
+//	                 check, nor stop the agent, since refusing to start would be
+//	                 an off switch for anyone who can plant that file.
 type Guard struct {
-	path   string
+	path  string
+	state atomic.Pointer[guardState]
+}
+
+// guardState is one consistent view of the baseline, replaced whole, because the
+// feed loop reads it while the selftest loop recovers it.
+type guardState struct {
 	pub    ed25519.PublicKey
 	man    selftest.Manifest
 	loaded bool
 	signed bool
+	fault  error
+}
+
+func (g *Guard) view() *guardState {
+	if g != nil {
+		if s := g.state.Load(); s != nil {
+			return s
+		}
+	}
+	return &guardState{}
 }
 
 // Refresh re-reads the baseline, so re-recording one after a legitimate content
@@ -43,15 +67,46 @@ type Guard struct {
 // error. That matters: the new file may be unreadable, unsafe or signed by the
 // wrong key, and none of those are reasons to start trusting whatever is on
 // disk now — nor to stop defending with what was already known good.
+//
+// A distrusted guard is left alone. Re-reading the manifest here would quietly
+// turn "the pinned key is unusable" into an unsigned baseline that believes
+// whatever is on disk, which is the downgrade the state exists to prevent. Only
+// Recover leaves it, and only by passing the check that failed.
 func (g *Guard) Refresh() error {
-	if g == nil || g.path == "" {
+	s := g.view()
+	if g == nil || g.path == "" || s.fault != nil {
 		return nil
 	}
-	fresh, err := NewGuard(g.path, g.pub)
+	fresh, err := NewGuard(g.path, s.pub)
 	if err != nil {
 		return err
 	}
-	g.man, g.loaded, g.signed = fresh.man, fresh.loaded, fresh.signed
+	g.state.Store(fresh.view())
+	return nil
+}
+
+// Distrusted returns a guard that believes nothing because fault says it cannot.
+// pub is the key to check a repaired baseline against, nil if the key itself is
+// what failed.
+func Distrusted(manifestPath string, pub ed25519.PublicKey, fault error) *Guard {
+	g := &Guard{path: manifestPath}
+	g.state.Store(&guardState{pub: pub, fault: fault})
+	return g
+}
+
+// Fault reports why the baseline cannot be believed, or nil if it can.
+func (g *Guard) Fault() error { return g.view().fault }
+
+// Recover checks the baseline again, against pub, and leaves the distrusted state
+// if it passes. On failure the guard stays distrusted and holds the new reason,
+// so a repair that only half worked is reported as what is wrong now.
+func (g *Guard) Recover(pub ed25519.PublicKey) error {
+	fresh, err := NewGuard(g.path, pub)
+	if err != nil {
+		g.state.Store(&guardState{pub: pub, fault: err})
+		return err
+	}
+	g.state.Store(fresh.view())
 	return nil
 }
 
@@ -61,7 +116,9 @@ func (g *Guard) Refresh() error {
 // or whose signature does not verify against a pinned key, is an error — at
 // that point the baseline is not evidence of anything.
 func NewGuard(manifestPath string, pub ed25519.PublicKey) (*Guard, error) {
-	g := &Guard{path: manifestPath, pub: pub}
+	g := &Guard{path: manifestPath}
+	s := &guardState{pub: pub}
+	g.state.Store(s)
 	if manifestPath == "" {
 		return g, nil
 	}
@@ -77,22 +134,22 @@ func NewGuard(manifestPath string, pub ed25519.PublicKey) (*Guard, error) {
 	if err != nil {
 		return g, fmt.Errorf("trust: baseline %s: %w", manifestPath, err)
 	}
-	g.man, g.loaded = man, true
+	s.man, s.loaded = man, true
 	if len(pub) > 0 {
 		if err := man.VerifySignature(pub); err != nil {
 			return g, fmt.Errorf("trust: baseline %s: %w", manifestPath, err)
 		}
-		g.signed = true
+		s.signed = true
 	}
 	return g, nil
 }
 
 // Loaded reports whether a baseline was found.
-func (g *Guard) Loaded() bool { return g != nil && g.loaded }
+func (g *Guard) Loaded() bool { return g.view().loaded }
 
 // Signed reports whether the baseline's signature was verified against a
 // pinned key.
-func (g *Guard) Signed() bool { return g != nil && g.signed }
+func (g *Guard) Signed() bool { return g.view().signed }
 
 // Path is where the baseline was read from.
 func (g *Guard) Path() string {
@@ -103,27 +160,24 @@ func (g *Guard) Path() string {
 }
 
 // Manifest is the baseline as read.
-func (g *Guard) Manifest() selftest.Manifest {
-	if g == nil {
-		return selftest.Manifest{}
-	}
-	return g.man
-}
+func (g *Guard) Manifest() selftest.Manifest { return g.view().man }
 
 // Pin returns a signed configuration value.
 func (g *Guard) Pin(name string) (string, bool) {
-	if !g.Loaded() {
+	s := g.view()
+	if !s.loaded {
 		return "", false
 	}
-	return g.man.Pin(name)
+	return s.man.Pin(name)
 }
 
 // Covers reports whether the baseline recorded this resource.
 func (g *Guard) Covers(name string) bool {
-	if !g.Loaded() {
+	s := g.view()
+	if !s.loaded {
 		return false
 	}
-	_, ok := g.man.Lookup(name)
+	_, ok := s.man.Lookup(name)
 	return ok
 }
 
@@ -133,10 +187,11 @@ func (g *Guard) Covers(name string) bool {
 // failures: a host with nothing recorded is unverified, not compromised, and
 // saying otherwise would make the alert worthless.
 func (g *Guard) VerifyResource(name string) (reason string, err error) {
-	if !g.Loaded() {
+	s := g.view()
+	if !s.loaded {
 		return "", nil
 	}
-	drift, covered, err := selftest.VerifyOne(g.man, name)
+	drift, covered, err := selftest.VerifyOne(s.man, name)
 	if err != nil || !covered {
 		return "", err
 	}
@@ -160,13 +215,14 @@ func (g *Guard) VerifyFile(name, path string) (reason string, err error) {
 			return err.Error(), nil
 		}
 	}
-	if !g.Loaded() {
+	s := g.view()
+	if !s.loaded {
 		return "", nil
 	}
 	if path == "" {
 		return g.VerifyResource(name)
 	}
-	want, ok := g.man.Lookup(name)
+	want, ok := s.man.Lookup(name)
 	if !ok {
 		return "", nil
 	}

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // Firmware inventory from sysfs: ACPI tables (WPBT), PCI option ROMs and the
@@ -30,6 +32,14 @@ type FirmwareReport struct {
 	OptionROMs []OptionROM `json:"option_roms,omitempty"`
 	// ESRT lists the firmware components the platform can update.
 	ESRT []ESRTEntry `json:"esrt,omitempty"`
+	// ACPIRead, PCIRead and ESRTRead say whether each inventory above is
+	// complete for this run. False means "not read, or only partly": an
+	// empty list is then not a statement that the firmware publishes nothing.
+	// The ESRT attributes are readable by root only, so an unprivileged run
+	// lists the entries and reads none of them.
+	ACPIRead bool `json:"acpi_read"`
+	PCIRead  bool `json:"pci_read"`
+	ESRTRead bool `json:"esrt_read"`
 }
 
 // WPBTInfo is what could be read of the WPBT table.
@@ -60,14 +70,12 @@ type ESRTEntry struct {
 	LastAttemptStatus string `json:"last_attempt_status,omitempty"`
 }
 
-// sysText reads a small sysfs attribute as trimmed text.
+// sysText reads a small sysfs attribute as trimmed text. The read is of a
+// regular file only and cannot block on a FIFO. Empty means "not read":
+// absent, unreadable, not a regular file or over 4096 bytes.
 func sysText(path string) string {
-	fi, err := os.Stat(path)
-	if err != nil || !fi.Mode().IsRegular() {
-		return ""
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil || len(raw) > 4096 {
+	raw, err := safefs.ReadFile(path, 4096)
+	if err != nil { // audit:ok empty is this function's "not read"; every caller treats it as unknown (ESRT counts it and says so in a note, Compare never compares it), never as a value
 		return ""
 	}
 	return strings.TrimSpace(string(raw))
@@ -85,8 +93,16 @@ func ScanFirmware(root string) (*FirmwareReport, []Finding, []string) {
 	tables := filepath.Join(root, "firmware", "acpi", "tables")
 	if entries, err := os.ReadDir(tables); err == nil {
 		seen = true
+		rep.ACPIRead = true
 		for _, e := range entries {
-			if e.IsDir() || len(rep.ACPITables) >= maxACPITables {
+			if e.IsDir() {
+				continue
+			}
+			if len(rep.ACPITables) >= maxACPITables {
+				if rep.ACPIRead {
+					notes = append(notes, fmt.Sprintf("more than %d ACPI tables; the rest were not listed", maxACPITables))
+				}
+				rep.ACPIRead = false
 				continue
 			}
 			rep.ACPITables = append(rep.ACPITables, e.Name())
@@ -100,7 +116,7 @@ func ScanFirmware(root string) (*FirmwareReport, []Finding, []string) {
 			evidence := "the table content needs root to read"
 			// ACPI header (36 bytes), then the handoff size the firmware
 			// declares for the binary it wants run.
-			if raw, rerr := os.ReadFile(filepath.Join(tables, name)); rerr == nil && len(raw) >= 40 && len(raw) < 1<<20 {
+			if raw, rerr := safefs.ReadFile(filepath.Join(tables, name), 1<<20); rerr == nil && len(raw) >= 40 {
 				rep.WPBT.Readable = true
 				rep.WPBT.HandoffSize = binary.LittleEndian.Uint32(raw[36:40])
 				evidence = fmt.Sprintf("declared platform binary size %d bytes", rep.WPBT.HandoffSize)
@@ -115,9 +131,11 @@ func ScanFirmware(root string) (*FirmwareReport, []Finding, []string) {
 	devices := filepath.Join(root, "bus", "pci", "devices")
 	if entries, err := os.ReadDir(devices); err == nil {
 		seen = true
+		rep.PCIRead = true
 		for i, e := range entries {
 			if i >= maxPCIDevices {
 				notes = append(notes, fmt.Sprintf("more than %d PCI devices; the rest were not inventoried", maxPCIDevices))
+				rep.PCIRead = false
 				break
 			}
 			dev := filepath.Join(devices, e.Name())
@@ -147,8 +165,12 @@ func ScanFirmware(root string) (*FirmwareReport, []Finding, []string) {
 	esrt := filepath.Join(root, "firmware", "efi", "esrt", "entries")
 	if entries, err := os.ReadDir(esrt); err == nil {
 		seen = true
+		rep.ESRTRead = true
+		unread := 0
 		for i, e := range entries {
 			if i >= maxESRTEntries {
+				notes = append(notes, fmt.Sprintf("more than %d firmware resource entries; the rest were not read", maxESRTEntries))
+				rep.ESRTRead = false
 				break
 			}
 			dir := filepath.Join(esrt, e.Name())
@@ -160,6 +182,7 @@ func ScanFirmware(root string) (*FirmwareReport, []Finding, []string) {
 				LastAttemptStatus: sysText(filepath.Join(dir, "last_attempt_status")),
 			}
 			if ent.Class == "" {
+				unread++
 				continue
 			}
 			rep.ESRT = append(rep.ESRT, ent)
@@ -168,6 +191,10 @@ func ScanFirmware(root string) (*FirmwareReport, []Finding, []string) {
 					"the last firmware update attempt for this component did not succeed",
 					"last_attempt_status "+ent.LastAttemptStatus+", attempted version "+ent.LastAttempt))
 			}
+		}
+		if unread > 0 {
+			rep.ESRTRead = false
+			notes = append(notes, fmt.Sprintf("%d firmware resource entries could not be read (their attributes are readable by root only)", unread))
 		}
 	}
 

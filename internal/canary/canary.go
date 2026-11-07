@@ -230,9 +230,12 @@ func WriteManifest(path string, m *Manifest) error {
 	return nil
 }
 
+// maxManifestBytes bounds a manifest. A host has a handful of canaries.
+const maxManifestBytes = 16 << 20
+
 // ReadManifest loads a manifest written by WriteManifest.
 func ReadManifest(path string) (*Manifest, error) {
-	data, err := os.ReadFile(path)
+	data, err := safefs.ReadFile(path, maxManifestBytes)
 	if err != nil {
 		return nil, fmt.Errorf("canary: read manifest: %w", err)
 	}

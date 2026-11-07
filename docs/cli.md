@@ -2,24 +2,41 @@
 
 ```
 cau scan      [flags] [path ...]     scan files and directories
-cau ps        [flags]                scan the live process table over /proc; --respond stops or kills confirmed processes
+cau ps        [flags]                scan the live process table over /proc; --respond stops confirmed processes
+cau net       [flags]                scan the network plane; block|unblock|blocks|clear for reversible drop rules
 cau persist   [flags]                audit the host for persistence (read-only)
-cau defend    [flags]                chain every layer: incidents, real-time file scanning, response
+cau defend    [flags]                chain every layer: incidents, real-time file scanning, automatic response
 cau installed [flags]                audit already-installed packages' maintainer scripts
-cau firmware  [flags] <image>        parse a UEFI firmware image: inventory, FV integrity, implants
-cau boot-scan [flags]                read the boot chain, read-only: MBR/GPT, the ESP, Secure Boot state, option ROMs
+cau firmware  [flags] <image>        parse a UEFI firmware image: inventory, FV integrity, rules
+cau boot-scan [flags]                read the boot chain, read-only: MBR/GPT, the ESP, Secure Boot, firmware tables
+cau hwid      [flags]                snapshot the hardware identity, and compare it with a baseline
+cau peel      [flags] <file>...      walk obfuscation chains: every common base, rot and Caesar, in parallel
 cau feed      <subcommand> [flags]   abuse-intel feed: list / check / update
+cau intake    --format <fmt> [flags] ingest STIX, MISP, MalwareBazaar, LOLDrivers or TAXII 2.1 intel
+cau update    (--from|--url) [flags] install a signed signature-DB bundle, refusing an older one
+cau selftest  [--record] [flags]     verify detection content, feed, config and binary against a baseline
+cau verify-self (--from|--url)       verify this binary against the signed release manifest
+cau bundle    update|checksums|sbom  produce signed release artifacts and a CycloneDX SBOM
+cau quarantine <subcommand>          vault flagged files: add / list / restore / verify / delete
+cau canary    plant|check [flags]    plant decoy files and detect tampering
 cau hash      [flags] <path ...>     print SHA-256, imphash, TLSH and ssdeep digests
 cau cluster   [flags] <path ...>     group PE and ELF files by import-table similarity
 cau add-hash  [flags]                append a hash signature to the database
 cau add-fuzzy [flags]                append a TLSH / ssdeep / imphash signature
+cau rules     lint|list [flags]      lint the YARA rules, or list them with their meta
+cau coverage  [flags]                ATT&CK coverage matrix of the shipped content
+cau honesty   [flags]                what is covered, what was measured, and whether the content is intact
 cau eval      <subcommand> [flags]   corpus evaluation harness
+cau heldout   <subcommand> [flags]   encrypted held-out recall-corpus hash database
+cau completion <shell>               print a shell completion script (bash, zsh or fish)
 cau version                          print the version
 cau help                             this text
 ```
 
 Every command accepts `--help` and prints its own flags. Flags take one dash
-or two (`-quiet`, `--quiet`). The banner and progress lines always go to
+or two (`-quiet`, `--quiet`) and can go before or after the paths, so
+`cau scan /bin --no-yara` and `cau scan --no-yara /bin` are the same. After `--`
+everything is a path, which is how to name a file that starts with a dash. The banner and progress lines always go to
 stderr; reports go to stdout or `--output`, so machine formats are safe to
 pipe.
 
@@ -134,6 +151,34 @@ because it is a single-host action (see `docs/pricing.md`). syslog, Splunk
 HEC, Elastic / OpenSearch `_bulk` and the OCSF Lake sink follow the same
 rule and will ship free when added.
 
+### Package provenance (`--provenance`)
+
+`--provenance` resolves every scanned file against the host's package
+database (dpkg or pacman; rpm is reported as `unsupported`, because its
+database is not loose files and the engine never shells out) and records
+whether a package owns the file and whether its content still matches the
+digest the package shipped. Every report format carries it: a `provenance`
+object per file in JSON (`manager`, `package`, `version`, `state`,
+`shipped_digest`, `digest_algo`), a line in the text report, a property in
+SARIF, `unmapped.provenance` in OCSF, `cau.provenance` in ECS. States:
+`owned-intact`, `owned-modified`, `owned-conffile` (configuration files are
+expected to differ), `owned-unverifiable` (no digest recorded), `unowned`,
+`unsupported`, `unknown` (no database). usr-merge spellings and dpkg
+diversions are resolved. The database is loaded once per scan; on a
+4,400-package Debian install that is about one to three seconds of CPU and
+roughly 70 MB of memory, which is why it is off by default.
+
+A package-owned executable or script whose content no longer matches the
+package is reported as the observation `provenance.modified-system-binary`
+(T1554). It is reported beside the verdict and never scored, because it has
+no measured weight yet; it never changes the exit code. Measured on this
+host's `/usr/bin` and `/usr/sbin` (4,157 files): 4,154 intact, 2 unowned and 1
+modified, the latter a locally rebuilt daemon. The note the output carries is
+the honest one: provenance says a file is what the package shipped, per a
+database that root can rewrite; it says nothing about whether the package is
+trustworthy. `--provenance-root <dir>` points at another root (tests, a
+mounted image).
+
 ### SIEM sink formats and forwarding (free)
 
 Beside the four report formats, `--format` takes nine SIEM sink formats:
@@ -141,7 +186,8 @@ Beside the four report formats, `--format` takes nine SIEM sink formats:
 `syslog-leef` and `otlp` (shapes and field mappings in
 [output-formats.md](output-formats.md#siem-sink-formats)). They all carry the
 same findings as `--format ocsf`, one event per finding, so they can be
-written to a file or a pipe like any report.
+written to a file or a pipe like any report. `--format stix` writes the same
+findings as one STIX 2.1 bundle (a document, not sent by `--sink-url`).
 
 `--sink-url` also delivers them to a collector after the scan. `--format`
 still picks the local report; `--sink-format` picks what is sent (it defaults
@@ -314,13 +360,24 @@ see one view of the evidence; it does no I/O, and a join takes about 50 µs over
 signals and 1.4 ms over a thousand, with requests made while one runs collapsed into
 the next. Writes to one file are collapsed into one rescan.
 
-New files go ahead of anything a sweep found, and one worker never takes sweep work,
-so a drop lands just as fast while a large tree is being swept. A file is scanned
-at most ten times a second however often it changes. Reading the events still costs
-something: a file rewritten in a tight loop used 83 % of one core, measured at 150,000
-rewrites a second. Scans are bounded by the
-core count, up to 32, and each reads at most 64 MiB into memory, so a burst of large
-files can briefly hold that many times 64 MiB. A file over 1 GiB is not read at all,
+New files go ahead of anything a sweep found, and half the workers never take sweep
+work, so a sweep can't use every core and a drop lands fast while a large tree is
+being swept. A file is scanned at most ten times a second however often it changes.
+Reading the events still costs something: a file rewritten in a tight loop used
+50 % to 83 % of one core at 15,000 to 150,000 rewrites a second. Scans are bounded by
+the CPUs this process may use, up to 32, which respects a CPU quota. Each scan reads
+at most 64 MiB into memory, and files over 1 MiB share a budget of 128 MiB across all
+scans, so large files take turns: a burst of them is slower, and nothing is skipped.
+One 60 MiB file still costs real memory: about 310 MB of heap for text or a list of
+hex numbers, and 567 MB for a single run of base64 — 642 MB before the text decoders
+were right-sized, measured by peeling a 58 MiB file of wrapped base64 through
+`cau peel`. What is left of that peak is not a decoder's buffer: each layer that
+detects a wrapped blob re-joins its lines, so that repetition dominates now, and a
+decode is still not cut short before the output budget is checked, because an early
+refusal turns a "not this layer" into a bomb verdict and loses the finding. The daemon
+also sets a soft 768 MiB heap limit unless `GOMEMLIMIT` is set. A stop waits 5 seconds
+for a scan in progress, which can't be interrupted, and then exits without it. A
+response is always finished first. A file over 1 GiB is not read at all,
 because hashing streams to the end and a sparse file is any size for free. It raises
 a `file.too-large` alert instead, and is never quarantined for that alone. The
 watched trees are also swept every five minutes, which is what finds a file nothing
@@ -337,7 +394,20 @@ confirms anything on its own, though it joins other evidence like any file signa
 A daemon task that panics is retried at once, and raises one `defend.crash.<task>`
 alert on the incident stream, with the stack in the service log. A retry that keeps
 failing waits for that task's next trigger, so a repeating panic can't spin. A
-response is the exception: it is not retried, because part of it may have happened.
+response that panics is the exception: it is not run again, because part of it may
+have happened, and the incident is reported with what the other actions did.
+
+A response that fails cleanly is unfinished, because the file is still there or the
+peer still reachable. A failed quarantine or block raises the incident again after
+5, 10 and 20 seconds, on the evidence as it stands by then and through the same
+gate, and each attempt reports its own outcome.
+
+**Output never holds anything up.** The daemon writes reports on their own goroutine,
+so a consumer that stops reading can't stop detection, a response, the SIEM forward
+or a shutdown. It keeps the last 4,096 reports, drops the oldest past that, says so
+on stderr, and gives a stalled consumer 2 seconds at exit. The memory of raised
+incidents and flagged files is bounded at 65,536 each, and neither is wiped when
+full, since that would raise every live incident again at once.
 
 **Blocking.** It defends by default: a confirmed incident gets its process
 frozen (`--respond stop`), its file moved to the vault (`--quarantine`), and the
@@ -463,6 +533,11 @@ one of the three whose contents can be *signed*:
 siem      = 10.0.0.5          # https://10.0.0.5:55000; host:port and full URLs also work
 siem-user = cau-agent
 respond   = stop
+
+# Who may answer at that address. Without this, a certificate from any CA in
+# the host's trust store is enough. Start the agent without it and it logs the
+# pin the manager presented, which is the value to paste here.
+siem-cert-pin = sha256/K7tbT0d3kEHgKqkTSL4L0xNfz7pQBHJ+Zq0Xq8kVn1A=
 ```
 
 ```sh
@@ -503,10 +578,65 @@ its own (T1562.001).
 
 A failed check never disables the agent. Refusing to run because one file
 changed would hand an attacker a one-file off switch for the defence, so the
-agent keeps the last trustworthy value and says so loudly instead. The honest
-limit is in [limitations](limitations.md): an attacker who can edit the config
-can usually also re-record an *unsigned* baseline, which is why `--sign-key`
-exists and why the key belongs off the host.
+agent keeps the last trustworthy value and says so loudly instead.
+
+The same holds at startup: nothing on disk stops `cau defend`, and only a mistake
+on its own command line can. A corrupted, missing or planted public key, baseline,
+`cau.conf`, signature database, fuzzy database or rule file leaves the daemon
+running without what it lost, and raises a top-score incident
+(`defend.tamper.integrity-unverifiable`, `defend.tamper.config-unusable`,
+`defend.tamper.content-unusable.*`). So do a canary manifest it cannot read
+(`defend.tamper.canary-unusable`) and a forwarder from `cau.conf` that cannot run
+(`defend.tamper.siem-unusable`). A key or baseline that cannot be checked vouches
+for nothing: no signature is reported as verified and no pin is honoured, a feed
+already loaded stays frozen, and digest drift is still reported. Both are retried
+on every selftest cycle, so a repair needs no restart. `--selftest-pubkey` has to
+be a regular file that nobody but root or the agent's own user can replace, which
+rules out a pipe; `$CAU_SELFTEST_PUBKEY` supplies a key with no file. `cau selftest`
+stays strict and exits 3.
+
+**Guarantees that are not in force are reported too.** The way integrity
+checking fails in practice is not that somebody defeats it; it is that it was
+quietly worth nothing all along. Three of those are now alerts rather than
+silence — scored to corroborate, never to confirm, because a misconfiguration
+must not arm a response:
+
+| Class | What it means |
+|---|---|
+| `defend.weak.signing-key-on-host` | a file that looks like an Ed25519 signing key is in `/etc/cau` or beside the manifest. Whoever can rewrite the content can sign their own baseline over it, so the signature is worth no more than a digest |
+| `defend.weak.siem-pin-overridden` | `--siem` or `$CAU_SIEM` set the pinned address aside. The override still wins — an operator moving their SIEM should not need a re-recorded baseline first — but it is the one way left to redirect the stream without the config digest changing, so it is never silent |
+| `defend.weak.siem-tls-unverified` | `--wazuh-insecure` is on, so the pinned address no longer says who receives these incidents |
+
+**Who receives the incidents, not just where they go.** `siem-cert-pin`
+requires the manager's public key to match, in addition to the certificate
+chain verifying — never instead of it. The address pin alone is only half the
+control: TLS verification is what identifies the server, and that holds only
+while every one of the hundred-odd CAs in the host's trust store does. The pin
+is a SHA-256 over the DER `SubjectPublicKeyInfo`, so it survives certificate
+renewal; several may be listed comma-separated to rotate a key without an
+outage; any certificate in the presented chain may match, so you can pin an
+issuing CA of your own; hex and base64 both work, and `sha256/` is optional. On
+a mismatch the agent logs the pin the manager actually presented — which is
+either the value to paste into the config, or the evidence that something else
+is answering. The pin is signed into the baseline, since an attacker who could
+edit it on disk would simply substitute their own collector's. Pinning together
+with `--wazuh-insecure` is refused rather than silently resolved.
+
+A release build also carries a **pinned baseline-signing key**, the same way
+`cau update` carries a pinned release key, and a build you compile yourself can
+carry one too with `make build SELFTEST_PUBKEY=$(cat pub.hex)`. That closes a
+downgrade: without one,
+"no key configured" and "this baseline is unsigned" are the same state, so an
+attacker who rewrites the content can replace the signed baseline with an
+unsigned one and the agent has nothing to object to. With a key in the binary a
+signature is *expected*, and deleting the operator's key file no longer helps.
+The CA bundle is baselined alongside the SIEM address, since swapping it for one
+you control redirects the stream with TLS verification still nominally on.
+
+The remaining limits are in [limitations](limitations.md), and they are real:
+an attacker with root can replace the binary along with the key pinned into it,
+a build you compiled yourself pins no key at all, and drift records *when* but
+not *who*.
 
 **Leaving it running.** The unit appends to `/var/log/cau/defend.jsonl`, so
 `packaging/logrotate/cau` (installed to `/etc/logrotate.d/cau` by the Debian and
@@ -895,11 +1025,60 @@ finding and is never evidence that the code is benign.
 | `--sysfs <dir>` | auto | sysfs root for the firmware inventory |
 | `--offline` | off | scan only what is named |
 | `--dbx-reference <file>` | none | revocation list to compare the host dbx against (the UEFI Forum dbx update, bare or in its signed wrapper) |
+| `--record <file>` | none | write a baseline of what was scanned (mode 0600; refuses an existing file without `--force`) |
+| `--check <file>` | none | compare this scan with a baseline |
+| `--sign-key <file>` | none | with `--record`: sign the baseline (hex Ed25519 seed or key) |
+| `--pubkey <file>` | none | with `--check`: require the baseline's signature to verify against this hex Ed25519 public key |
+| `--force` | off | with `--record`: replace an existing baseline |
 | `--format <fmt>` | `text` | `text` or `json` |
 | `--threshold N` | 8 | score at which the scan is reported suspicious |
 
-Exit codes: `0` nothing at or above the threshold, `1` suspicious, `3` nothing
-could be scanned, `4` usage. ATT&CK: T1542.003, T1542.001, T1542.002, T1561.002,
+**Baselines: has the boot chain changed?** `--record` saves the comparable
+facts of a scan (boot entries and order, Secure Boot state, digests of
+PK/KEK/db/dbx/MOK, SBAT levels, every EFI binary's digest, the disk's boot code
+and partition table, ACPI table names, option ROMs, firmware versions), and
+`--check` compares a later scan with it.
+
+```sh
+sudo cau boot-scan --disk /dev/nvme0n1 --record /var/lib/cau/boot.json --sign-key boot-key.hex
+sudo cau boot-scan --disk /dev/nvme0n1 --check  /var/lib/cau/boot.json --pubkey boot-pub.hex
+```
+
+Each difference has a kind (`added`, `removed`, `changed`, `not-reverified`,
+`not-in-baseline`) and a severity. Only **security** differences set exit
+code 1:
+
+- a boot entry added, or its target, device path or arguments changed; a
+  different entry booting first;
+- Secure Boot turned off, setup mode turned on, PK/KEK/db/MOK changed;
+- the dbx shrank or was replaced, or an SBAT level fell;
+- an EFI binary added or changed (never downgraded because it is signed: the
+  signature is not verified);
+- the MBR boot code or the partition table changed;
+- an ACPI table or an option ROM appeared, or a ROM changed size;
+- a firmware version went down.
+
+A dbx that only grew, an SBAT level that only rose and a firmware version that
+went up are **expected with updates** and do not fail the check. Removals that
+introduce no code are informational. Something the baseline covers that this
+run could not read (the ESP without root, a disk not named with `--disk`) is
+`not-reverified`, never "removed" and never a failure, and something readable
+now that the baseline did not cover is `not-in-baseline`. The output states
+what the baseline covers and what it does not.
+
+An unsigned baseline is compared and the output says "UNSIGNED COMPARISON":
+whoever can write the file can hide a change. With `--pubkey`, an unsigned
+baseline, a bad signature or an unreadable key is a failed run (exit 3), never
+a quiet unsigned comparison. Limits: dbx growth is judged by counts and a
+digest, not the hash set; `BootNext` is not recorded; disks are matched by the
+path given; ROM and WPBT contents are not read, so a same-size replacement is
+invisible; and stability across reboots has not been measured (ten checks
+within one boot on one host gave no differences).
+
+Exit codes: `0` nothing at or above the threshold and, with `--check`, no
+security-relevant difference; `1` suspicious or a security-relevant
+difference; `3` nothing could be scanned, or the baseline or a key is
+unusable; `4` usage. ATT&CK: T1542.003, T1542.001, T1542.002, T1561.002,
 T1486, T1553.006. These are a host surface and are not yet rows in the
 `cau coverage` file-scanner matrix.
 
@@ -1278,9 +1457,21 @@ encoded-executable detector's job. A substitution counts at any depth, because
 no packaging tool writes one, and a carve does not count as a layer, because it
 decodes nothing. A branch that hits a wall is reported as
 `peel-exhausted`, a first-class scored outcome, never a silent clean. Each peel
-renders a stable chain signature such as `base64>gzip>base64`. Exit codes: 0
-clean, 1 a chain revealed a payload or the peel was exhausted, 3 failed, 4
-usage.
+renders a stable chain signature such as `base64>gzip>base64`.
+
+Zip archives are opened through the peeler's own bounded reader (stored and
+deflate members; encrypted ones are skipped and counted; nothing is written to
+disk; member names are never evidence). A zip that *is* the sample, or sits
+under compression only, is packaging and its members score as they would on
+disk; a zip under an encoding or a substitution counts as a layer
+(`base64>zip>ELF` is depth 2). A plain archive that outruns a wall is
+`peel-exhausted` with no score floor, so a large documentation archive does not
+become suspicious for being large. xz is recognised and reported as opaque, not
+opened. A chain four or more layers deep is the `deep-chain` outcome
+(`peel.deep-chain`), scored by depth beside whatever the leaf is; on 131,253
+benign local files no chain reached depth 3. Exit codes: 0 clean, 1 a chain
+revealed a payload, was four or more layers deep, or the peel was exhausted, 3
+failed, 4 usage.
 
 ## cau intake
 
@@ -1316,8 +1507,12 @@ poll is bounded in pages, objects and bytes. A dry run neither advances the
 cursor nor writes provenance.
 
 What is not ingested: a STIX indicator its producer marked `revoked` or whose
-`valid_until` has passed, and a MISP attribute exported with `to_ids: false`
-(context, not a detection). `--provenance <file>` appends one JSON line per
+`valid_until` has passed; a STIX indicator whose `indicator_types` say `benign`
+or do not include `malicious-activity` or `compromised` (an untyped indicator
+is taken); and a MISP attribute exported with `to_ids: false` (context, not a
+detection). MISP galaxy-cluster tags on an event, an attribute or in a STIX
+indicator's labels are recorded in the provenance line as `misp_clusters`, and
+a `misp-galaxy:malpedia` cluster as `malpedia_family`. `--provenance <file>` appends one JSON line per
 new signature with its `source`, `origin`, `retrieved_at` and `confidence`.
 Confidence is what the source states (STIX `confidence` on the None / Low /
 Med / High scale) and `unstated` otherwise; the engine does not invent one.
@@ -1384,6 +1579,13 @@ digest-only check — that downgrade is exactly what deleting the key would be
 worth doing for, and it would leave every later log line looking healthy. Exit
 codes: 0 intact, 1 drift or a bad/missing required signature, 3 failed, 4 usage.
 
+`--sign-key` and `--pubkey` also accept a pipe, so a key can stay off the disk:
+`--sign-key <(pass show cau/key)`. A pipe has the same 64 KiB limit as a file, and
+a FIFO with no writer is an error. A private key gets two minutes to arrive, since
+the command behind the pipe may stop to ask for a passphrase. A public key gets
+five seconds, because `cau defend` reads one at startup with nobody watching.
+Devices are refused.
+
 ## cau verify-self
 
 ```sh
@@ -1405,6 +1607,7 @@ running executable's own name). Exit 0 verified, 1 failed, 3 run error, 4 usage.
 ```sh
 cau bundle update    --db hashes.txt --sign-key priv.hex --out dist [--db-version V] [--min-engine V]
 cau bundle checksums --sign-key priv.hex --out dist <file>...
+cau bundle keygen    --out <dir> [--hybrid] [--ed25519-key <file>]
 cau bundle sbom      [--binary <path>] [--output <file>]
 ```
 
@@ -1413,6 +1616,26 @@ Producer-side signing, run in CI with the signing key from a secret.
 `manifest.json.sig`) that `cau update` installs. `checksums` writes a signed
 `SHA256SUMS` (+ `.sig`) over the release files that `cau verify-self` and users
 check downloads against. Both use Ed25519; keep the key off developer machines.
+
+**Hybrid post-quantum signatures.** `--sign-key` takes either an Ed25519 key
+(hex, as before) or a hybrid key, and the kind of key decides the signature
+written. `keygen --hybrid` makes an Ed25519 + ML-DSA-65 pair (FIPS 204, from
+the Go standard library) as `cau-release.key` (mode 0600) and
+`cau-release.pub`, refusing to overwrite; `--ed25519-key` keeps an existing
+Ed25519 half so hosts that pin it keep verifying. A verifier holding a hybrid
+public key requires **both** signatures to be valid over the same bytes and
+refuses an artifact signed with Ed25519 alone, so the post-quantum half cannot
+be stripped. A verifier holding only the Ed25519 key still verifies a
+hybrid-signed release on that half and warns that the ML-DSA-65 signature was
+not checked. `cau update` and `cau verify-self` print which signatures were
+checked, and a key that is named and cannot be read or parsed is an error
+(exit 3), never "no key". Sizes: public key file 4,015 bytes, signature file
+6,792 bytes. The hybrid file format (`cau-hybrid-v1`) is this project's own,
+not the IETF composite encoding. Limits: hybrid keys need a binary built with
+Go 1.27 or later (an older build refuses them), and `go.mod` and CI are still
+on Go 1.24, so released binaries are Ed25519-only until that changes; the
+`cau selftest` baseline signature is Ed25519-only; the code is new and has had
+no outside review.
 
 `sbom` writes a CycloneDX 1.5 software bill of materials for a Go binary (this
 one by default), read from the build information the linker embedded in it: the

@@ -3,6 +3,9 @@ package tradecraft
 import (
 	"regexp"
 	"strings"
+	"sync"
+
+	"github.com/s-b-repo/cau/internal/prefilter"
 )
 
 // maxScriptBytes bounds the regular-expression pass. Larger text is not a
@@ -15,17 +18,74 @@ const maxScriptBytes = 4 << 20
 type vector struct {
 	class string
 	hint  string
-	all   []*regexp.Regexp
+	all   []*lazyRegexp
+	// except excuses a match of the first expression when the line holding it
+	// matches, for the rare benign shape that is otherwise the attack exactly.
+	except *lazyRegexp
 }
+
+// trustedInstaller names exact bootstrap URLs that are download-and-execute by
+// design: Chocolatey's own install line is in thousands of admin scripts (measured:
+// 15 of 5,701 public ones). Exact paths on hosts an attacker cannot publish at, so
+// a package hosted on the same site is not excused.
+const trustedInstaller = `https://(?:community\.)?chocolatey\.org/install\.ps1\b|https://get\.scoop\.sh\b|https://dot\.net/v1/dotnet-install\.ps1\b|https://aka\.ms/\S`
+
+// unless adds an exception to a vector.
+func (vec vector) unless(pattern string) vector {
+	vec.except = lazy(`(?i)` + pattern)
+	return vec
+}
+
+// firstMatch finds the first match of re that the exception does not excuse. A
+// file naming a trusted installer on one line and a stranger's URL on the next
+// must still fire, so every match is considered, not only the first.
+func firstMatch(re, except *lazyRegexp, text string) []int {
+	if except == nil {
+		return re.FindStringIndex(text)
+	}
+	for _, loc := range re.re().FindAllStringIndex(text, 64) {
+		start := strings.LastIndexByte(text[:loc[0]], '\n') + 1
+		end := len(text)
+		if i := strings.IndexByte(text[loc[1]:], '\n'); i >= 0 {
+			end = loc[1] + i
+		}
+		if !except.re().MatchString(text[start:end]) {
+			return loc
+		}
+	}
+	return nil
+}
+
+// lazyRegexp compiles the first time it is run. Compiling this table was nearly all
+// of the program's start-up, paid by every command including `cau version`, and the
+// filter means most expressions never run on most files, so most of that work and
+// memory was for nothing. TestEveryExpressionCompiles is what catches a bad pattern,
+// where a package-level MustCompile used to.
+type lazyRegexp struct {
+	expr string
+	re   func() *regexp.Regexp
+}
+
+func lazy(expr string) *lazyRegexp {
+	return &lazyRegexp{expr, sync.OnceValue(func() *regexp.Regexp { return regexp.MustCompile(expr) })}
+}
+
+func (l *lazyRegexp) String() string { return l.expr }
+
+// FindStringIndex is regexp.Regexp's, compiling on first use.
+func (l *lazyRegexp) FindStringIndex(s string) []int { return l.re().FindStringIndex(s) }
+
+// MatchString is regexp.Regexp's, compiling on first use.
+func (l *lazyRegexp) MatchString(s string) bool { return l.re().MatchString(s) }
 
 func rx(p string) *regexp.Regexp { return regexp.MustCompile(`(?i)` + p) }
 
 func v(class, hint string, patterns ...string) vector {
-	re := make([]*regexp.Regexp, len(patterns))
+	re := make([]*lazyRegexp, len(patterns))
 	for i, p := range patterns {
-		re[i] = rx(p)
+		re[i] = lazy(`(?i)` + p)
 	}
-	return vector{class, hint, re}
+	return vector{class: class, hint: hint, all: re}
 }
 
 // Shared fragments.
@@ -142,7 +202,7 @@ var vectors = []vector{
 
 	// ── PowerShell and Windows script tradecraft ──
 	v(classAMSIBypass, "amsi", `AmsiUtils|amsiInitFailed|AmsiScanBuffer|amsiContext`),
-	v(classDownloadExec, "", `(?:\biex\b|Invoke-Expression)[^\n]{0,200}(?:DownloadString|DownloadData|Invoke-WebRequest|Invoke-RestMethod|\biwr\b|\birm\b)|(?:DownloadString|DownloadData|Invoke-WebRequest|Invoke-RestMethod|\biwr\b|\birm\b)[^\n]{0,200}\|\s*(?:iex|Invoke-Expression)\b`),
+	v(classDownloadExec, "", `(?:\biex\b|Invoke-Expression)[^\n]{0,200}(?:DownloadString|DownloadData|Invoke-WebRequest|Invoke-RestMethod|\biwr\b|\birm\b)|(?:DownloadString|DownloadData|Invoke-WebRequest|Invoke-RestMethod|\biwr\b|\birm\b)[^\n]{0,200}\|\s*(?:iex|Invoke-Expression)\b`).unless(trustedInstaller),
 	v(classDecodeExec, "", `(?:\biex\b|Invoke-Expression)[^\n]{0,400}(?:FromBase64String|GzipStream|DeflateStream|SecureStringToBSTR)|(?:FromBase64String|GzipStream|DeflateStream)[^\n]{0,400}\|\s*(?:iex|Invoke-Expression)\b`),
 	v(classCredAccess, "", `MiniDumpWriteDump|LsaEnumerateLogonSessions|LsaRetrievePrivateData|SamIConnect|\bcpassword\b|SECURITY\\Policy\\Secrets|UseLogonCredential|CredEnumerate|VaultEnumerate|PasswordVault\b|CryptUnprotect(?:Data|Memory)|ProtectedData\]::Unprotect|Win32_ShadowCopy|lsass(?:\.exe)?\b`),
 	v(classTokenTheft, "", `\b(?:ImpersonateLoggedOnUser|DuplicateTokenEx|DuplicateToken|SetThreadToken|CreateProcessWithToken[AW]?|CreateProcessWithLogon[AW]?)\b`),
@@ -162,19 +222,55 @@ var vectors = []vector{
 	v(classHiddenExec, "", `-WindowStyle\s+Hidden|\s-w(?:in)?\s+hidden\b`),
 }
 
+// scriptFilter is the condition of every expression in vectors, flattened, with
+// start giving where each vector's expressions begin. It is built on first use
+// because init functions in this package are still appending to vectors.
+var scriptFilter = sync.OnceValue(func() (f struct {
+	set   *prefilter.Set
+	start []int
+}) {
+	var exprs []string
+	f.start = make([]int, len(vectors))
+	for i, vec := range vectors {
+		f.start[i] = len(exprs)
+		for _, re := range vec.all {
+			exprs = append(exprs, re.String())
+		}
+	}
+	f.set = prefilter.New(exprs)
+	return f
+})
+
 func (w *walker) scanScript(text, origin string) {
 	if len(text) > maxScriptBytes {
 		text = text[:maxScriptBytes]
 	}
-	lower := strings.ToLower(text)
-	for _, vec := range vectors {
-		if vec.hint != "" && !strings.Contains(lower, vec.hint) {
+	filter := scriptFilter()
+	hits := filter.set.Scan(text)
+	defer hits.Release()
+	lower := "" // a copy of the text, made only if a surviving vector has a hint
+	for i, vec := range vectors {
+		// Every expression in a vector has to match, so one that can't rules it out.
+		if !hits.MayAll(filter.start[i], len(vec.all)) {
 			continue
+		}
+		if vec.hint != "" {
+			if lower == "" {
+				lower = strings.ToLower(text)
+			}
+			if !strings.Contains(lower, vec.hint) {
+				continue
+			}
 		}
 		evidence := ""
 		matched := true
 		for i, re := range vec.all {
-			loc := re.FindStringIndex(text)
+			var loc []int
+			if i == 0 {
+				loc = firstMatch(re, vec.except, text)
+			} else {
+				loc = re.FindStringIndex(text)
+			}
 			if loc == nil {
 				matched = false
 				break
@@ -187,7 +283,7 @@ func (w *walker) scanScript(text, origin string) {
 			w.add(vec.class, catalog[vec.class], origin, evidence)
 		}
 	}
-	if strings.Contains(lower, "$_") {
+	if strings.Contains(text, "$_") { // nothing in it has a case
 		if ev := phpTaint(text); ev != "" {
 			w.add(classPHPTaintExec, catalog[classPHPTaintExec], origin, ev)
 		}

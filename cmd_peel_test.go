@@ -1,12 +1,14 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -182,5 +184,104 @@ func TestCLIPeelKeepsGoingPastABadFile(t *testing.T) {
 func TestCLIPeelRejectsNegativeJobs(t *testing.T) {
 	if code, _, _ := runCLI(t, "peel", "--jobs", "-1", "x"); code != report.ExitUsage {
 		t.Fatalf("code = %d", code)
+	}
+}
+
+// zipWith builds an archive at run time from inert members.
+func zipWith(t *testing.T, members map[string][]byte, encrypted string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := zip.NewWriter(&buf)
+	names := make([]string, 0, len(members))
+	for name := range members {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		h := &zip.FileHeader{Name: name, Method: zip.Deflate}
+		if name == encrypted {
+			h.Flags = 0x1
+		}
+		f, err := w.CreateHeader(h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Write(members[name])
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestCLIPeelZipMembers(t *testing.T) {
+	work := t.TempDir()
+	payload := append([]byte{0x7f, 'E', 'L', 'F'}, bytes.Repeat([]byte("inert-body."), 8)...)
+	f := filepath.Join(work, "bundle.zip")
+	blob := zipWith(t, map[string][]byte{
+		"blob.txt":   buildChain(payload),
+		"locked.bin": buildChain(payload),
+		"readme.txt": []byte(strings.Repeat("An ordinary line of documentation.\n", 20)),
+	}, "locked.bin")
+	if err := os.WriteFile(f, blob, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out, errOut := runCLI(t, "peel", f)
+	if code != report.ExitThreat {
+		t.Fatalf("code=%d err=%s out=%s", code, errOut, out)
+	}
+	for _, want := range []string{
+		"Outcome     : revealed-executable",
+		"Archive     : 1 zip, 3 members: 1 peeled, 1 screened out, 1 encrypted (skipped)",
+		"Chain       : zip>base64>gzip>base64  -> revealed-executable (depth 3)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+
+	code, out, _ = runCLI(t, "peel", "--format", "json", f)
+	var r struct {
+		Archive struct {
+			Members, Peeled, Screened, Encrypted int
+		} `json:"archive"`
+	}
+	if err := json.Unmarshal([]byte(out), &r); err != nil || code != report.ExitThreat {
+		t.Fatalf("code=%d json: %v (%s)", code, err, out)
+	}
+	if r.Archive.Members != 3 || r.Archive.Peeled != 1 || r.Archive.Screened != 1 || r.Archive.Encrypted != 1 {
+		t.Errorf("archive = %+v", r.Archive)
+	}
+
+	// An archive of ordinary files is clean, and says what it screened.
+	plain := filepath.Join(work, "plain.zip")
+	os.WriteFile(plain, zipWith(t, map[string][]byte{
+		"a.txt": []byte(strings.Repeat("An ordinary line of documentation.\n", 20)),
+		"b.bin": bytes.Repeat([]byte{0xca, 0xfe, 0x01, 0x02, 0x03}, 50),
+	}, ""), 0o644)
+	code, out, errOut = runCLI(t, "peel", plain)
+	if code != report.ExitOK || !strings.Contains(out, "2 members: 0 peeled, 2 screened out") {
+		t.Fatalf("code=%d err=%s out=%s", code, errOut, out)
+	}
+}
+
+// Four layers over ordinary text: no payload, and still not exit 0.
+func TestCLIPeelDeepChain(t *testing.T) {
+	work := t.TempDir()
+	blob := []byte(strings.Repeat("An ordinary line of documentation.\n", 20))
+	for i := 0; i < 4; i++ {
+		blob = []byte(base64.StdEncoding.EncodeToString(blob))
+	}
+	f := filepath.Join(work, "deep.txt")
+	os.WriteFile(f, blob, 0o644)
+	code, out, errOut := runCLI(t, "peel", f)
+	if code != report.ExitThreat {
+		t.Fatalf("code=%d err=%s out=%s", code, errOut, out)
+	}
+	for _, want := range []string{"Outcome     : deep-chain", "Score       : 30", "Deepest     : base64>base64>base64>base64"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
 	}
 }

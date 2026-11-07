@@ -1,0 +1,18 @@
+# Schedules cau-update.service. Weekly, with a randomized delay so a fleet
+# does not hit the release host in the same minute, and a catch-up run if the
+# machine was off at the scheduled time. OPT-IN: configure cau-update.service
+# first (see its header), then:
+#   systemctl enable --now cau-update.timer
+# Inspect: systemctl list-timers cau-update.timer
+[Unit]
+Description=Schedule for the CAU EDR signed signature-database update
+Documentation=https://github.com/s-b-repo/cau
+
+[Timer]
+OnCalendar=Mon *-*-* 03:30:00
+RandomizedDelaySec=2h
+Persistent=true
+Unit=cau-update.service
+
+[Install]
+WantedBy=timers.target

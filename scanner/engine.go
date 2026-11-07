@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/s-b-repo/cau/internal/intel"
@@ -32,6 +34,50 @@ import (
 // YARA memory-maps it, and heuristics are skipped with an explicit reason, so a
 // multi-gigabyte sample can never make the scanner allocate its full size.
 const DefaultMaxInMemory int64 = 64 << 20 // 64 MiB
+
+// memoryBudget bounds the file bytes all scans in the process hold at once. Each
+// worker may read up to DefaultMaxInMemory and several detectors copy what they
+// read, so a burst of large files on a machine with many workers could otherwise
+// hold gigabytes. Scans over budget wait for their turn and are not cut short, so
+// this changes when a large file is scanned and never what is found in it.
+const memoryBudget int64 = 128 << 20
+
+// budgetFrom is the size below which a file isn't counted: the budget is for bursts
+// of large files, and the lock would cost a small one more than it saves.
+const budgetFrom int64 = 1 << 20
+
+var inMemory = newBudget(memoryBudget)
+
+type budget struct {
+	mu    sync.Mutex
+	freed *sync.Cond
+	used  int64
+	limit int64
+}
+
+func newBudget(limit int64) *budget {
+	b := &budget{limit: limit}
+	b.freed = sync.NewCond(&b.mu)
+	return b
+}
+
+// acquire waits until n bytes fit, and returns the release. A request larger than
+// the whole budget runs alone rather than never.
+func (b *budget) acquire(n int64) (release func()) {
+	n = min(n, b.limit)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for b.used > 0 && b.used+n > b.limit {
+		b.freed.Wait()
+	}
+	b.used += n
+	return func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		b.used -= n
+		b.freed.Broadcast()
+	}
+}
 
 // detectorAttempts is how many times one detector may run on one file. It is
 // bounded because the file is hostile: a panic that repeats must cost a known
@@ -132,6 +178,9 @@ type Engine struct {
 	LinuxPkg bool
 	// LinuxPkgThreshold overrides linuxpkg.Threshold (0 = package default).
 	LinuxPkgThreshold int
+	// IntelSource, when set, supplies the feed for each scan in place of Intel, for
+	// a caller that replaces the feed while scans are running.
+	IntelSource func() *intel.Feed
 	// Intel is the abuse-intelligence feed. When non-nil, indicators found in a
 	// package's install scripts are matched against it. nil disables feed
 	// matching (the offline default).
@@ -172,6 +221,13 @@ type Engine struct {
 	NoFusion bool
 }
 
+func (e *Engine) feed() *intel.Feed {
+	if e.IntelSource != nil {
+		return e.IntelSource()
+	}
+	return e.Intel
+}
+
 func (e *Engine) maxInMemory() int64 {
 	if e.MaxInMemory > 0 {
 		return e.MaxInMemory
@@ -183,10 +239,7 @@ func (e *Engine) jobs() int {
 	if e.Jobs > 0 {
 		return e.Jobs
 	}
-	if n := runtime.NumCPU(); n > 0 {
-		return n
-	}
-	return 1
+	return runtime.GOMAXPROCS(0) // unlike NumCPU, this respects a CPU quota
 }
 
 func (e *Engine) threshold() int {
@@ -332,6 +385,9 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 	var data []byte
 	var d digests
 	if fi.Size() <= e.maxInMemory() {
+		if fi.Size() >= budgetFrom {
+			defer inMemory.acquire(fi.Size())()
+		}
 		data, err = safefs.ReadFile(path, e.maxInMemory())
 		switch {
 		case errors.Is(err, safefs.ErrTooLarge):
@@ -582,7 +638,7 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 	if e.LinuxPkg {
 		run("linuxpkg", func() {
 			if data != nil {
-				res.LinuxPkg = linuxpkg.Analyze(data, linuxpkg.Options{Threshold: e.linuxPkgThreshold(), Intel: e.Intel})
+				res.LinuxPkg = linuxpkg.Analyze(data, linuxpkg.Options{Threshold: e.linuxPkgThreshold(), Intel: e.feed()})
 				res.LinuxPkg.FilePath = path
 			} else {
 				res.LinuxPkg = &linuxpkg.Result{
@@ -699,26 +755,62 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 // workers. Results are returned in walk order (deterministic, independent of
 // scheduling); the heuristic slice is aligned with the files for which
 // heuristics ran. Unreadable entries are reported as error results, not
-// dropped. progress, if non-nil, is called after each file completes.
+// dropped. progress, if non-nil, is called after each file completes, with the
+// number found so far: scanning starts as the walk does, so a large tree has its
+// first results at once, and the total only settles when the walk ends.
 func (e *Engine) ScanDirectory(root string, progress func(done, total int, path string)) ([]ScanResult, []HeuristicResult) {
 	type entry struct {
 		path string
 		err  error
+		res  ScanResult
+		heur *HeuristicResult
 	}
-	var entries []entry
+	var (
+		entries []*entry
+		found   atomic.Int64
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		done    int
+		next    = make(chan *entry)
+	)
+	for range e.jobs() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for en := range next {
+				if en.err != nil {
+					en.res = ScanResult{FilePath: en.path, Verdict: VerdictError, Error: en.err}
+				} else {
+					en.res, en.heur = e.ScanFile(en.path)
+				}
+				if progress != nil {
+					mu.Lock()
+					done++
+					progress(done, int(found.Load()), en.path)
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	add := func(path string, err error) {
+		en := &entry{path: path, err: err}
+		entries = append(entries, en)
+		found.Add(1)
+		next <- en
+	}
 
-	walkErr := filepath.Walk(safefs.WalkRoot(root), func(path string, info os.FileInfo, err error) error {
+	walkErr := filepath.WalkDir(safefs.WalkRoot(root), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			entries = append(entries, entry{path: path, err: err})
-			if info != nil && info.IsDir() {
+			add(path, err)
+			if d != nil && d.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil // keep walking
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
-		mode := info.Mode()
+		mode := d.Type()
 		if mode&os.ModeSymlink != 0 {
 			if !e.FollowSymlinks {
 				return nil
@@ -730,51 +822,20 @@ func (e *Engine) ScanDirectory(root string, progress func(done, total int, path 
 		} else if !mode.IsRegular() {
 			return nil // sockets, fifos, devices
 		}
-		entries = append(entries, entry{path: path})
+		add(path, nil)
 		return nil
 	})
 	if walkErr != nil {
-		entries = append(entries, entry{path: root, err: fmt.Errorf("directory walk failed: %w", walkErr)})
-	}
-
-	results := make([]ScanResult, len(entries))
-	heur := make([]*HeuristicResult, len(entries))
-
-	var (
-		wg   sync.WaitGroup
-		mu   sync.Mutex
-		done int
-		next = make(chan int)
-	)
-	workers := e.jobs()
-	if workers > len(entries) {
-		workers = len(entries)
-	}
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range next {
-				en := entries[i]
-				if en.err != nil {
-					results[i] = ScanResult{FilePath: en.path, Verdict: VerdictError, Error: en.err}
-				} else {
-					results[i], heur[i] = e.ScanFile(en.path)
-				}
-				if progress != nil {
-					mu.Lock()
-					done++
-					progress(done, len(entries), en.path)
-					mu.Unlock()
-				}
-			}
-		}()
-	}
-	for i := range entries {
-		next <- i
+		add(root, fmt.Errorf("directory walk failed: %w", walkErr))
 	}
 	close(next)
 	wg.Wait()
+
+	results := make([]ScanResult, len(entries))
+	heur := make([]*HeuristicResult, len(entries))
+	for i, en := range entries {
+		results[i], heur[i] = en.res, en.heur
+	}
 
 	hs := make([]HeuristicResult, 0, len(entries))
 	for _, h := range heur {

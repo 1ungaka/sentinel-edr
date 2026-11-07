@@ -1,15 +1,20 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/s-b-repo/cau/internal/bootscan"
 	"github.com/s-b-repo/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 func bootScanUsage(w io.Writer) {
@@ -18,7 +23,8 @@ func bootScanUsage(w io.Writer) {
 Reads the boot chain, the part of the host a file scan never reaches, and
 reports what it finds. Strictly read-only: disks are opened read-only, no
 firmware variable is set, no option ROM is enabled and no flash chip is
-touched.
+touched. The only file this command ever writes is the one named with
+--record.
 
   disks      the MBR, the GPT (both headers, both checksums) and each
              partition's first sector. A wiped or rewritten partition table, a
@@ -29,10 +35,12 @@ touched.
              subsystem and whether it carries a signature, plus queued
              firmware capsules.
   variables  Secure Boot and setup-mode state, the boot entries and their
-             order, the size of the revocation list (dbx), the shim MOK list
-             and SBAT level.
-  firmware   the WPBT ACPI table, PCI option ROMs (presence and size; the
-             contents are not read) and the firmware update resource table.
+             order, the platform key, KEK, db, the revocation list (dbx) and
+             the shim MOK list (entry counts and a SHA-256 of each), and the
+             SBAT level.
+  firmware   the ACPI table names and the WPBT table, PCI option ROMs
+             (presence and size; the contents are not read) and the firmware
+             update resource table (root only).
 
 On Linux the ESP, the firmware variables and sysfs are found automatically.
 Pass --offline to examine only the disk images you name, for example an image
@@ -50,13 +58,68 @@ Flags:
   --format <fmt>         text or json (default text)
   --threshold <n>        score at which the scan is reported suspicious
                          (default 8)
+  --record <file>        write what was scanned as the baseline (JSON, mode
+                         0600). Record it on a host you believe is good, as
+                         root and with --disk, so every surface is covered
+  --sign-key <file>      with --record, sign the baseline with this Ed25519
+                         private key (hex seed or key, as cau selftest uses)
+  --force                with --record, replace an existing file
+  --check <file>         compare this scan with a baseline and list the
+                         differences
+  --pubkey <file>        with --check, require the baseline to carry a
+                         signature that verifies against this Ed25519 public
+                         key (hex)
 
 Signatures are reported as present or absent, never verified: the engine
 holds no trust store. A scan that could not read something says so under
 "Not inspected" instead of reporting it clean.
 
-Exit codes: 0 nothing at or above the threshold, 1 suspicious, 3 nothing
-could be scanned, 4 usage.
+Baselines. One scan cannot tell whether a boot entry, a loader or the
+revocation list is what it was last month; a comparison can. --record saves
+the comparable facts of this scan and --check lists how a later scan differs.
+A difference has a kind (added, removed, changed, not-reverified,
+not-in-baseline) and one of three severities:
+
+  security         sets exit code 1. A boot entry added, or its target, device
+                   path, loader arguments or active flag changed; another
+                   entry booting first; Secure Boot turned off or setup mode
+                   turned on; the platform key gone; PK, KEK, db or the MOK
+                   list changed at all (db grew); the dbx SHRANK or was
+                   replaced; the SBAT level fell; an EFI binary added to the
+                   ESP or its content changed; the MBR boot code or anything
+                   in a partition table changed; an ACPI table appeared (WPBT
+                   above all) or DMAR/IVRS/TPM2/TCPA went away; an option ROM
+                   appeared or changed size; a firmware version went down.
+  expected-update  a vendor or OS update produces it; reported, and does not
+                   set the exit code: the dbx grew, the SBAT level rose, a
+                   firmware version went up. A changed boot loader is never
+                   in this class: its signature is seen, not verified, so an
+                   update and a replacement look the same. Confirm it and
+                   record a new baseline.
+  info             a removal that starts nothing new (a boot entry, an EFI
+                   binary, an option ROM), a relabelled boot entry, a boot
+                   order that changed after its first entry, hardening.
+
+not-reverified means the baseline has the item and this run could not read
+it: the ESP without root, a disk not named with --disk (a baseline never
+causes a disk to be opened), the firmware resource table without root. It may
+be unchanged; it is never reported as removed and never sets the exit code.
+not-in-baseline is the reverse. Left out of the comparison because they
+change on their own: BootCurrent, the variable count, file times, the ESP's
+other files, queued capsules, partition names. Disks are matched by the path
+given; device names move between boots, /dev/disk/by-id paths do not.
+
+A baseline that an intruder can rewrite proves little. With --sign-key the
+baseline is signed, and with --pubkey a check refuses (exit 3) a baseline
+that is unsigned or whose signature does not verify, and refuses a key file
+that cannot be read or parsed: it never falls back to an unsigned
+comparison. Without --pubkey the comparison runs and says it was unsigned.
+Keep the private key off the host.
+
+Exit codes: 0 nothing at or above the threshold (and, with --check, no
+security-relevant difference), 1 suspicious or a security-relevant
+difference, 3 nothing could be scanned, or the baseline or a key could not be
+used or written, 4 usage.
 `)
 }
 
@@ -69,9 +132,9 @@ var espCandidates = []string{"/boot/efi", "/efi", "/boot"}
 // test, not the presence of an EFI directory: /boot holds an "efi" directory
 // on every host that mounts the ESP at /boot/efi, and it is not the ESP.
 func discoverESP(mountsPath string) string {
-	raw, err := os.ReadFile(mountsPath)
+	raw, err := safefs.ReadFile(mountsPath, 8<<20)
 	if err != nil {
-		return ""
+		return "" // no mount table: no ESP is assumed, and the report says so
 	}
 	fat := map[string]bool{}
 	for _, line := range strings.Split(string(raw), "\n") {
@@ -106,6 +169,11 @@ func cmdBootScan(args []string, stdout, stderr io.Writer) int {
 	dbxRef := fs.String("dbx-reference", "", "reference revocation list to compare the host dbx against")
 	format := fs.String("format", "text", "output format: text or json")
 	threshold := fs.Int("threshold", 0, "score at which the scan is reported suspicious (0 = default)")
+	record := fs.String("record", "", "write what was scanned as the baseline")
+	signKey := fs.String("sign-key", "", "with --record, Ed25519 private key file (hex) to sign the baseline with")
+	force := fs.Bool("force", false, "with --record, replace an existing file")
+	check := fs.String("check", "", "compare this scan with a baseline")
+	pubkey := fs.String("pubkey", "", "with --check, Ed25519 public key file (hex) the baseline's signature must verify against")
 	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
@@ -117,6 +185,16 @@ func cmdBootScan(args []string, stdout, stderr io.Writer) int {
 	}
 	if fs.NArg() != 0 {
 		return fail(stderr, report.ExitUsage, "boot-scan takes no positional arguments; name disks with --disk")
+	}
+	switch {
+	case *record != "" && *check != "":
+		return fail(stderr, report.ExitUsage, "--record and --check are separate runs: check against the old baseline first, then record a new one")
+	case *force && *record == "":
+		return fail(stderr, report.ExitUsage, "--force only applies to --record")
+	case *signKey != "" && *record == "":
+		return fail(stderr, report.ExitUsage, "--sign-key only applies to --record")
+	case *pubkey != "" && *check == "":
+		return fail(stderr, report.ExitUsage, "--pubkey only applies to --check")
 	}
 
 	opts := bootscan.Options{
@@ -140,21 +218,387 @@ func cmdBootScan(args []string, stdout, stderr io.Writer) int {
 		return fail(stderr, report.ExitUsage, "nothing to scan: name a disk with --disk, or an --esp / --efivars / --sysfs directory")
 	}
 
+	// The baseline and the keys are settled before the scan: a baseline or a
+	// key that cannot be used fails the run without output that could be
+	// mistaken for a comparison, and without having read anything.
+	var baseline *bootscan.Baseline
+	var integrity string
+	if *check != "" {
+		var pub ed25519.PublicKey
+		if *pubkey != "" {
+			var err error
+			if pub, err = bootLoadPubkey(*pubkey); err != nil {
+				return fail(stderr, report.ExitRunFailed, "public key %s: %s; refusing to fall back to an unsigned comparison",
+					report.TermSafe(*pubkey), report.TermSafe(err.Error()))
+			}
+		}
+		var err error
+		if baseline, err = bootReadBaseline(*check); err != nil {
+			return fail(stderr, report.ExitRunFailed, "baseline %s: %s", report.TermSafe(*check), report.TermSafe(err.Error()))
+		}
+		if integrity, err = bootVerifyBaseline(baseline, pub); err != nil {
+			return fail(stderr, report.ExitRunFailed, "baseline %s: %s", report.TermSafe(*check), report.TermSafe(err.Error()))
+		}
+	}
+	var priv ed25519.PrivateKey
+	if *record != "" {
+		if *signKey != "" {
+			var err error
+			if priv, err = bootLoadSignKey(*signKey); err != nil {
+				return fail(stderr, report.ExitRunFailed, "signing key %s: %s; no baseline was written",
+					report.TermSafe(*signKey), report.TermSafe(err.Error()))
+			}
+		}
+		if _, err := os.Lstat(*record); err == nil && !*force {
+			return fail(stderr, report.ExitRunFailed, "%s already exists; not overwritten (pass --force to replace it)", report.TermSafe(*record))
+		}
+	}
+
 	res := bootscan.Run(opts)
+	var diffs []bootscan.Difference
+	if baseline != nil {
+		var err error
+		if diffs, err = bootscan.Compare(baseline, bootscan.NewBaseline(res)); err != nil {
+			return fail(stderr, report.ExitRunFailed, "baseline %s: %s", report.TermSafe(*check), report.TermSafe(err.Error()))
+		}
+	}
+	changed := bootscan.SecurityRelevant(diffs)
+
 	if *format == "json" {
-		if err := writeJSON(stdout, res); err != nil {
+		var v interface{} = res
+		if baseline != nil {
+			covers, missing := baseline.Covers()
+			v = bootScanCheck{Baseline: *check, BaselineCreatedAt: baseline.CreatedAt, BaselineSignature: integrity,
+				BaselineCovers: covers, BaselineNotCovered: missing,
+				SecurityRelevant: changed, Differences: diffs, Result: res}
+		}
+		if err := writeJSON(stdout, v); err != nil {
 			return fail(stderr, report.ExitRunFailed, "%v", err)
 		}
 	} else {
 		writeBootScanText(stdout, res)
+		if baseline != nil {
+			writeBootScanCheckText(stdout, *check, baseline, integrity, diffs)
+		}
+	}
+
+	unscanned := !res.Scanned() || allDisksUnread(res)
+	if *record != "" {
+		if unscanned {
+			return fail(stderr, report.ExitRunFailed, "nothing could be scanned, so there is nothing to record; no baseline was written")
+		}
+		if code := bootRecordBaseline(res, *record, priv, *force, stderr); code != report.ExitOK {
+			return code
+		}
 	}
 	switch {
-	case res.Detected():
+	case res.Detected() || changed:
 		return report.ExitThreat
-	case !res.Scanned() || allDisksUnread(res):
+	case unscanned:
 		return report.ExitRunFailed
 	}
 	return report.ExitOK
+}
+
+// bootScanCheck is the JSON printed with --check.
+type bootScanCheck struct {
+	Baseline          string `json:"baseline"`
+	BaselineCreatedAt string `json:"baseline_created_at"`
+	// BaselineSignature is verified (it checked out against --pubkey),
+	// unsigned, or signed-not-verified (a signature is in the file and no
+	// --pubkey was given to check it). Only the first is evidence that the
+	// baseline is the one that was recorded.
+	BaselineSignature string `json:"baseline_signature"`
+	// BaselineCovers and BaselineNotCovered name the surfaces the baseline
+	// records and those it does not; the second kind is never compared.
+	BaselineCovers     []string              `json:"baseline_covers"`
+	BaselineNotCovered []string              `json:"baseline_not_covered,omitempty"`
+	SecurityRelevant   bool                  `json:"security_relevant"`
+	Differences        []bootscan.Difference `json:"differences"`
+	Result             *bootscan.Result      `json:"result"`
+}
+
+const (
+	bootSigVerified    = "verified"
+	bootSigUnsigned    = "unsigned"
+	bootSigNotVerified = "signed-not-verified"
+
+	// bootMaxKeyBytes bounds a key file: a hex Ed25519 key is at most 128
+	// characters and a newline.
+	bootMaxKeyBytes = 4096
+)
+
+// bootCause is an error without the path the os package prefixes; the caller
+// names the file.
+func bootCause(err error) error {
+	var pe *os.PathError
+	if errors.As(err, &pe) {
+		return pe.Err
+	}
+	return err
+}
+
+// bootReadBounded reads a regular file of at most max bytes. The baseline
+// and the key files are named by the operator and may be anything: the open
+// is non-blocking and the open descriptor is what is checked, so a FIFO or a
+// device at the path is refused instead of being read until it ends.
+func bootReadBounded(path string, max int64) ([]byte, error) {
+	data, err := safefs.ReadFile(path, max)
+	switch {
+	case errors.Is(err, safefs.ErrNotRegular):
+		return nil, errors.New("not a regular file")
+	case errors.Is(err, safefs.ErrTooLarge):
+		return nil, fmt.Errorf("larger than %d bytes", max)
+	case err != nil:
+		return nil, bootCause(err)
+	}
+	return data, nil
+}
+
+// bootReadBaseline reads and validates a baseline file, bounded.
+func bootReadBaseline(path string) (*bootscan.Baseline, error) {
+	data, err := bootReadBounded(path, bootscan.MaxBaselineBytes)
+	if err != nil {
+		return nil, err
+	}
+	return bootscan.Parse(data)
+}
+
+// bootLoadPubkey reads the key a baseline's signature is checked against.
+// Asking for a key and not getting one is an error, never a quiet fall back
+// to "no key": otherwise deleting or corrupting one file would turn a signed
+// comparison into an unsigned one that still prints a clean result.
+func bootLoadPubkey(path string) (ed25519.PublicKey, error) {
+	raw, err := bootReadHexKey(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("an Ed25519 public key is %d bytes of hex, this file holds %d", ed25519.PublicKeySize, len(raw))
+	}
+	return ed25519.PublicKey(raw), nil
+}
+
+// bootLoadSignKey reads the Ed25519 private key a baseline is signed with:
+// the hex of a 32-byte seed or of a 64-byte private key, the form `cau
+// bundle` and `cau selftest` take. The key file formats are parsed here and
+// not through the release package's loader, which also accepts hybrid
+// (Ed25519 plus ML-DSA) keys: a baseline signature is Ed25519 only, and
+// signing with half of a hybrid key is something that loader promises never
+// to do. A hybrid key file is refused as not being hex.
+func bootLoadSignKey(path string) (ed25519.PrivateKey, error) {
+	raw, err := bootReadHexKey(path)
+	if err != nil {
+		return nil, err
+	}
+	switch len(raw) {
+	case ed25519.SeedSize:
+		return ed25519.NewKeyFromSeed(raw), nil
+	case ed25519.PrivateKeySize:
+		return ed25519.PrivateKey(raw), nil
+	}
+	return nil, fmt.Errorf("an Ed25519 private key is %d or %d bytes of hex, this file holds %d", ed25519.SeedSize, ed25519.PrivateKeySize, len(raw))
+}
+
+// bootReadHexKey reads a key file: hex, surrounding whitespace tolerated.
+// The error never quotes the file's content.
+func bootReadHexKey(path string) ([]byte, error) {
+	data, err := bootReadBounded(path, bootMaxKeyBytes)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := hex.DecodeString(strings.TrimSpace(string(data)))
+	if err != nil {
+		return nil, errors.New("not a hex-encoded Ed25519 key")
+	}
+	return raw, nil
+}
+
+// bootVerifyBaseline decides how far the baseline can be trusted. With a
+// key, anything but a signature that verifies is an error. Without one the
+// comparison is allowed and labelled for what it is.
+func bootVerifyBaseline(b *bootscan.Baseline, pub ed25519.PublicKey) (string, error) {
+	if pub == nil {
+		if b.Signature != "" {
+			return bootSigNotVerified, nil
+		}
+		return bootSigUnsigned, nil
+	}
+	if b.Signature == "" {
+		return "", errors.New("the baseline is not signed and --pubkey requires a signature; refusing an unsigned comparison")
+	}
+	sig, err := hex.DecodeString(b.Signature)
+	if err != nil || len(sig) != ed25519.SignatureSize || !ed25519.Verify(pub, b.SigningBytes(), sig) {
+		return "", errors.New("the signature does not verify against the given public key: the baseline was altered after it was signed, or it was signed with another key")
+	}
+	return bootSigVerified, nil
+}
+
+// bootRecordBaseline writes the scan as a baseline, signed when a key was
+// given, and says on stderr what the baseline does and does not cover.
+func bootRecordBaseline(res *bootscan.Result, path string, priv ed25519.PrivateKey, force bool, stderr io.Writer) int {
+	b := bootscan.NewBaseline(res)
+	b.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	if priv != nil {
+		b.Signature = hex.EncodeToString(ed25519.Sign(priv, b.SigningBytes()))
+	}
+	data, err := bootscan.Marshal(b)
+	if err != nil {
+		return fail(stderr, report.ExitRunFailed, "%s", report.TermSafe(err.Error()))
+	}
+	if err := bootWriteBaseline(path, data, force); err != nil {
+		return fail(stderr, report.ExitRunFailed, "%s", report.TermSafe(err.Error()))
+	}
+	if priv != nil {
+		fmt.Fprintf(stderr, "[*] baseline written to %s (mode 0600, signed with Ed25519; check it with --pubkey)\n", report.TermSafe(path))
+	} else {
+		fmt.Fprintf(stderr, "[*] baseline written to %s (mode 0600, UNSIGNED: whoever can write this file can rewrite it; pass --sign-key to sign it)\n", report.TermSafe(path))
+	}
+	recorded, missing := b.Covers()
+	if len(recorded) > 0 {
+		fmt.Fprintf(stderr, "[*] it covers: %s\n", strings.Join(recorded, ", "))
+	}
+	if len(missing) > 0 {
+		fmt.Fprintf(stderr, "[WARN] it does NOT cover: %s. These were not read in this run and will not be compared; record as root, and name disks with --disk\n", strings.Join(missing, ", "))
+	}
+	if res.Detected() {
+		fmt.Fprintln(stderr, "[WARN] this scan is SUSPICIOUS, and the baseline records the host as it is now: a later check will not report what is already here")
+	}
+	return report.ExitOK
+}
+
+// bootWriteBaseline writes the baseline with mode 0600. Without force an
+// existing file is never touched: the create is exclusive, so it also refuses
+// a symbolic link. With force the new content is written beside the target
+// and renamed over it, so the old baseline is replaced whole or not at all
+// and a link at that path is replaced, not followed.
+func bootWriteBaseline(path string, data []byte, force bool) error {
+	if !force {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("%s already exists; not overwritten (pass --force to replace it)", path)
+		}
+		if err != nil {
+			return fmt.Errorf("could not create %s: %w", path, bootCause(err))
+		}
+		_, werr := f.Write(data)
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			os.Remove(path) // this run created it; do not leave half a baseline
+			return fmt.Errorf("could not write %s: %w", path, bootCause(werr))
+		}
+		return nil
+	}
+	if fi, err := os.Lstat(path); err == nil && fi.IsDir() {
+		return fmt.Errorf("%s is a directory", path)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".boot-baseline-*")
+	if err != nil {
+		return fmt.Errorf("could not create %s: %w", path, bootCause(err))
+	}
+	_, werr := tmp.Write(data)
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp.Name(), 0o600)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), path)
+	}
+	if werr != nil {
+		os.Remove(tmp.Name())
+		return fmt.Errorf("could not write %s: %w", path, bootCause(werr))
+	}
+	return nil
+}
+
+// writeBootScanCheckText lists the differences from a baseline, grouped by
+// what they mean. Every value comes from a file its author controls, or from
+// the firmware, and passes through TermSafe.
+func writeBootScanCheckText(w io.Writer, path string, baseline *bootscan.Baseline, integrity string, diffs []bootscan.Difference) {
+	safe := report.TermSafe
+	created := baseline.CreatedAt
+	if created == "" {
+		created = "at an unrecorded time"
+	}
+	fmt.Fprintf(w, "Baseline    : %s (recorded %s)\n", safe(path), safe(created))
+	switch integrity {
+	case bootSigVerified:
+		fmt.Fprintln(w, "  integrity : signature verified against the --pubkey key")
+	case bootSigNotVerified:
+		fmt.Fprintln(w, "  integrity : UNSIGNED COMPARISON. The baseline carries a signature and no --pubkey was given, so it was not checked: nothing shows this file is the one that was recorded")
+	default:
+		fmt.Fprintln(w, "  integrity : UNSIGNED COMPARISON. The baseline is not signed: whoever can write the file can make any change below disappear")
+	}
+	covers, missing := baseline.Covers()
+	if len(covers) > 0 {
+		fmt.Fprintf(w, "  covers    : %s\n", strings.Join(covers, ", "))
+	}
+	if len(missing) > 0 {
+		fmt.Fprintf(w, "  no record : %s (not read when the baseline was recorded; never compared)\n", strings.Join(missing, ", "))
+	}
+
+	groups := []struct {
+		title string
+		match func(bootscan.Difference) bool
+	}{
+		{"Security-relevant (sets the exit code)", func(d bootscan.Difference) bool { return d.Severity == bootscan.SeveritySecurity }},
+		{"Expected with updates (a vendor or OS update produces these; they do not set the exit code)", func(d bootscan.Difference) bool {
+			return d.Severity == bootscan.SeverityExpectedUpdate
+		}},
+		{"Informational", func(d bootscan.Difference) bool {
+			return d.Severity == bootscan.SeverityInfo && d.Kind != bootscan.KindNotReverified && d.Kind != bootscan.KindNotInBaseline
+		}},
+		{"Could not be re-verified (in the baseline, not readable in this run; may be unchanged)", func(d bootscan.Difference) bool {
+			return d.Severity == bootscan.SeverityInfo && d.Kind == bootscan.KindNotReverified
+		}},
+		{"Not in the baseline (readable in this run, nothing to compare with)", func(d bootscan.Difference) bool {
+			return d.Severity == bootscan.SeverityInfo && d.Kind == bootscan.KindNotInBaseline
+		}},
+	}
+	counts := make([]int, len(groups))
+	for _, d := range diffs {
+		for i, g := range groups {
+			if g.match(d) {
+				counts[i]++
+				break
+			}
+		}
+	}
+	fmt.Fprintf(w, "Differences : %d security-relevant, %d expected with updates, %d informational, %d could not be re-verified, %d not in the baseline\n",
+		counts[0], counts[1], counts[2], counts[3], counts[4])
+	for i, g := range groups {
+		if counts[i] == 0 {
+			continue
+		}
+		fmt.Fprintf(w, "%s:\n", g.title)
+		for _, d := range diffs {
+			if !g.match(d) {
+				continue
+			}
+			fmt.Fprintf(w, "  [%s] %s\n", safe(string(d.Kind)), safe(d.Item))
+			switch {
+			case d.Old != "" && d.New != "":
+				fmt.Fprintf(w, "    baseline: %s\n    now     : %s\n", safe(d.Old), safe(d.New))
+			case d.Old != "":
+				fmt.Fprintf(w, "    baseline: %s\n", safe(d.Old))
+			case d.New != "":
+				fmt.Fprintf(w, "    now     : %s\n", safe(d.New))
+			}
+			fmt.Fprintf(w, "    %s\n", safe(d.Detail))
+		}
+	}
+	if bootscan.SecurityRelevant(diffs) {
+		fmt.Fprintln(w, "Comparison  : BOOT CHAIN CHANGED since the baseline")
+	} else {
+		fmt.Fprintln(w, "Comparison  : no security-relevant change among what could be compared")
+	}
+	if counts[3] > 0 {
+		fmt.Fprintln(w, "              What could not be re-verified was not compared: run as root, and name the baseline's disks with --disk, to cover it.")
+	}
 }
 
 // allDisksUnread reports a run whose only requested surface was disks, none
@@ -247,16 +691,28 @@ func writeBootScanText(w io.Writer, res *bootscan.Result) {
 		fmt.Fprintf(w, "Firmware variables : %s (%d variables)\n", safe(e.Path), e.Variables)
 		fmt.Fprintf(w, "  Secure Boot : %s\n", triState(e.SecureBoot, "enabled", "disabled"))
 		fmt.Fprintf(w, "  setup mode  : %s\n", triState(e.SetupMode, "YES (no platform key)", "no"))
-		if e.DBX != nil {
-			fmt.Fprintf(w, "  dbx         : %d SHA-256 revocations, %d certificates\n", e.DBX.Hashes, e.DBX.Certificates)
-		} else {
+		if e.PK != nil {
+			fmt.Fprintf(w, "  PK          : enrolled (sha256 %s)\n", e.PK.SHA256)
+		}
+		if e.KEK != nil {
+			fmt.Fprintf(w, "  KEK         : %d certificates, %d hashes (sha256 %s)\n", e.KEK.Certificates, e.KEK.Hashes, e.KEK.SHA256)
+		}
+		if e.DB != nil {
+			fmt.Fprintf(w, "  db          : %d certificates, %d hashes (sha256 %s)\n", e.DB.Certificates, e.DB.Hashes, e.DB.SHA256)
+		}
+		switch {
+		case e.DBX == nil:
 			fmt.Fprintln(w, "  dbx         : absent or unreadable")
+		case e.DBX.Unparsed:
+			fmt.Fprintf(w, "  dbx         : present, not a well-formed signature list (%d bytes, sha256 %s)\n", e.DBX.Bytes, e.DBX.SHA256)
+		default:
+			fmt.Fprintf(w, "  dbx         : %d SHA-256 revocations, %d certificates (sha256 %s)\n", e.DBX.Hashes, e.DBX.Certificates, e.DBX.SHA256)
 		}
 		if c := e.DBXReference; c != nil {
 			fmt.Fprintf(w, "  dbx vs ref  : %d of %d reference revocations missing on this host\n", c.Missing, c.ReferenceHashes)
 		}
 		if e.MOK != nil {
-			fmt.Fprintf(w, "  shim MOK    : %d certificates, %d hashes\n", e.MOK.Certificates, e.MOK.Hashes)
+			fmt.Fprintf(w, "  shim MOK    : %d certificates, %d hashes (sha256 %s)\n", e.MOK.Certificates, e.MOK.Hashes, e.MOK.SHA256)
 		}
 		if e.SBATLevel != "" {
 			fmt.Fprintf(w, "  SBAT level  : %s\n", safe(e.SBATLevel))

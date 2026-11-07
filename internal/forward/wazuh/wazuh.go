@@ -58,6 +58,18 @@ type Options struct {
 	CAFile   string
 	Insecure bool
 	Timeout  time.Duration
+	// CertPins, when set, additionally requires the manager's public key to
+	// match one of these SHA-256 SubjectPublicKeyInfo digests, as hex or
+	// base64 and optionally prefixed "sha256/". Several may be given so a key
+	// can be rotated without an outage. This is what makes the pinned SIEM
+	// address a statement about *who* receives incidents rather than only
+	// about where they are sent: without it, a certificate from any CA in the
+	// host's trust store is enough.
+	CertPins []string
+	// ObservePin, if set, is called with the pin value the manager actually
+	// presented when none of CertPins matched, so the operator is told the one
+	// string they need rather than left to derive it.
+	ObservePin func(pin string)
 }
 
 // Client holds the resolved HTTP transport and a parsed base URL.
@@ -110,6 +122,12 @@ func New(opts Options) (*Client, error) {
 			return nil, fmt.Errorf("wazuh: CA bundle %s contained no usable certificates", opts.CAFile)
 		}
 		tlsCfg.RootCAs = pool
+	}
+	// Pinning the manager's public key, in addition to chain verification, so
+	// that a certificate from any CA the host happens to trust is not enough to
+	// receive this agent's incidents.
+	if err := applyPins(tlsCfg, opts.CertPins, opts.ObservePin); err != nil {
+		return nil, err
 	}
 	timeout := opts.Timeout
 	if timeout <= 0 {

@@ -40,6 +40,16 @@ func (s *Server) promptDescs() []promptDesc {
 				{Name: "rule", Description: "the YARA rule source to review", Required: true},
 			},
 		},
+		{
+			Name:        "boot_chain_review",
+			Description: "Triage a boot chain: run boot_scan over explicitly given, sandboxed surfaces (disk images, an ESP, efivars, sysfs) and write an analyst summary of the firmware-to-loader chain and its findings.",
+			Arguments: []promptArg{
+				{Name: "disks", Description: "comma-separated disk image paths inside a scan root", Required: false},
+				{Name: "esp", Description: "a mounted EFI System Partition directory inside a scan root", Required: false},
+				{Name: "efivars", Description: "an efivarfs directory inside a scan root", Required: false},
+				{Name: "sysfs", Description: "a sysfs root inside a scan root", Required: false},
+			},
+		},
 	}
 }
 
@@ -110,6 +120,49 @@ func (s *Server) onPromptsGet(raw json.RawMessage) (interface{}, *rpcError) {
 		}, "\n")
 		return map[string]interface{}{
 			"description": "Assess a proposed YARA rule's false-positive risk and quality.",
+			"messages":    []promptMessage{userMsg(text)},
+		}, nil
+
+	case "boot_chain_review":
+		var inputs []string
+		if v := strings.TrimSpace(p.Arguments["disks"]); v != "" {
+			var quoted []string
+			for _, d := range strings.Split(v, ",") {
+				if d = strings.TrimSpace(d); d != "" {
+					quoted = append(quoted, fmt.Sprintf("%q", d))
+				}
+			}
+			if len(quoted) > 0 {
+				inputs = append(inputs, "disks: ["+strings.Join(quoted, ", ")+"]")
+			}
+		}
+		for _, name := range []string{"esp", "efivars", "sysfs"} {
+			if v := strings.TrimSpace(p.Arguments[name]); v != "" {
+				inputs = append(inputs, fmt.Sprintf("%s: %q", name, v))
+			}
+		}
+		given := "the boot surfaces the user names (disk images, an EFI System Partition directory, an efivarfs directory, a sysfs root), each inside a scan root"
+		if len(inputs) > 0 {
+			given = strings.Join(inputs, "; ")
+		}
+		text := strings.Join([]string{
+			"Review a boot chain using the CAU tools. Inputs: " + given + ".",
+			"",
+			"1. Call boot_scan with exactly those inputs. There is no auto-discovery: a path outside a scan root is refused, and the live host's firmware variables or sysfs are only reachable when the operator placed them under --root.",
+			"2. If a sysfs root was given, call hardware_identity with it (leave redact at its default) to pair the boot posture with the platform's DMI, TPM and hardware-RNG state.",
+			"3. If a firmware image file was named, call firmware_image on it for the module inventory and rule matches.",
+			"",
+			"Then write a short analyst summary, in this order:",
+			"- Posture: Secure Boot and Setup Mode as reported (unknown is a state; never read it as off), whether a platform key is enrolled, and the db/dbx/MOK sizes.",
+			"- Chain: the boot order and entries, the loader each entry points at, and whether that file exists on the ESP, is a PE image with an EFI subsystem, and carries a signature. Signatures are reported present or absent, never verified: the engine holds no trust store, so do not claim a loader is trusted.",
+			"- Disks: partition scheme and table integrity, boot code presence and recognised loader family, and any structural anomaly.",
+			"- Findings: each scored finding, strongest first, with its evidence; then the informational ones.",
+			"- Not inspected: every note the scan returned about what it could not read, and whether any list was truncated.",
+			"- Next step: one recommended action (for example compare the boot-entry target digest against a recorded baseline with cau bootscan --check, or verify the loader signature with an external tool).",
+			"Do not speculate beyond what the tools reported.",
+		}, "\n")
+		return map[string]interface{}{
+			"description": "Triage a boot chain with the CAU boot-surface tools.",
 			"messages":    []promptMessage{userMsg(text)},
 		}, nil
 

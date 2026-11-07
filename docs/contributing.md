@@ -109,6 +109,31 @@ Go 1.24, libyara 4.3 with headers and pkg-config are required; see
   and a bridge test that requires 100 % recall and 0 false positives on the
   smoke corpus.
 
+## Regex audit
+
+`make regex-audit` sweeps all the code in the tree for known bug shapes: swallowed
+errors, memory handling, broken logic, bad code, filesystem races and injection, in
+Go, C and BPF, Python, shell and workflow files. It exits 1 on a hit nobody has read.
+
+```sh
+make regex-audit                          # self-test the rules, then sweep
+python3 scripts/regex-audit.py --summary  # counts per rule
+python3 scripts/regex-audit.py --all      # everything, baseline included
+python3 scripts/regex-audit.py --family logic --tests   # one family, tests too
+python3 scripts/regex-audit.py --list     # every rule and what it means
+```
+
+A hit is a candidate, not a verdict, so read it. If it is a bug, fix it. If it is fine,
+add `audit:ok` in a comment on that line, or run
+`python3 scripts/regex-audit.py --write-baseline` to record everything currently
+reported in `scripts/regex-audit.baseline`. A baselined hit is matched by rule, file
+and line text, so moving code leaves it alone and editing the line brings it back.
+
+A new rule carries a sample of the bug and of the code it must leave alone, and
+`--self-test` checks both, so a broken regex fails instead of reporting a clean tree.
+Rules run per line, across lines, per Go function ("opens a file and never closes
+it") and per loop ("a `break` that only leaves the `select`").
+
 ## Adding a detector
 
 1. Produce a result type with a score, a threshold, a `Skipped` reason and

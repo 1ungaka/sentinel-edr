@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -49,6 +50,10 @@ const (
 	// have the agent deliver its findings to them instead. With the address
 	// signed, editing the config on disk can no longer redirect the stream.
 	PinSIEM = "siem"
+	// PinSIEMCert is the manager's public-key pin. Signing it matters for
+	// the same reason as the address: an attacker who could edit it on disk
+	// would simply replace it with the pin of their own collector.
+	PinSIEMCert = "siem-cert"
 )
 
 // Errors a caller can branch on.
@@ -180,13 +185,22 @@ func Compute(resources []Resource) (Manifest, error) {
 }
 
 // digestFile returns the SHA-256 hex of a file.
+//
+// It reads through safefs because this runs before the daemon does, as
+// ExecStartPre, and a FIFO planted at a baselined path would otherwise hold that
+// step until systemd gave up on the unit. A timeout is not an exit code, so the
+// "-" that forgives a failed selftest does not forgive it.
 func digestFile(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	f, _, err := safefs.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("selftest: read %s: %w", path, err)
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("selftest: read %s: %w", path, err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // digestTree reduces a directory to one canonical digest over its regular files
@@ -218,7 +232,7 @@ func digestTree(root string) (string, int, error) {
 		if d.IsDir() || !d.Type().IsRegular() {
 			return nil
 		}
-		data, rerr := os.ReadFile(p)
+		sum, rerr := digestFile(p)
 		if rerr != nil {
 			return rerr
 		}
@@ -226,8 +240,7 @@ func digestTree(root string) (string, int, error) {
 		if rerr != nil {
 			return rerr
 		}
-		sum := sha256.Sum256(data)
-		files = append(files, fileDigest{rel: filepath.ToSlash(rel), sum: hex.EncodeToString(sum[:])})
+		files = append(files, fileDigest{rel: filepath.ToSlash(rel), sum: sum})
 		return nil
 	})
 	if err != nil {
@@ -345,9 +358,13 @@ func WriteManifest(path string, m Manifest) error {
 	return nil
 }
 
+// maxManifestBytes bounds a manifest. It holds a few digests and pins; a tree of
+// rules is one entry however many files are in it.
+const maxManifestBytes = 16 << 20
+
 // ReadManifest loads a manifest.
 func ReadManifest(path string) (Manifest, error) {
-	data, err := os.ReadFile(path)
+	data, err := safefs.ReadFile(path, maxManifestBytes)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("selftest: read manifest: %w", err)
 	}

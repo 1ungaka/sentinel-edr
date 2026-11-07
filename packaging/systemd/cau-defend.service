@@ -11,7 +11,11 @@
 # To watch before you let it act, add --report-only to ExecStart and read
 # /var/log/cau/defend.jsonl for a while. It still detects, alerts and forwards;
 # it just changes nothing. The same switch lives in /etc/cau/cau.conf as
-# `report-only = true`, which does not need this unit edited.
+# `report-only = true`, which does not need this unit edited. A cau.conf that is
+# broken or refused — wrong owner, group-writable, a line the parser rejects —
+# falls back to the built-in defaults, and those act: the agent keeps defending
+# rather than failing closed. On a host that must never act, put --report-only on
+# ExecStart directly, because the command line wins over the file.
 #
 # Settings belong in /etc/cau/cau.conf rather than here where it is practical:
 # that file is the only one whose contents can be signed into the integrity
@@ -83,8 +87,9 @@ Description=CAU EDR layered defence (correlation, real-time file watch, response
 Documentation=https://github.com/s-b-repo/cau
 After=network-online.target cau-kernel-guard.service
 Wants=network-online.target
-StartLimitIntervalSec=300
-StartLimitBurst=5
+# Never give up. A limit here turns any fault that survives a restart into a host
+# with no EDR until someone notices; the 10s below is what keeps a loop cheap.
+StartLimitIntervalSec=0
 
 [Service]
 Type=notify
@@ -95,6 +100,8 @@ RestartSec=10
 KillSignal=SIGTERM
 TimeoutStopSec=60
 Nice=10
+# Reports tampering before the start. Keep the leading "-": without it a planted
+# file would stop the daemon, which is the off switch this unit exists to avoid.
 ExecStartPre=-/usr/bin/cau selftest
 # --kernel-events is safe without the guard: a missing log only means no events.
 ExecStart=/usr/bin/cau defend --kernel-events /run/cau/kernel-events.jsonl --format json

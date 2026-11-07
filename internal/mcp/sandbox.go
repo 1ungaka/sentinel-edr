@@ -156,6 +156,22 @@ func (s *Sandbox) Resolve(path string) (string, error) {
 // ResolveFile resolves path, requires it to be a regular file, and enforces
 // the size cap. It returns the real path and its size.
 func (s *Sandbox) ResolveFile(path string) (real string, size int64, err error) {
+	real, size, err = s.ResolveRegular(path)
+	if err != nil {
+		return "", 0, err
+	}
+	if size > s.maxBytes {
+		return "", 0, fmt.Errorf("file is %d bytes, over the %d-byte sandbox cap", size, s.maxBytes)
+	}
+	return real, size, nil
+}
+
+// ResolveRegular resolves path and requires it to be a regular file inside a
+// root, without the size cap. It is for analysers that read bounded regions
+// by offset (a disk image's boot sectors and partition tables) and never load
+// the file: a disk image is legitimately larger than any in-memory cap. A
+// tool that reads a file into memory uses ResolveFile.
+func (s *Sandbox) ResolveRegular(path string) (real string, size int64, err error) {
 	real, err = s.Resolve(path)
 	if err != nil {
 		return "", 0, err
@@ -167,10 +183,27 @@ func (s *Sandbox) ResolveFile(path string) (real string, size int64, err error) 
 	if !info.Mode().IsRegular() {
 		return "", 0, fmt.Errorf("not a regular file: %q", path)
 	}
-	if info.Size() > s.maxBytes {
-		return "", 0, fmt.Errorf("file is %d bytes, over the %d-byte sandbox cap", info.Size(), s.maxBytes)
-	}
 	return real, info.Size(), nil
+}
+
+// ResolveDirEntry resolves path and requires it to be a directory inside a
+// root, without the file-count walk ResolveDir performs. It is for analysers
+// that read a fixed set of named entries under their own bounds (a sysfs or
+// efivarfs tree, where a count walk would be slow and the cap meaningless);
+// a tool that enumerates a tree uses ResolveDir.
+func (s *Sandbox) ResolveDirEntry(path string) (real string, err error) {
+	real, err = s.Resolve(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(real)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("not a directory: %q", path)
+	}
+	return real, nil
 }
 
 // ResolveDir resolves path, requires it to be a directory, and refuses it if

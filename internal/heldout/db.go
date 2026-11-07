@@ -26,6 +26,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // magic identifies an encrypted held-out database and versions its on-disk
@@ -328,12 +330,19 @@ func (d *DB) Manifest(root string) ([]byte, error) {
 	return []byte(buf.String()), nil
 }
 
+// A passphrase file is read whole. It may be a pipe, and a pipe may be slow
+// while a secrets manager asks for a passphrase of its own, but not forever.
+const (
+	maxKeyFileBytes = 64 << 10
+	keyPipeWait     = 2 * time.Minute
+)
+
 // ReadKey resolves the passphrase from a key file (preferred) or the
 // CAU_HELDOUT_KEY environment variable, trimming a trailing newline from a
 // file so `echo pass > key` behaves. It never echoes the key.
 func ReadKey(keyFile string) ([]byte, error) {
 	if keyFile != "" {
-		b, err := os.ReadFile(keyFile)
+		b, err := safefs.ReadOperatorFile(keyFile, maxKeyFileBytes, keyPipeWait)
 		if err != nil {
 			return nil, fmt.Errorf("heldout: read key file: %w", err)
 		}

@@ -23,6 +23,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // Kind classifies an indicator.
@@ -72,7 +74,7 @@ func New() *Feed {
 // Load reads a feed file. A missing file is NOT an error — it returns an empty
 // feed and false, so callers can run feed-less without special-casing.
 func Load(path string) (*Feed, bool, error) {
-	f, err := os.Open(path)
+	f, _, err := safefs.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return New(), false, nil

@@ -107,8 +107,69 @@ func TestOCSFIncidentUIDIsFingerprint(t *testing.T) {
 	if got, want := fi["uid"], inc.Fingerprint(); got != want {
 		t.Errorf("finding_info.uid = %v, want fingerprint %v", got, want)
 	}
-	if fi["analytic"].(map[string]any)["uid"] != inc.ID {
-		t.Error("analytic.uid should carry the incident id")
+	// analytic.uid names the kind of detection, not this instance of it. The
+	// incident's own id stays reachable in unmapped.
+	if got := fi["analytic"].(map[string]any)["uid"]; got == inc.ID {
+		t.Error("analytic.uid must not be the incident id: formats that use it as their event id could then never group two incidents of the same kind")
+	}
+	native := ev["unmapped"].(map[string]any)["incident"].(map[string]any)
+	if native["id"] != inc.ID {
+		t.Errorf("unmapped.incident.id = %v, want the incident id %v", native["id"], inc.ID)
+	}
+}
+
+// The property the fix is for: two incidents about different artefacts, found
+// the same way, must share an analytic uid so a CEF/LEEF class map groups them.
+func TestOCSFAnalyticUIDGroupsLikeDetections(t *testing.T) {
+	a := confirmedIncident()
+	b := confirmedIncident()
+	b.ID = "different-artefact"
+	b.Files = []string{"/tmp/another.bin"}
+
+	evA := encode(t, OCSFIncident(a, DefaultProduct("h"), time.Now()))
+	evB := encode(t, OCSFIncident(b, DefaultProduct("h"), time.Now()))
+	uid := func(e map[string]any) any {
+		return e["finding_info"].(map[string]any)["analytic"].(map[string]any)["uid"]
+	}
+	if uid(evA) != uid(evB) {
+		t.Errorf("analytic.uid differs for two incidents of the same kind (%v vs %v), so a class map cannot group them", uid(evA), uid(evB))
+	}
+	// And the two findings are still individually identifiable.
+	fa := evA["finding_info"].(map[string]any)["uid"]
+	fb := evB["finding_info"].(map[string]any)["uid"]
+	if fa == fb {
+		t.Error("finding_info.uid must still distinguish the two incidents")
+	}
+}
+
+// A different kind of detection must not collapse into the same analytic.
+func TestOCSFAnalyticUIDSeparatesDifferentDetections(t *testing.T) {
+	a := confirmedIncident()
+	b := confirmedIncident()
+	b.Signals = []correlate.Signal{{
+		Layer: "self", Class: "defend.tamper.feed", Score: 10, Live: true,
+		Detail: "the feed was replaced",
+	}}
+	uid := func(inc correlate.Incident) any {
+		return encode(t, OCSFIncident(inc, DefaultProduct("h"), time.Now()))["finding_info"].(map[string]any)["analytic"].(map[string]any)["uid"]
+	}
+	if uid(a) == uid(b) {
+		t.Error("a YARA hit and a feed tamper must not share an analytic uid")
+	}
+}
+
+// The verdict field the wire formats read, in the same place `cau scan` puts a
+// file's verdict, carrying the distinction the daemon acts on.
+func TestOCSFCarriesTheDaemonsVerdict(t *testing.T) {
+	ev := encode(t, OCSFIncident(confirmedIncident(), DefaultProduct("h"), time.Now()))
+	if got := ev["unmapped"].(map[string]any)["verdict"]; got != "CONFIRMED" {
+		t.Errorf("unmapped.verdict = %v, want CONFIRMED", got)
+	}
+	inc := confirmedIncident()
+	inc.Confirmed = false
+	ev = encode(t, OCSFIncident(inc, DefaultProduct("h"), time.Now()))
+	if got := ev["unmapped"].(map[string]any)["verdict"]; got != "ALERT" {
+		t.Errorf("unmapped.verdict = %v, want ALERT", got)
 	}
 }
 

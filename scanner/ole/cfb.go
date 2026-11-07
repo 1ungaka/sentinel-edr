@@ -21,7 +21,9 @@
 // detector enumerates directory entries FLATLY (an array walk over the directory
 // stream) rather than walking the red-black tree, skipping unallocated entries.
 // A flat walk is sufficient for name / type / stream-content detection and side-
-// steps any tree-cycle concerns entirely.
+// steps any tree-cycle concerns entirely. The sibling/child ids are read only to
+// answer one question — which storage holds a given stream (linkTree) — with a
+// walk that visits each entry at most once.
 package ole
 
 import "unicode/utf16"
@@ -65,6 +67,14 @@ type cfbEntry struct {
 	objType byte
 	start   uint32 // starting sector (regular FAT, or mini FAT for small streams)
 	size    uint64
+
+	// Directory-tree links ([MS-CFB] 2.6.1). id is the entry's index in the
+	// directory stream (NOT its index in cfbFile.entries, which skips
+	// unallocated slots). parent is filled by linkTree: the index in
+	// cfbFile.entries of the storage that contains this entry, or -1 when the
+	// (attacker-controlled) tree does not reach it.
+	id, left, right, child uint32
+	parent                 int
 }
 
 // cfbFile is a parsed (best-effort) compound file.
@@ -184,6 +194,7 @@ func parseCFB(data []byte) *cfbFile {
 	}
 
 	f.parseDirectory(firstDir)
+	f.linkTree()
 
 	// The root entry's chain in the regular FAT is the mini stream; small
 	// streams are addressed within it via the MiniFAT.
@@ -341,7 +352,59 @@ func (f *cfbFile) parseDirectory(firstDir uint32) {
 			name := decodeDirName(f.data[base:base+64], nameLen)
 			start := le32(f.data, base+116)
 			size := uint64(le32(f.data, base+120)) | uint64(le32(f.data, base+124))<<32
-			f.entries = append(f.entries, cfbEntry{name: name, objType: objType, start: start, size: size})
+			f.entries = append(f.entries, cfbEntry{
+				name: name, objType: objType, start: start, size: size,
+				id:     uint32(count - 1),
+				left:   le32(f.data, base+68),
+				right:  le32(f.data, base+72),
+				child:  le32(f.data, base+76),
+				parent: -1,
+			})
+		}
+	}
+}
+
+// linkTree resolves which storage contains each directory entry, so a stream
+// can be attributed to its own storage rather than matched by name across the
+// whole file (two storages may each hold a stream called "dir" or "Module1").
+//
+// The sibling/child ids are attacker-controlled, so the walk is defensive: an
+// entry is claimed by at most one storage (the first to reach it), which bounds
+// the total work to one visit per entry and makes any cycle harmless; ids that
+// name no parsed entry are dropped. Entries the tree never reaches keep
+// parent == -1 and callers fall back to a whole-file name match.
+func (f *cfbFile) linkTree() {
+	if len(f.entries) == 0 {
+		return
+	}
+	byID := make(map[uint32]int, len(f.entries))
+	for i, e := range f.entries {
+		if _, dup := byID[e.id]; !dup {
+			byID[e.id] = i
+		}
+	}
+	claimed := make([]bool, len(f.entries))
+	var stack []uint32
+	for i, e := range f.entries {
+		if (e.objType != objStorage && e.objType != objRoot) || e.child == noStream {
+			continue
+		}
+		stack = append(stack[:0], e.child)
+		for len(stack) > 0 {
+			id := stack[len(stack)-1] // audit:ok the enclosing loop runs only while len(stack) > 0
+			stack = stack[:len(stack)-1]
+			idx, ok := byID[id]
+			if !ok || idx == i || claimed[idx] || f.entries[idx].objType == objRoot {
+				continue
+			}
+			claimed[idx] = true
+			f.entries[idx].parent = i
+			if l := f.entries[idx].left; l != noStream {
+				stack = append(stack, l)
+			}
+			if r := f.entries[idx].right; r != noStream {
+				stack = append(stack, r)
+			}
 		}
 	}
 }
@@ -370,14 +433,28 @@ func (f *cfbFile) readEntry(e cfbEntry) []byte {
 	if e.size == 0 || f.resolved >= maxResolvedBytes {
 		return nil
 	}
-	var out []byte
-	if e.objType == objStream && e.size < uint64(f.miniCutoff) {
-		out = f.readMini(e.start, e.size)
-	} else {
-		out = f.readRegular(e.start, e.size)
-	}
+	out := f.resolve(e)
 	f.resolved += len(out)
 	return out
+}
+
+// readEntryBudget is readEntry against a caller-owned byte budget instead of
+// the file-wide one, so a second pass over a few named streams (the VBA
+// dir-record pass) cannot use up the allowance of the pass before it.
+func (f *cfbFile) readEntryBudget(e cfbEntry, budget *int) []byte {
+	if e.size == 0 || *budget <= 0 {
+		return nil
+	}
+	out := f.resolve(e)
+	*budget -= len(out)
+	return out
+}
+
+func (f *cfbFile) resolve(e cfbEntry) []byte {
+	if e.objType == objStream && e.size < uint64(f.miniCutoff) {
+		return f.readMini(e.start, e.size)
+	}
+	return f.readRegular(e.start, e.size)
 }
 
 // readRegular resolves a regular-FAT chain up to size bytes.

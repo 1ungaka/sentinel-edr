@@ -1,6 +1,7 @@
 package bootscan
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -8,7 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // Firmware variables, read from efivarfs. Each file is named <Name>-<GUID>
@@ -27,6 +31,8 @@ const (
 	maxEFIVars     = 4096
 	maxEFIVarBytes = 4 << 20
 	maxBootEntries = 256
+	maxSBATEntries = 64
+	maxSBATLine    = 256
 )
 
 // EFIReport is the firmware-variable inventory.
@@ -41,13 +47,29 @@ type EFIReport struct {
 	BootOrder   []string    `json:"boot_order,omitempty"`
 	BootEntries []BootEntry `json:"boot_entries,omitempty"`
 
+	// BootEntriesPartial is set when the variable listing or the boot-entry
+	// list hit a bound: an entry missing from BootEntries may still exist.
+	BootEntriesPartial bool `json:"boot_entries_partial,omitempty"`
+
 	PlatformKey bool `json:"platform_key_enrolled"`
+	// PK and KEK summarise the platform key and the key-exchange keys: who
+	// may change the databases below.
+	PK  *SignatureDB `json:"pk,omitempty"`
+	KEK *SignatureDB `json:"kek,omitempty"`
 	// DB and DBX summarise the allow and revocation signature databases.
 	DB  *SignatureDB `json:"db,omitempty"`
 	DBX *SignatureDB `json:"dbx,omitempty"`
 	// MOK summarises the shim machine-owner-key list, when shim publishes it.
 	MOK       *SignatureDB `json:"mok,omitempty"`
 	SBATLevel string       `json:"sbat_level,omitempty"`
+	// SBAT is the whole shim revocation level, parsed, where SBATLevel is
+	// its first two lines for display.
+	SBAT *SBATInfo `json:"sbat,omitempty"`
+
+	// Unreadable names the variables above that exist and could not be read
+	// (permissions, an oversized or truncated file). A variable listed here is
+	// unknown, where one that is simply missing from the report is absent.
+	Unreadable []string `json:"unreadable_variables,omitempty"`
 
 	// DBXReference describes the comparison against a reference revocation
 	// list, when one was supplied.
@@ -63,6 +85,13 @@ type BootEntry struct {
 	FilePath string `json:"file_path,omitempty"`
 	Active   bool   `json:"active"`
 	InOrder  bool   `json:"in_boot_order"`
+	// SHA256 is the digest of the whole load option as the firmware stores
+	// it. TargetSHA256 covers everything in it except the description and
+	// the active bit: the remaining attribute bits, the full device-path
+	// list (which disk and partition, not only which file) and the optional
+	// data handed to the loader. It is empty when the option is malformed.
+	SHA256       string `json:"sha256,omitempty"`
+	TargetSHA256 string `json:"target_sha256,omitempty"`
 }
 
 // SignatureDB summarises an EFI signature database variable.
@@ -70,6 +99,14 @@ type SignatureDB struct {
 	Hashes       int `json:"sha256_hashes"`
 	Certificates int `json:"x509_certificates"`
 	Other        int `json:"other_entries,omitempty"`
+	// SHA256 is the digest of the variable's data (the attribute word
+	// removed) and Bytes its length: the counts say how large the database
+	// is, the digest says whether it is the same database.
+	SHA256 string `json:"sha256,omitempty"`
+	Bytes  int    `json:"bytes,omitempty"`
+	// Unparsed is set when the data is not a well-formed sequence of
+	// signature lists; the counts are then zero and only the digest speaks.
+	Unparsed bool `json:"unparsed,omitempty"`
 	// hashes holds the SHA-256 entries for comparison; not serialised.
 	hashes map[string]bool
 }
@@ -81,28 +118,103 @@ type DBXComparison struct {
 	Missing         int    `json:"missing_on_host"`
 }
 
-// readVar reads one variable's data (attribute word removed). ok is false
-// when the variable is absent, unreadable or oversized.
-func readVar(dir, name, guid string) ([]byte, bool) {
-	path := filepath.Join(dir, name+"-"+guid)
-	fi, err := os.Stat(path)
-	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxEFIVarBytes {
-		return nil, false
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil || len(raw) < 4 {
-		return nil, false
-	}
-	return raw[4:], true
+// SBATInfo is the shim revocation level (SbatLevelRT), parsed.
+type SBATInfo struct {
+	SHA256  string      `json:"sha256"`
+	Entries []SBATEntry `json:"entries,omitempty"`
+	// Unparsed is set when the variable is not the CSV shim writes.
+	Unparsed bool `json:"unparsed,omitempty"`
 }
 
-func boolVar(dir, name string) *bool {
-	data, ok := readVar(dir, name, guidGlobal)
-	if !ok || len(data) < 1 {
-		return nil
+// SBATEntry is one line of the SBAT level: a component and the lowest
+// generation of it that shim still accepts.
+type SBATEntry struct {
+	Component  string `json:"component"`
+	Generation uint64 `json:"generation"`
+	// Date is the datestamp the "sbat" line carries after its generation.
+	Date string `json:"date,omitempty"`
+}
+
+// readVarState reads one variable's data (attribute word removed). ok is
+// false when the variable is absent, unreadable or oversized; unreadable
+// tells the last two from the first, because "it is not there" is a fact and
+// "it could not be read" is not.
+//
+// The read opens first and asks the open descriptor what it is: a stat
+// followed by a read would block forever on a FIFO, which reports size zero.
+func readVarState(dir, name, guid string) (data []byte, ok, unreadable bool) {
+	raw, err := safefs.ReadFile(filepath.Join(dir, name+"-"+guid), maxEFIVarBytes)
+	if err != nil {
+		return nil, false, !errors.Is(err, os.ErrNotExist)
 	}
-	v := data[0] == 1
-	return &v
+	if len(raw) < 4 {
+		return nil, false, true
+	}
+	return raw[4:], true, false
+}
+
+// readVar is readVarState for a caller that does not need the distinction.
+func readVar(dir, name, guid string) ([]byte, bool) {
+	data, ok, _ := readVarState(dir, name, guid)
+	return data, ok
+}
+
+// signatureVar summarises a signature-database variable. Unlike
+// parseSignatureLists it never returns nil: a variable that is present and
+// malformed still has a digest, and that is still comparable.
+func signatureVar(data []byte) *SignatureDB {
+	db := parseSignatureLists(data)
+	if db == nil {
+		db = &SignatureDB{Unparsed: true}
+	}
+	sum := sha256.Sum256(data)
+	db.SHA256, db.Bytes = hex.EncodeToString(sum[:]), len(data)
+	return db
+}
+
+// parseSBATLevel decodes SbatLevelRT: lines of component,generation[,date].
+// Anything else leaves Unparsed set and no entries; it never fails.
+func parseSBATLevel(data []byte) *SBATInfo {
+	sum := sha256.Sum256(data)
+	info := &SBATInfo{SHA256: hex.EncodeToString(sum[:])}
+	text := strings.TrimRight(string(data), "\x00\r\n")
+	seen := map[string]bool{}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		f := strings.Split(line, ",")
+		gen, err := uint64(0), error(nil)
+		if len(f) >= 2 {
+			gen, err = strconv.ParseUint(f[1], 10, 64)
+		}
+		if len(info.Entries) >= maxSBATEntries || len(line) > maxSBATLine || len(f) < 2 || len(f) > 3 ||
+			err != nil || !sbatName(f[0]) || seen[f[0]] || (len(f) == 3 && !sbatName(f[2])) {
+			info.Entries, info.Unparsed = nil, true
+			return info
+		}
+		seen[f[0]] = true
+		e := SBATEntry{Component: f[0], Generation: gen}
+		if len(f) == 3 {
+			e.Date = f[2]
+		}
+		info.Entries = append(info.Entries, e)
+	}
+	return info
+}
+
+// sbatName reports a non-empty field of printable ASCII without a space.
+func sbatName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] <= ' ' || s[i] > '~' {
+			return false
+		}
+	}
+	return true
 }
 
 // ScanEFIVars reads the firmware-variable state from an efivarfs mount.
@@ -118,10 +230,32 @@ func ScanEFIVars(dir, dbxReference string) (*EFIReport, []Finding, []string) {
 	rep := &EFIReport{Path: dir}
 	var out []Finding
 
+	// get reads a variable and records one that exists but cannot be read.
+	get := func(name, guid string) ([]byte, bool) {
+		data, ok, unreadable := readVarState(dir, name, guid)
+		if unreadable {
+			rep.Unreadable = append(rep.Unreadable, name)
+		}
+		return data, ok
+	}
+	boolVar := func(name string) *bool {
+		data, ok := get(name, guidGlobal)
+		if !ok {
+			return nil
+		}
+		if len(data) < 1 {
+			rep.Unreadable = append(rep.Unreadable, name)
+			return nil
+		}
+		v := data[0] == 1
+		return &v
+	}
+
 	bootIDs := map[string]bool{}
 	for _, e := range entries {
 		if rep.Variables >= maxEFIVars {
 			notes = append(notes, fmt.Sprintf("more than %d firmware variables; the rest were not listed", maxEFIVars))
+			rep.BootEntriesPartial = true
 			break
 		}
 		rep.Variables++
@@ -134,16 +268,20 @@ func ScanEFIVars(dir, dbxReference string) (*EFIReport, []Finding, []string) {
 		}
 	}
 
-	rep.SecureBoot = boolVar(dir, "SecureBoot")
-	rep.SetupMode = boolVar(dir, "SetupMode")
-	if _, ok := readVar(dir, "PK", guidGlobal); ok {
+	rep.SecureBoot = boolVar("SecureBoot")
+	rep.SetupMode = boolVar("SetupMode")
+	if data, ok := get("PK", guidGlobal); ok {
 		rep.PlatformKey = true
+		rep.PK = signatureVar(data)
+	}
+	if data, ok := get("KEK", guidGlobal); ok {
+		rep.KEK = signatureVar(data)
 	}
 	if data, ok := readVar(dir, "BootCurrent", guidGlobal); ok && len(data) >= 2 {
 		rep.BootCurrent = fmt.Sprintf("%04X", binary.LittleEndian.Uint16(data))
 	}
 	inOrder := map[string]bool{}
-	if data, ok := readVar(dir, "BootOrder", guidGlobal); ok {
+	if data, ok := get("BootOrder", guidGlobal); ok {
 		for i := 0; i+1 < len(data) && len(rep.BootOrder) < maxBootEntries; i += 2 {
 			id := fmt.Sprintf("%04X", binary.LittleEndian.Uint16(data[i:]))
 			rep.BootOrder = append(rep.BootOrder, id)
@@ -159,6 +297,7 @@ func ScanEFIVars(dir, dbxReference string) (*EFIReport, []Finding, []string) {
 	if len(ids) > maxBootEntries {
 		ids = ids[:maxBootEntries]
 		notes = append(notes, fmt.Sprintf("more than %d boot entries; the rest were not read", maxBootEntries))
+		rep.BootEntriesPartial = true
 	}
 	for _, id := range ids {
 		// efivarfs names keep the firmware's case; try both spellings.
@@ -167,10 +306,15 @@ func ScanEFIVars(dir, dbxReference string) (*EFIReport, []Finding, []string) {
 			data, ok = readVar(dir, "Boot"+strings.ToLower(id), guidGlobal)
 		}
 		if !ok {
+			// Listed and not readable: the entry exists, its content is
+			// unknown. It is not dropped as if it were absent.
+			rep.Unreadable = append(rep.Unreadable, "Boot"+id)
 			continue
 		}
 		entry := parseLoadOption(data)
 		entry.ID, entry.InOrder = id, inOrder[id]
+		sum := sha256.Sum256(data)
+		entry.SHA256 = hex.EncodeToString(sum[:])
 		rep.BootEntries = append(rep.BootEntries, entry)
 	}
 	for _, id := range rep.BootOrder {
@@ -180,18 +324,23 @@ func ScanEFIVars(dir, dbxReference string) (*EFIReport, []Finding, []string) {
 		}
 	}
 
-	if data, ok := readVar(dir, "db", guidSecurity); ok {
-		rep.DB = parseSignatureLists(data)
+	if data, ok := get("db", guidSecurity); ok {
+		rep.DB = signatureVar(data)
 	}
-	if data, ok := readVar(dir, "dbx", guidSecurity); ok {
-		rep.DBX = parseSignatureLists(data)
+	if data, ok := get("dbx", guidSecurity); ok {
+		rep.DBX = signatureVar(data)
+		if rep.DBX.Unparsed {
+			notes = append(notes, "the revocation list (dbx) is present but is not a well-formed signature list; its entries could not be counted")
+		}
 	}
-	if data, ok := readVar(dir, "MokListRT", guidShim); ok {
-		rep.MOK = parseSignatureLists(data)
+	if data, ok := get("MokListRT", guidShim); ok {
+		rep.MOK = signatureVar(data)
 	}
-	if data, ok := readVar(dir, "SbatLevelRT", guidShim); ok {
+	if data, ok := get("SbatLevelRT", guidShim); ok {
 		rep.SBATLevel = firstLines(string(data), 2)
+		rep.SBAT = parseSBATLevel(data)
 	}
+	sort.Strings(rep.Unreadable)
 
 	// ── posture and findings ──
 	if rep.SetupMode != nil && *rep.SetupMode {
@@ -250,6 +399,15 @@ func parseLoadOption(data []byte) BootEntry {
 	}
 	e.Description = utf16Name(data[descStart : i+2])
 	i += 2
+	// What is started and how: the attribute bits other than "active", the
+	// declared path length, the device-path list and the optional data.
+	h := sha256.New()
+	var attrs [4]byte
+	binary.LittleEndian.PutUint32(attrs[:], binary.LittleEndian.Uint32(data)&^1)
+	h.Write(attrs[:])
+	h.Write(data[4:6])
+	h.Write(data[i:])
+	e.TargetSHA256 = hex.EncodeToString(h.Sum(nil))
 	end := i + pathLen
 	if end > len(data) {
 		end = len(data)
@@ -312,15 +470,15 @@ func parseSignatureLists(data []byte) *SignatureDB {
 // dbx update the UEFI Forum publishes, either as a bare signature-list
 // sequence or wrapped in the authenticated-variable header it is signed with.
 func compareDBX(host *SignatureDB, path string) (*DBXComparison, error) {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
-	if fi.Size() > maxEFIVarBytes {
+	// The path is the operator's, and it may be anything: a FIFO here must
+	// be refused, not read until a writer that never comes.
+	raw, err := safefs.ReadFile(path, maxEFIVarBytes)
+	switch {
+	case errors.Is(err, safefs.ErrNotRegular):
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	case errors.Is(err, safefs.ErrTooLarge):
 		return nil, fmt.Errorf("%s is larger than %d bytes", path, maxEFIVarBytes)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	case err != nil:
 		return nil, err
 	}
 	ref := parseSignatureLists(raw)

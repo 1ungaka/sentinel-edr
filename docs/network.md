@@ -48,7 +48,16 @@ unattributed or miss it. Namespaces are identified by the inode behind
 
 Without root most other users' processes are unreadable. Those rows stay in the
 report as unattributed sockets and are counted in `unreadable`, never guessed
-at.
+at. The difference is larger than it looks: an unattributed socket has no
+executable to group findings by, so several weak signals about one daemon never
+meet and an unprivileged run comes out **quieter than it should be**. Measured
+on a stock desktop, 40 of 48 sockets were attributed as root against 13 of 33
+as an ordinary user, and the one real false positive this sensor has had was
+invisible until it was read as root.
+
+Reading every process's file descriptors sounds expensive and is not: a full
+scan of a 336-process host took **79–111 ms** as root, which is a 0.3 % duty
+cycle against the daemon's 30-second interval.
 
 ### Classes
 
@@ -128,6 +137,14 @@ they say nothing on a single `cau net` run. Give the sensor a `History` — whic
   really do check in on a schedule); anything else scores 6.
 - **Gateway churn**: the default gateway's hardware address changing under the
   host. Reported, never live: a router failover or a VRRP pair does this too.
+
+Measured on a stock desktop, 10 samples at 20-second intervals over 3.3 minutes
+of ordinary use produced **0** beaconing, gateway-churn and sweep findings. That
+window could have produced a beacon — a 20-second poller makes 10 connections in
+it, well past the 4 the analytic needs — so the result is not vacuous. It says
+nothing about a slow beacon: a 60-second cadence makes only 3 connections in
+3.3 minutes, below the minimum, so neither a true nor a false positive was
+reachable for one. A longer run is the measurement that would cover that.
 
 The record is in memory only, bounded (4096 peer pairs, a 2 h window), and lost
 on restart — the analytics go quiet and rebuild rather than persisting state

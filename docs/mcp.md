@@ -48,7 +48,9 @@ cau-mcp --root /path/to/scan --http 127.0.0.1:8923
 ```
 curl -s -X POST localhost:8923/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"mitre_coverage","arguments":{}}}'
-``` Resources
+```
+
+Resources
 (signature database, YARA rules, fuzzy database) are auto-discovered exactly as
 the CLI discovers them (see [Installation](installation.md)); override them with
 the same flags or the `CAU_SIGNATURES` / `CAU_RULES` / `CAU_FUZZY` environment
@@ -91,8 +93,21 @@ allowlist** given with one or more `--root` flags:
   refused rather than walked, so one call cannot fan out across a filesystem.
 
 With **no** `--root`, the file tools (`scan_file`, `scan_dir`,
-`explain_verdict`) are disabled; the hash, rule and coverage tools still work,
-because they touch no arbitrary file.
+`explain_verdict`, `peel_file`, `firmware_image`, `boot_scan`,
+`hardware_identity`, `eval_report`) are disabled; the hash, rule, coverage and
+honesty tools still work, because they touch no client-supplied file.
+
+Two of the boot-surface inputs deserve a word. `boot_scan` and
+`hardware_identity` take an efivarfs or sysfs directory, and they take it
+**only under a root**: there is no auto-discovery, and a client cannot point
+the server at the live `/sys/firmware/efi/efivars` or `/sys` unless the
+operator placed `/sys` (or the efivars mount) in `--root`. That is a
+deliberate operator decision, made on the command line, never by the agent.
+The sandbox checks these directories for containment without the file-count
+walk (a sysfs tree is large and the scanners read a fixed set of entries under
+their own bounds); disk images given to `boot_scan` are confined and must be
+regular files, but are exempt from `--max-bytes` because only their boot
+sectors and partition tables are read by offset — they are never loaded.
 
 Results are always **bounded summaries** — scores, verdicts, matched rule names
 and top categories — never raw YARA offset dumps, which would blow out an
@@ -110,7 +125,32 @@ agent's context. Truncation of any list is reported, never silent.
 | `generate_yara_rule` | Draft a well-formed rule skeleton that satisfies the linter's required meta. |
 | `list_signatures` | List hash signatures (bounded) with per-type counts. |
 | `add_signature` | Validate and persist a hash signature to the local database. |
-| `mitre_coverage` | ATT&CK coverage of the shipped content: covered techniques, per-source summary, declared gaps. |
+| `mitre_coverage` | ATT&CK coverage of the shipped content: covered techniques, per-source summary, declared gaps. With `frameworks: true`, also the Unified Kill Chain phase view (`cau coverage --frameworks`): every phase with the covered techniques that land in it, empty phases listed as gaps. |
+| `honesty_index` | The honesty index (`cau honesty`): coverage against the committed expectation, what a recorded evaluation report measured (with the synthetic-corpus caveat), and whether the content matches its integrity baseline. Each section carries a state and its caveats; there is no overall score. Reads only the operator's `--expect`, `--eval`, `--manifest` and `--pubkey`, never a client path. |
+| `eval_report` | Summarise an evaluation report (`cau eval run --out`) at a sandboxed path: totals, precision/recall/FPR, per-detector rows, corpus class, error and skip counts, and whether the headline totals follow from the sample records. Per-sample rows only with `include_samples`, and then capped. |
+| `peel_file` | Peel a file's obfuscation chain under the peeler's budget: outcome, score, max depth, primary and deepest chain signatures, findings, archive statistics. Decoded bytes are never returned. |
+| `firmware_image` | Inventory a UEFI firmware image within the firmware size cap: volumes, modules (first 50), checksum validity, LZMA sections opened and failed, findings, and rule matches over the executable module bodies when the server holds a ruleset. |
+| `boot_scan` | Scan explicitly named boot surfaces, each confined to a root: disk images, an ESP directory, an efivarfs directory, a sysfs root, an optional dbx reference. No auto-discovery; signatures reported present or absent, never verified. |
+| `hardware_identity` | The `cau hwid` snapshot from a sysfs root under a root: DMI, physical interfaces, TPM and PCR 0–7, hardware RNG, unverifiable anchors. `redact` defaults to **true** (serials, UUID and MACs replaced by digests). |
+
+The new analysis tools follow `scan_file`'s discipline exactly: the sandbox
+resolves every path, the size cap applies before a read, every list is capped
+at 50 with the cut reported in a `truncated` flag and `*_omitted` counts, and
+every file-derived string (a module name, a DMI value, a boot-entry
+description) is made valid UTF-8, shown with visible escapes for control and
+bidi characters, and cut at 256 runes.
+
+### Argument schemas of the analysis tools
+
+| Tool | Arguments |
+|---|---|
+| `honesty_index` | none |
+| `eval_report` | `path` (string, required); `include_samples` (boolean); `limit` (integer, capped at 50) |
+| `peel_file` | `path` (string, required) |
+| `firmware_image` | `path` (string, required) |
+| `boot_scan` | `disks` (array of string); `esp` (string); `efivars` (string); `sysfs` (string); `dbx_reference` (string); at least one of the first four |
+| `hardware_identity` | `sysfs` (string, required); `redact` (boolean, default true) |
+| `mitre_coverage` | `technique` (string); `frameworks` (boolean) |
 
 ## Resources
 
@@ -118,6 +158,7 @@ agent's context. Truncation of any list is reported, never silent.
 |---|---|
 | `cau://signatures` | Signature-database counts and a bounded sample. |
 | `cau://coverage` | The ATT&CK coverage matrix summary. |
+| `cau://honesty` | The honesty index, the same document the `honesty_index` tool returns. |
 | `cau://rules/{name}` | Namespace, tags, meta and string count for one compiled rule. |
 
 ## Prompts
@@ -126,12 +167,37 @@ agent's context. Truncation of any list is reported, never silent.
 |---|---|
 | `triage_sample` | Triage a file with the detection tools and write an analyst summary. |
 | `rule_review` | Assess a proposed YARA rule's false-positive risk and quality before promotion. |
+| `boot_chain_review` | Triage a boot chain: run `boot_scan` (and `hardware_identity`, `firmware_image` where inputs allow) over explicitly named, sandboxed surfaces and summarise posture, chain, disks, findings and what was not inspected. |
+
+## The honesty index's inputs
+
+`honesty_index` and `cau://honesty` read three operator-configured paths, the
+same ones `cau honesty` reads: `--expect` (the coverage expectation; defaults
+to `baselines/attack-coverage.txt` when present in the working directory),
+`--eval` (an evaluation report; defaults to `baselines/smoke.json` when
+present) and `--manifest` (the integrity baseline; defaults to
+`integrity.json` next to the signature database). `--pubkey` (or
+`$CAU_SELFTEST_PUBKEY`) verifies the baseline's signature; a key that was
+supplied and cannot be read is reported in the index as "not checked, and
+why", never downgraded to a silent digest check. The build-time pinned key the
+`cau` binary carries is not available to `cau-mcp`.
 
 ## Scope
 
-`cau-mcp` is a **detection** surface. It deliberately omits the evasion-report
-tool and evasion-assessment prompt from the original Phase 3 sketch: those
-belong to the evasion suite, which the project's
-[scope note](../PLAN.md) keeps out of the engine. `generate_yara_rule` is a
-detection-authoring aid — it drafts a rule to catch a described artifact; it is
-not a payload or obfuscation generator.
+`cau-mcp` is a **detection and analysis** surface. Every tool is read-only:
+nothing here executes, writes outside the signature file `add_signature`
+maintains, quarantines, blocks or kills. `cau defend`, `cau net`, the
+quarantine store and the response actions are deliberately not exposed over
+MCP: an autonomous agent gets to look, not to act on the host. The server
+never samples or executes content either: `peel_file` returns layer
+signatures, never decoded bytes, and `firmware_image` inventories module
+bodies without disassembling or running them.
+
+It also deliberately omits the evasion-report tool and evasion-assessment
+prompt from the original Phase 3 sketch: those belong to the evasion suite,
+which the project's [scope note](../PLAN.md) keeps out of the engine.
+`generate_yara_rule` is a detection-authoring aid — it drafts a rule to catch
+a described artifact; it is not a payload or obfuscation generator.
+`cau://corpus/{sample}/report` and `cau://model/{name}/card` from the Phase 3
+sketch are still not advertised: the first waits on evaluation-corpus
+addressing, the second on the ML ladder (there is no model).

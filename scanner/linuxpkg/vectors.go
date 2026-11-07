@@ -3,9 +3,11 @@ package linuxpkg
 import (
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/s-b-repo/cau/internal/intel"
 	"github.com/s-b-repo/cau/internal/parallel"
+	"github.com/s-b-repo/cau/internal/prefilter"
 )
 
 // ── ATT&CK technique ids ───────────────────────────────────────────────────────
@@ -193,15 +195,18 @@ const parallelFrom = 64 << 10
 // so a vector finishing early changes nothing about which one wins a class.
 func scanScripts(scripts []scriptSource) []Finding {
 	size := 0
-	for _, s := range scripts {
+	hits := make([]prefilter.Hits, len(scripts))
+	for i, s := range scripts {
 		size += len(s.body)
+		hits[i] = scriptFilter().Scan(s.body)
+		defer hits[i].Release()
 	}
 	slots := make([]*Finding, len(scriptVectors))
 	if size >= parallelFrom {
-		parallel.For(len(scriptVectors), 0, func(i int) { slots[i] = firstMatch(scriptVectors[i], scripts) })
+		parallel.Share(len(scriptVectors), func(i int) { slots[i] = firstMatch(i, scripts, hits) })
 	} else {
-		for i, v := range scriptVectors {
-			slots[i] = firstMatch(v, scripts)
+		for i := range scriptVectors {
+			slots[i] = firstMatch(i, scripts, hits)
 		}
 	}
 
@@ -216,9 +221,23 @@ func scanScripts(scripts []scriptSource) []Finding {
 	return out
 }
 
-// firstMatch returns v's finding in the first script it matches.
-func firstMatch(v vector, scripts []scriptSource) *Finding {
-	for _, s := range scripts {
+// scriptFilter says which vectors can't match a script, so the regexes that would
+// only prove it aren't run. The persistence audit calls this once per line.
+var scriptFilter = sync.OnceValue(func() *prefilter.Set {
+	exprs := make([]string, len(scriptVectors))
+	for i, v := range scriptVectors {
+		exprs[i] = v.re.String()
+	}
+	return prefilter.New(exprs)
+})
+
+// firstMatch returns vector i's finding in the first script it matches.
+func firstMatch(i int, scripts []scriptSource, hits []prefilter.Hits) *Finding {
+	v := scriptVectors[i]
+	for j, s := range scripts {
+		if !hits[j].May(i) {
+			continue
+		}
 		if loc := v.re.FindStringIndex(s.body); loc != nil {
 			return &Finding{
 				Class:     v.class,

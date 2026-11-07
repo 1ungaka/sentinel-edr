@@ -234,6 +234,7 @@ func TestScanningNeverExecutesOrWritesSamples(t *testing.T) {
 var execAllowlist = map[string]string{
 	"cmd_ps.go":                     "runs the operator-named cau-kernel binary to block a confirmed process's executable (--kernel-bin)",
 	"internal/netblock/netblock.go": "runs nft or iptables to add and remove the operator-requested egress blocks",
+	"vmtest/main.go":                "PID 1 in a throwaway QEMU guest: starts cau and the processes it responds to. Never part of the shipped binary",
 }
 
 func TestProcessExecutionIsAllowlisted(t *testing.T) {

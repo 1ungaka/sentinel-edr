@@ -252,7 +252,7 @@ func addRuleSource(compiler *yara.Compiler, src RuleSource) error {
 	if src.Text != "" {
 		return compiler.AddString(src.Text, src.Namespace)
 	}
-	f, err := os.Open(src.Path)
+	f, _, err := safefs.Open(src.Path)
 	if err != nil {
 		return fmt.Errorf("could not open rule file: %w", err)
 	}
@@ -369,7 +369,7 @@ func sourceLine(src RuleSource, line int) (string, bool) {
 	if src.Path == "" {
 		return "", false
 	}
-	f, err := os.Open(src.Path)
+	f, _, err := safefs.Open(src.Path)
 	if err != nil {
 		return "", false
 	}

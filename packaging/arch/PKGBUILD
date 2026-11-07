@@ -58,4 +58,15 @@ package() {
     # without it, `make install` re-stamps the binary as "dev" and overwrites
     # the one built above with an unversioned build.
     make install install-systemd install-logrotate install-config PREFIX=/usr DESTDIR="${pkgdir}" VERSION="${pkgver}"
+
+    # The unprivileged system user the units run as. The Debian postinst and the
+    # RPM %pre create it; on Arch the equivalent is a sysusers.d snippet, which
+    # systemd's sysusers hook applies at install time (and which is a no-op if
+    # the account already exists). Without it `systemctl enable cau-scan.timer`
+    # fails until the operator creates the account by hand.
+    #
+    # It is installed from the extracted source tree, not from packaging/arch:
+    # the release tarball deliberately excludes packaging/arch because this
+    # PKGBUILD is what hashes that tarball.
+    install -Dm644 packaging/cau.sysusers "${pkgdir}/usr/lib/sysusers.d/cau.conf"
 }

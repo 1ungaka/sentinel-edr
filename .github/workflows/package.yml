@@ -25,8 +25,9 @@ on:
   # has to be provable without waiting for the next tag.
   workflow_dispatch:
 
-# Only read the repository: the jobs that publish to a release widen the token
-# themselves.
+# Only read the repository: nothing here publishes to a release. The release
+# job in ci.yml downloads these artifacts and publishes the packages itself,
+# so their bytes are staged before its SHA256SUMS is signed.
 permissions:
   contents: read
 
@@ -48,11 +49,6 @@ jobs:
         include:
           - {arch: amd64, runner: ubuntu-latest}
           - {arch: arm64, runner: ubuntu-24.04-arm}
-    # The release step attaches the built package to a tag ref, which needs
-    # contents: write; the workflow-wide contents: read meant a tag build could
-    # only fail that upload with a 403 and publish nothing.
-    permissions:
-      contents: write
     container: debian:trixie
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -164,13 +160,12 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        if: startsWith(github.ref, 'refs/tags/v')
-        with:
-          files: 'dist/cau_*_${{ matrix.arch }}.deb'
-          # A release tag must publish every distro leg: a silent pattern miss
-          # is a published release missing its package.
-          fail_on_unmatched_files: true
+      # The release is not published from here. The release job in ci.yml
+      # downloads this artifact and publishes the package itself, so the digest
+      # lands in the release's signed SHA256SUMS — a package attached to the
+      # release after that manifest was signed shipped with no authenticated
+      # digest. That job fails the release when a leg is missing, which is the
+      # guarantee this step's fail_on_unmatched_files used to give.
 
   kali:
     name: Kali Linux (.deb, ${{ matrix.arch }})
@@ -182,11 +177,6 @@ jobs:
           - {arch: amd64, runner: ubuntu-latest}
           - {arch: arm64, runner: ubuntu-24.04-arm}
     timeout-minutes: 30
-    # The release step attaches the built package to a tag ref, which needs
-    # contents: write; the workflow-wide contents: read meant a tag build could
-    # only fail that upload with a 403 and publish nothing.
-    permissions:
-      contents: write
     container:
       image: kalilinux/kali-rolling:latest
       options: --user root
@@ -243,13 +233,12 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        if: startsWith(github.ref, 'refs/tags/v')
-        with:
-          files: 'dist/cau_*_${{ matrix.arch }}.deb'
-          # A release tag must publish every distro leg: a silent pattern miss
-          # is a published release missing its package.
-          fail_on_unmatched_files: true
+      # The release is not published from here: the release job in ci.yml
+      # downloads this artifact and publishes the .deb itself, so its digest
+      # lands in the release's signed SHA256SUMS (a package attached after that
+      # manifest was signed shipped with no authenticated digest). That job
+      # fails the release when a leg is missing, the guarantee this step's
+      # fail_on_unmatched_files used to give.
 
   arch:
     name: Arch Linux (.pkg.tar.zst, ${{ matrix.arch }})
@@ -261,11 +250,6 @@ jobs:
           - {arch: amd64, runner: ubuntu-latest}
           - {arch: arm64, runner: ubuntu-24.04-arm}
     timeout-minutes: 30
-    # The release step attaches the built package to a tag ref, which needs
-    # contents: write; the workflow-wide contents: read meant a tag build could
-    # only fail that upload with a 403 and publish nothing.
-    permissions:
-      contents: write
     container: archlinux:latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -305,10 +289,9 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        if: startsWith(github.ref, 'refs/tags/v')
-        with:
-          files: dist/*.pkg.tar.zst
-          # A release tag must publish every distro leg: a silent pattern miss
-          # is a published release missing its package.
-          fail_on_unmatched_files: true
+      # The release is not published from here: the release job in ci.yml
+      # downloads this artifact and publishes the package itself, so its digest
+      # lands in the release's signed SHA256SUMS (a package attached after that
+      # manifest was signed shipped with no authenticated digest). That job
+      # fails the release when a leg is missing, the guarantee this step's
+      # fail_on_unmatched_files used to give.

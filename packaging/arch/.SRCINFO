@@ -14,6 +14,7 @@ pkgbase = cau
 	depends = glibc
 	depends = yara
 	optdepends = systemd: scheduled and resident scanning units
+	optdepends = logrotate: rotate what the resident defend daemon appends to /var/log/cau
 	optdepends = bash-completion: bash completion for cau
 	optdepends = zsh: zsh completion for cau
 	optdepends = fish: fish completion for cau

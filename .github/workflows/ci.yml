@@ -237,9 +237,15 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [lint, test, gates, selfscan, fuzz, reproducible]
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Longer than a gate job: this job waits for the package workflow's run to
+    # finish before it signs, because the distro packages it covers are built
+    # there, and that run may still be in its last leg when this job starts.
+    timeout-minutes: 45
     permissions:
       contents: write
+      # The distro packages are staged in from that workflow's artifacts, and
+      # the GITHUB_TOKEN can read another run's artifacts with nothing less.
+      actions: read
     env:
       # Hex-encoded Ed25519 signing key (seed or full). Set this repository
       # secret to produce signed releases; without it the release is published
@@ -315,6 +321,77 @@ jobs:
           rm -rf "$stage"
           ls -l dist
 
+      - name: Stage the distro packages before signing
+        env:
+          # gh authenticates from this variable, and reading the package run's
+          # artifacts needs the actions: read granted for this job above.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The .deb and .pkg.tar.zst assets are built by the package workflow,
+          # in distro containers this job cannot enter. They used to reach the
+          # release after SHA256SUMS was signed, so the one file a user is told
+          # to trust did not cover the packages they are told to download. They
+          # are pulled in here instead, ahead of the signing step below, so the
+          # signed manifest authenticates every asset the release offers.
+          #
+          # Waiting for that run is the contract, not an optimisation: the
+          # signing step hashes what is in dist/, a package staged after it
+          # would ship unsigned, and a packaging leg that failed to build must
+          # fail the release rather than leave a hole in the manifest.
+          #
+          # Both workflows trigger on the same push, so the package run exists
+          # by now; the short retry only absorbs a slow run creation.
+          run_id=""
+          for _ in 1 2 3 4 5; do
+            run_id=$(gh run list -w package.yml -e push -c "$GITHUB_SHA" \
+              --json databaseId,createdAt \
+              --jq 'sort_by(.createdAt) | last | .databaseId // empty')
+            [ -n "$run_id" ] && break
+            sleep 15
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::no package workflow run for $GITHUB_SHA: the distro packages cannot be staged into the signed manifest"
+            exit 1
+          fi
+          echo "waiting for the package workflow run $run_id to finish"
+          if ! gh run watch "$run_id" --exit-status --interval 30; then
+            echo "::error::the package workflow run $run_id did not succeed: a distro package is missing, so the release would ship an unauthenticated one"
+            exit 1
+          fi
+          stage=$(mktemp -d)
+          trap 'rm -rf "$stage"' EXIT
+          # gh extracts each artifact under its own name, so the six legs do
+          # not collide on the way in.
+          gh run download "$run_id" --dir "$stage"
+          mkdir -p dist
+          # Sorted, so the move order is deterministic: the Debian and Kali legs
+          # build the same filename for the same architecture, and the release
+          # publishes exactly the bytes that land in dist/ (and so sign them).
+          # Only the packages the installation guide names move; the source
+          # package and its build metadata stay in the workflow artifact.
+          find "$stage" -type f \( -name '*.deb' -o -name '*.pkg.tar.zst' \) \
+            | sort | while IFS= read -r f; do
+                mv "$f" "dist/$(basename "$f")"
+              done
+          # Every leg of the matrix delivered, or nothing ships: a manifest
+          # with a package-sized hole in it is the bug this staging replaces.
+          shopt -s nullglob
+          missing=0
+          for pat in 'cau_*_amd64.deb' 'cau_*_arm64.deb' \
+                     'cau-*-x86_64.pkg.tar.zst' 'cau-*-aarch64.pkg.tar.zst'; do
+            hits=(dist/$pat)
+            if [ "${#hits[@]}" -eq 0 ]; then
+              echo "::error::the release has no staged package matching dist/$pat"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::not every distro package reached dist/: refusing to sign a manifest that does not cover them"
+            exit 1
+          fi
+          ls -l dist/
+
       - name: Sign the update bundle, the integrity baseline and the checksums
         run: |
           set -euo pipefail
@@ -346,9 +423,10 @@ jobs:
           fi
 
           # 4) Signed SHA256SUMS over everything now in dist/ — the tarballs,
-          #    both binaries, the bundle and the integrity manifest. Order is the
-          #    contract: a file staged after this line ships unsigned, which is
-          #    how the integrity manifest and the public key used to ship.
+          #    both binaries, the bundle, the integrity manifest and the distro
+          #    packages staged above. Order is the contract: a file staged after
+          #    this line ships unsigned, which is how the integrity manifest and
+          #    the public key used to ship.
           #    The binary thereby references itself: its own hash is in a file it
           #    can fetch and verify against the pinned key.
           ./cau bundle checksums --sign-key "$KEYFILE" --out dist \
@@ -365,6 +443,9 @@ jobs:
 
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
+          # dist/ in full, the distro packages included: they were staged from
+          # the package workflow before signing above, so this one step
+          # publishes every asset the signed SHA256SUMS covers.
           files: dist/*
           fail_on_unmatched_files: true
           # v1.2.0-rc1 ships as a pre-release; v1.2.0 does not.

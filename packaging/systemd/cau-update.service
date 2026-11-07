@@ -12,13 +12,26 @@
 #      one, and this engine is new enough for it. Any failure leaves the live
 #      database untouched (the unit fails; the database does not change).
 #
-# Configure before enabling. Both URLs and the key are yours to set:
+# Configure before enabling. The URL, the key and the installed binary's release
+# name are yours to set:
 #   systemctl edit cau-update.service
 #   [Service]
 #   Environment=CAU_UPDATE_URL=https://github.com/s-b-repo/cau/releases/latest/download
 #   Environment=CAU_UPDATE_PUBKEY=/etc/cau/release-pubkey.hex
+#   Environment=CAU_UPDATE_NAME=cau-v<version>-linux-amd64
 # Then:
 #   systemctl enable --now cau-update.timer
+#
+# CAU_UPDATE_NAME is the release filename of the installed binary, exactly as
+# SHA256SUMS spells it: the assets are versioned (cau-v<tag>-<goos>-<goarch>),
+# while the installed one is /usr/bin/cau, and `verify-self` without --name
+# checks the running executable's own name and so is told "file is not listed"
+# on every release. Set it to the version this package shipped — `cau version`
+# prints it — and the preflight verifies the binary that is actually running.
+# The release checksums carry, for example:
+#   cau-v0.1.0-linux-amd64   cau-v0.1.0-linux-arm64
+# Adapt <goos>-<goarch> to the host; a name that does not match an entry fails
+# closed rather than skipping the check.
 #
 # Air-gapped hosts do not use this unit: deliver the signed bundle on media
 # and run `cau update --from <dir>` by hand.
@@ -34,10 +47,16 @@ ConditionPathExists=/etc/cau/release-pubkey.hex
 Type=oneshot
 Environment=CAU_UPDATE_URL=
 Environment=CAU_UPDATE_PUBKEY=/etc/cau/release-pubkey.hex
-# The explicit test makes an empty URL a clear failure in the journal instead
-# of a confusing usage error from the tool.
+# The installed binary's release name. Empty by default so the unit fails
+# closed on a host nobody configured, rather than checking a name that is not
+# in the signed manifest and so never verifying anything.
+Environment=CAU_UPDATE_NAME=
+# The explicit tests make an empty URL or name a clear failure in the journal
+# instead of a confusing usage error from the tool (or, for the name, a
+# "file is not listed" that looks like tampering).
 ExecStartPre=/bin/sh -c 'test -n "$CAU_UPDATE_URL" || { echo "cau-update: CAU_UPDATE_URL is not set (systemctl edit cau-update.service)"; exit 78; }'
-ExecStartPre=/usr/bin/cau verify-self --url ${CAU_UPDATE_URL} --pubkey ${CAU_UPDATE_PUBKEY}
+ExecStartPre=/bin/sh -c 'test -n "$CAU_UPDATE_NAME" || { echo "cau-update: CAU_UPDATE_NAME is not set (systemctl edit cau-update.service); set it to the release filename of the installed binary, e.g. cau-v0.1.0-linux-amd64"; exit 78; }'
+ExecStartPre=/usr/bin/cau verify-self --url ${CAU_UPDATE_URL} --pubkey ${CAU_UPDATE_PUBKEY} --name ${CAU_UPDATE_NAME}
 ExecStart=/usr/bin/cau update --url ${CAU_UPDATE_URL} --pubkey ${CAU_UPDATE_PUBKEY} --db /usr/share/cau/signatures/hashes.txt
 Nice=10
 

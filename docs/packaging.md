@@ -26,13 +26,16 @@ compiled, not translated, and the package is the one an arm64 user actually
 gets. `arch=('x86_64' 'aarch64')` in the PKGBUILD is the declaration of that,
 and `.SRCINFO` carries both entries.
 
-Each job attaches its artifact to the GitHub release when the run is triggered
-by a `v*` tag, which now works because every publishing job carries
-`contents: write` (the workflow-wide `contents: read` left the attach steps
-able to fail only with a 403), so a release always carries the `.deb`, the Kali
-`.deb` and the `.pkg.tar.zst` next to the source tarball and the signed update
-bundle. The checkout is full-depth, so `git describe` stamps the tag version
-into a package instead of a commit sha.
+Nothing here publishes: each leg uploads its package as a workflow artifact and
+nothing else. The release job in `.github/workflows/ci.yml` is the single
+publisher. On a `v*` tag it waits for this workflow's run for the same commit,
+downloads the six package artifacts into its own `dist/` and only then signs
+`SHA256SUMS`, so the signed manifest covers the `.deb`, the Kali `.deb` and the
+`.pkg.tar.zst` next to the source tarball, the binaries and the signed update
+bundle; one `action-gh-release` step then publishes `dist/` in full, and a leg
+that failed to build fails the release instead of shipping a package no digest
+authenticates. The checkout is full-depth, so `git describe` stamps the tag
+version into a package instead of a commit sha.
 
 `scripts/package-smoke.sh` is distro-agnostic and asserts the behaviour a user
 buys the package for:
@@ -113,6 +116,11 @@ Notes:
   the Debian build, so the two packages produce equivalent binaries.
 - `VERSION=${pkgver}` is passed to `make install` because a release tarball has
   no `.git` directory: without it the binary is re-stamped `dev`.
+- `packaging/cau.sysusers` must be tracked in git: the `package()` step installs
+  it from the extracted source tree (the tarball excludes `packaging/arch` but
+  keeps the rest of `packaging/`), and an untracked copy is a package with no
+  `sysusers.d` snippet, so `systemctl enable cau-scan.timer` fails until the
+  operator creates the `cau` account by hand.
 - `cau` and `cau-edr` are both free in the AUR, Arch official has no `cau`
   package, and Debian has no source package by that name, so there is nothing to
   conflict with.
@@ -173,8 +181,10 @@ are Debian-based, without a second one.
    Cut the tag once, after the tree is final: the `PKGBUILD` checksum is a
    function of the tag's bytes, so moving a tag invalidates it (this cost a
    green Debian and Kali a red Arch).
-5. CI builds and uploads the packages and the source tarball to the release;
-   run `scripts/apt-repo.sh` over the downloaded artifacts and republish the
+5. The `release` job in `ci.yml` publishes the packages and the source tarball
+   as one release: it stages this workflow's artifacts for the commit into
+   `dist/` before it signs `SHA256SUMS`, then uploads `dist/` in full. Run
+   `scripts/apt-repo.sh` over the downloaded artifacts and republish the
    repository.
 
 ### The source tarball is a release asset, on purpose

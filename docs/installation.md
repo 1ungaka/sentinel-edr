@@ -146,7 +146,12 @@ yay -S cau
 ```
 
 The `PKGBUILD` builds from the committed vendored module tree, so it never
-touches the Go module proxy, and stamps the version from the tag.
+touches the Go module proxy, and stamps the version from the tag. The packaged
+systemd units run as the unprivileged `cau` user, so the package ships a
+`sysusers.d` snippet that creates that system account (no home, no login shell)
+at install time; on a host without systemd-sysusers, create it yourself with
+`useradd --system --no-create-home --shell /usr/sbin/nologin cau` before
+enabling any unit.
 
 ### What the package does not do for you
 
@@ -161,12 +166,42 @@ The first tag, `v0.1.0`, was cut on 2026-11-02. Every `v*` tag triggers the CI
 release job, which builds `cau-<tag>-linux-amd64.tar.gz` with the rules and
 signatures and attaches it to the GitHub release together with `SHA256SUMS`,
 the `cau_<version>-1_amd64.deb`, the Kali `.deb` and the
-`cau-<version>-1-x86_64.pkg.tar.zst` — the packaging jobs attach their artifacts
-to the release on a `v*` tag, so a release carries them next to the source
-tarball and the signed update bundle (the maintainer checklist is in
-[packaging.md](packaging.md)). Download them from
-[the v0.1.0 release](https://github.com/s-b-repo/cau/releases/tag/v0.1.0), or
-build from source.
+`cau-<version>-1-x86_64.pkg.tar.zst` — the packaging workflow builds those
+packages, the release job downloads their artifacts and publishes them itself,
+so a release carries them next to the source tarball and the signed update
+bundle (the maintainer checklist is in [packaging.md](packaging.md)). Download
+them from [the v0.1.0 release](https://github.com/s-b-repo/cau/releases/tag/v0.1.0),
+or build from source.
+
+### Which release assets are authenticated
+
+`SHA256SUMS` is signed with the release key, and `cau verify-self` checks a
+binary against it, but it only covers what the release job staged into its own
+`dist/` before signing: the source tarball `cau-<tag>-linux-amd64.tar.gz`, the
+binaries `cau-<tag>-linux-amd64` and `cau-<tag>-linux-arm64`, the update bundle
+(`hashes.txt`, `manifest.json`, `manifest.json.sig`), the integrity baseline
+`integrity.json`, the pinned public key `release-pubkey.hex` and the distro
+packages built for the tag. Those are the assets a signed digest exists for, so
+they are the ones that can be verified offline:
+
+```sh
+cau verify-self --from dist --pubkey release-pubkey.hex --name cau-v0.1.0-linux-amd64
+```
+
+The `.deb` and `.pkg.tar.zst` packages reach that `dist/` before the manifest is
+signed: the release job waits for the packaging workflow's run, downloads its
+artifacts and publishes them itself. Their digests are therefore in the signed
+`SHA256SUMS` too, and a package can be checked the way any other asset is —
+against the signed manifest, not against the page it was downloaded from:
+
+```sh
+# in a directory holding SHA256SUMS, SHA256SUMS.sig and the downloaded package
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+Building the package from the signed source tarball yourself
+(`dpkg-buildpackage -us -uc`, `makepkg -si`) remains an equally verifiable
+alternative.
 
 ## Resource discovery
 

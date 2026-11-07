@@ -288,7 +288,7 @@ otherwise valid.
 |---|---|
 | 0 | nothing at or above the `--fail-on` level |
 | 1 | at least one finding at or above the `--fail-on` level |
-| 2 | the run completed but at least one file could not be scanned (unless `--no-fail-on-scan-error`); an unscanned file must never look clean |
+| 2 | the run completed but at least one file could not be fully scanned (unless `--no-fail-on-scan-error`); a YARA pass that errored or timed out is an incomplete scan, so such a file is not reported clean, and a file that was not fully scanned must never look clean |
 | 3 | the run itself failed: unreadable signature database, rules that do not compile, unwritable output. A JSON or SARIF document is still written when possible |
 | 4 | usage error |
 

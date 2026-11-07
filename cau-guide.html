@@ -1,0 +1,1557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CAU EDR — Download, Deploy &amp; Kernel Feature Flags Guide</title>
+<style>
+/* ============================================================
+   CAU EDR Operations Guide — PDF, full-bleed dark theme
+   Styled on the Cyber Sec site: Sentinel Blue
+   Fonts: Chakra Petch · JetBrains Mono · IBM Plex Sans
+   ============================================================ */
+
+/* ---- Fonts (self-hosted WOFF2) ---- */
+@font-face {
+  font-family: 'Chakra Petch';
+  font-style: normal; font-weight: 600; font-display: swap;
+  src: url('/home/kali/Projects/site/assets/fonts/chakrapetch-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Chakra Petch';
+  font-style: normal; font-weight: 700; font-display: swap;
+  src: url('/home/kali/Projects/site/assets/fonts/chakrapetch-700.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal; font-weight: 100 700; font-display: swap;
+  src: url('/home/kali/Projects/site/assets/fonts/ibmplexsans-var.woff2') format('woff2-variations');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal; font-weight: 400 800; font-display: swap;
+  src: url('/home/kali/Projects/site/assets/fonts/jetbrainsmono-var.woff2') format('woff2-variations');
+}
+
+/* ---- Page: full-bleed black, no white gutters ---- */
+@page {
+  size: A4;
+  margin: 0;
+  background: #000000;
+  @top-center {
+    content: "CYBER SEC — CAU EDR OPERATIONS GUIDE";
+    font-family: 'Chakra Petch', 'JetBrains Mono', sans-serif;
+    font-size: 6pt;
+    color: #1e80ff;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    border-bottom: 1px solid rgba(30,128,255,0.25);
+    padding-bottom: 2mm;
+    margin-bottom: 6mm;
+    background: #000000;
+  }
+  @bottom-left {
+    content: "CAU EDR — Download, Deploy & Kernel Feature Flags";
+    font-family: 'JetBrains Mono', sans-serif;
+    font-size: 6pt;
+    color: #5a84b8;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    background: #000000;
+  }
+  @bottom-right {
+    content: "Page " counter(page) " of " counter(pages);
+    font-family: 'JetBrains Mono', sans-serif;
+    font-size: 6pt;
+    color: #5a84b8;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    background: #000000;
+  }
+}
+@page :first {
+  @top-center { content: none; border: none; padding: 0; margin: 0; background: none; }
+}
+
+/* ---- Base ---- */
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #000000;
+  color: #c0d6f0;
+  font-family: 'IBM Plex Sans', 'Liberation Sans', sans-serif;
+  font-size: 9.5pt;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4 {
+  font-family: 'Chakra Petch', 'Noto Sans Display', sans-serif;
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  color: #ffffff;
+  margin: 0;
+}
+h1 { font-size: 2.2rem; }
+h2 { font-size: 1.55rem; }
+h3 { font-size: 1.1rem; color: #ffffff; }
+h4 { font-size: 0.98rem; color: #c0d6f0; }
+p { color: #c0d6f0; margin: 0 0 0.75rem 0; }
+a { color: #1e80ff; text-decoration: underline; }
+strong { color: #ffffff; }
+em { color: #1e80ff; font-style: normal; }
+ul, ol { color: #c0d6f0; padding-left: 1.4rem; margin: 0 0 0.8rem 0; }
+li { margin-bottom: 0.3rem; }
+
+.wrap { width: 100%; max-width: none; }
+
+/* ---- Section container ---- */
+.section {
+  padding: 0 16mm;
+  page-break-before: always;
+  page-break-inside: auto;
+}
+.section:first-of-type { page-break-before: avoid; }
+
+/* ---- Section header ---- */
+.sec-head { margin: 1.5rem 0 1rem 0; page-break-inside: avoid; }
+.sec-kicker {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 0.72rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: #1e80ff;
+  text-shadow: 0 0 12px rgba(30,128,255,0.35);
+  margin: 0 0 0.55rem 0;
+  display: block;
+  border-left: 3px solid #1e80ff;
+  padding-left: 0.6rem;
+}
+.sec-title { font-size: 1.7rem; margin: 0 0 0.45rem 0; }
+.sec-sub {
+  color: #5a84b8;
+  font-size: 0.95rem;
+  max-width: none;
+  margin: 0 0 1rem 0;
+  border-bottom: 1px solid rgba(30,128,255,0.2);
+  padding-bottom: 0.5rem;
+  page-break-inside: avoid;
+}
+
+/* ---- Cover page ---- */
+.cover { padding: 0 16mm; page-break-before: avoid; page-break-after: always; }
+.cover-band {
+  background: linear-gradient(180deg, #000000 0%, rgba(2,10,24,0.95) 60%);
+  border-bottom: 4px solid #1e80ff;
+  padding: 22mm 0 16mm 0;
+  margin-bottom: 10mm;
+  page-break-inside: avoid;
+}
+.cover-kicker {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 0.78rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #1e80ff;
+  text-shadow: 0 0 14px rgba(30,128,255,0.4);
+  margin: 0 0 1rem 0;
+  display: block;
+  border-left: 4px solid #1e80ff;
+  padding-left: 0.8rem;
+}
+.cover h1 { font-size: 3.2rem; margin: 0 0 0.8rem 0; letter-spacing: -0.02em; }
+.cover-sub {
+  color: #5a84b8;
+  font-size: 1.15rem;
+  line-height: 1.7;
+  margin: 0;
+  max-width: 95ch;
+}
+.cover-meta {
+  margin-top: 14mm;
+  border-top: 1px solid rgba(30,128,255,0.25);
+  padding-top: 4mm;
+  page-break-inside: avoid;
+}
+.cover-meta table { width: 100%; border-collapse: collapse; font-size: 8.6pt; }
+.cover-meta td {
+  color: #c0d6f0;
+  padding: 0.45rem 0.8rem;
+  border-bottom: 1px solid rgba(30,128,255,0.08);
+  vertical-align: top;
+}
+.cover-meta td:first-child {
+  font-family: 'JetBrains Mono', monospace;
+  color: #00aadd;
+  font-weight: 700;
+  width: 34%;
+  white-space: nowrap;
+}
+
+/* ---- Blocks ---- */
+.card, .notice, .steps, .toc, table, pre, .sec-head {
+  page-break-inside: avoid;
+}
+
+.card {
+  background: rgba(2,10,24,0.85);
+  border: 1px solid rgba(30,128,255,0.35);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  margin: 1rem 0;
+}
+.card h3 { margin-top: 0; margin-bottom: 0.45rem; color: #ffffff; font-size: 1.05rem; }
+.card p { margin-bottom: 0.45rem; color: #c0d6f0; font-size: 0.94rem; }
+.card ul { color: #c0d6f0; margin: 0.35rem 0 0.5rem 0; padding-left: 1.3rem; }
+.card li { margin-bottom: 0.25rem; }
+
+.notice {
+  background: rgba(30,128,255,0.10);
+  border: 1px solid rgba(30,128,255,0.45);
+  border-left: 4px solid #1e80ff;
+  border-radius: 0 6px 6px 0;
+  padding: 0.8rem 1.1rem;
+  margin: 1rem 0;
+}
+.notice h4 { color: #1e80ff; margin-top: 0; margin-bottom: 0.35rem; font-size: 0.95rem; }
+.notice p { color: #c0d6f0; margin: 0; font-size: 0.93rem; }
+.notice-warn {
+  background: rgba(255,59,85,0.10);
+  border: 1px solid rgba(255,59,85,0.45);
+  border-left: 4px solid #ff3b55;
+}
+.notice-warn h4 { color: #ff3b55; }
+.notice-ok {
+  background: rgba(0,170,221,0.08);
+  border: 1px solid rgba(0,170,221,0.4);
+  border-left: 4px solid #00aadd;
+}
+.notice-ok h4 { color: #00aadd; }
+.notice-err {
+  background: rgba(255,59,85,0.12);
+  border: 1px solid rgba(255,59,85,0.5);
+  border-left: 4px solid #ff3b55;
+}
+.notice-err h4 { color: #ff3b55; }
+
+/* ---- Tables ---- */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.7rem 0 1.2rem 0;
+  font-size: 8.4pt;
+}
+th {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #1e80ff;
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 2px solid rgba(30,128,255,0.5);
+  border-right: 1px solid rgba(30,128,255,0.15);
+  white-space: nowrap;
+  background: rgba(30,128,255,0.06);
+}
+td {
+  color: #c0d6f0;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid rgba(30,128,255,0.08);
+  border-right: 1px solid rgba(30,128,255,0.06);
+  vertical-align: top;
+}
+tr:nth-child(even) td { background: rgba(30,128,255,0.035); }
+tr:last-child td { border-bottom: none; }
+td:last-child, th:last-child { border-right: none; }
+
+/* ---- Numbered steps ---- */
+.steps { width: 100%; border-collapse: separate; border-spacing: 0 0.7rem; margin: 1rem 0; }
+.steps tr { page-break-inside: avoid; }
+.steps td {
+  background: rgba(2,10,24,0.85);
+  border: 1px solid rgba(30,128,255,0.25);
+  border-radius: 8px;
+  padding: 1rem 1.2rem 1rem 2.8rem;
+  position: relative;
+  vertical-align: top;
+}
+.step-n {
+  position: absolute;
+  left: 1rem;
+  top: 1rem;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: #1e80ff;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+.steps h3 { margin: 0 0 0.35rem 0; font-size: 1rem; color: #ffffff; }
+.steps p { color: #5a84b8; font-size: 0.88rem; margin: 0; line-height: 1.5; }
+
+/* ---- Code blocks ---- */
+code, pre, .mono {
+  font-family: 'JetBrains Mono', 'Noto Sans Mono', monospace;
+}
+code {
+  font-size: 0.86em;
+  color: #00aadd;
+  background: rgba(0,0,0,0.5);
+  border: 1px solid rgba(30,128,255,0.15);
+  border-radius: 4px;
+  padding: 0.12em 0.35em;
+}
+pre {
+  font-family: 'JetBrains Mono', 'Noto Sans Mono', monospace;
+  font-size: 8.2pt;
+  color: #b0d4f8;
+  background: rgba(0,0,0,0.55);
+  border: 1px solid rgba(30,128,255,0.45);
+  border-radius: 7px;
+  padding: 0.85rem 1rem;
+  margin: 0.7rem 0 1.1rem 0;
+  overflow-x: auto;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+pre .c-dim { color: #7396c4; }
+pre .c-acc { color: #1e80ff; }
+pre .c-ok { color: #00aadd; }
+pre .c-mono { color: #c0d6f0; }
+
+/* ---- Divider ---- */
+.neon-divider {
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, #1e80ff 25%, #00aadd 75%, transparent 100%);
+  margin: 2rem 0;
+  border: none;
+}
+
+/* ---- Trust bar ---- */
+.trust {
+  border: 1px solid rgba(30,128,255,0.35);
+  background: rgba(0,0,0,0.6);
+  border-radius: 8px;
+  padding: 0.9rem 1.2rem;
+  margin: 1.3rem 0;
+}
+.trust-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #7396c4;
+  margin-bottom: 0.5rem;
+  display: block;
+}
+.trust ul { list-style: none; padding: 0; margin: 0; display: table; width: 100%; }
+.trust li {
+  display: table-cell;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  color: #5a84b8;
+  padding: 0.25rem 0.7rem 0.25rem 0;
+}
+.trust li::before { content: "▸ "; color: #0d4bb3; }
+
+/* ---- TOC ---- */
+.toc {
+  background: rgba(2,10,24,0.75);
+  border: 1px solid rgba(30,128,255,0.3);
+  border-radius: 8px;
+  padding: 1.1rem 1.3rem;
+  margin: 1.4rem 0;
+}
+.toc h3 { color: #ffffff; margin-top: 0; font-size: 1.05rem; }
+.toc ul { list-style: none; padding: 0; margin: 0.5rem 0 0 0; }
+.toc li { margin-bottom: 0.4rem; font-size: 0.92rem; }
+.toc a { color: #c0d6f0; text-decoration: none; }
+.toc a:hover { color: #1e80ff; }
+.toc .toc-l1 { font-weight: 700; color: #ffffff; margin-bottom: 0.2rem; }
+.toc .toc-l2 { padding-left: 1rem; font-size: 0.88rem; color: #5a84b8; }
+
+/* ---- Footer section ---- */
+.section-foot {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(30,128,255,0.2);
+  color: #5a84b8;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-align: center;
+  page-break-inside: avoid;
+}
+
+/* Control orphans/widows */
+p, li, td, th { orphans: 2; widows: 2; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- ============================ COVER ============================ -->
+  <section class="cover">
+    <div class="cover-band">
+      <p class="cover-kicker">CYBER SEC — CAU EDR OPERATIONS GUIDE</p>
+      <h1>Download, Deploy &amp; Kernel Feature Flags</h1>
+      <p class="cover-sub">An in-depth, start-to-finish reference for the CAU EDR engine: obtaining the software, building and installing it, deploying the on-host agent, and configuring every kernel feature flag in the cau-kernel enforcement backends (BPF-LSM and kernel module). Includes command explanations, error meanings, and fixes for common problems.</p>
+    </div>
+    <div class="cover-meta">
+      <table>
+        <tr><td>Product</td><td>CAU EDR — engine + agent (MIT, free, unmetered)</td></tr>
+        <tr><td>Kernel sensor</td><td>cau-kernel — MIT userspace / GPL-2.0 BPF program</td></tr>
+        <tr><td>Theme</td><td>Sentinel Blue — Cyber Sec site design system</td></tr>
+        <tr><td>Fonts</td><td>Chakra Petch · IBM Plex Sans · JetBrains Mono (self-hosted WOFF2)</td></tr>
+        <tr><td>Page size</td><td>A4 · full-bleed dark · running header/footer</td></tr>
+        <tr><td>Source</td><td>/home/kali/cau · /home/kali/Projects/site</td></tr>
+      </table>
+    </div>
+    <div class="trust" style="margin-top:8mm;">
+      <span class="trust-label">Guide contents</span>
+      <ul style="display:table; width:100%;">
+        <li>Download &amp; build</li>
+        <li>Install &amp; deploy</li>
+        <li>Package managers</li>
+        <li>Verify installation</li>
+        <li>Resource discovery</li>
+        <li>cau-kernel kernel flags</li>
+        <li>BPF-LSM &amp; kmod backends</li>
+        <li>Posture, baseline &amp; drift</li>
+        <li>Attestation (TPM / IMA / kdump)</li>
+        <li>CLI reference &amp; flags</li>
+        <li>Detection content &amp; formats</li>
+        <li>Errors &amp; troubleshooting</li>
+        <li>Honest limits &amp; disclaimer</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============================ TOC ============================ -->
+  <div class="section" id="toc">
+    <div class="sec-head">
+      <span class="sec-kicker">contents</span>
+      <h2 class="sec-title">Contents</h2>
+    </div>
+    <div class="toc">
+      <ul>
+        <li class="toc-l1">1. Overview</li>
+        <li class="toc-l2"><a href="#download">2. Download</a></li>
+        <li class="toc-l2"><a href="#build">3. Build from source</a></li>
+        <li class="toc-l2"><a href="#install">4. Install &amp; deploy</a></li>
+        <li class="toc-l2"><a href="#packages">5. Package managers</a></li>
+        <li class="toc-l2"><a href="#verify">6. Verify installation</a></li>
+        <li class="toc-l2"><a href="#resources">7. Resource discovery</a></li>
+        <li class="toc-l1">8. cau-kernel — kernel feature flags</li>
+        <li class="toc-l2"><a href="#kernel-overview">8.1 Overview &amp; backends</a></li>
+        <li class="toc-l2"><a href="#kernel-requirements">8.2 Kernel requirements &amp; flags</a></li>
+        <li class="toc-l2"><a href="#bpf-lsm">8.3 BPF-LSM backend</a></li>
+        <li class="toc-l2"><a href="#kmod">8.4 Kernel-module backend</a></li>
+        <li class="toc-l2"><a href="#enforce-flags">8.5 Enforce command flags</a></li>
+        <li class="toc-l2"><a href="#netshell">8.6 Network-shell guard</a></li>
+        <li class="toc-l2"><a href="#path-aware">8.7 Path-aware policy</a></li>
+        <li class="toc-l2"><a href="#killguard">8.8 Kill / ptrace guard</a></li>
+        <li class="toc-l2"><a href="#posture">8.9 Posture sysctls</a></li>
+        <li class="toc-l2"><a href="#baseline-drift">8.10 Baseline &amp; drift</a></li>
+        <li class="toc-l2"><a href="#attestation">8.11 Attestation</a></li>
+        <li class="toc-l1">9. CAU engine CLI reference</li>
+        <li class="toc-l2"><a href="#cli-commands">9.1 Commands</a></li>
+        <li class="toc-l2"><a href="#cli-flags">9.2 Common flags</a></li>
+        <li class="toc-l2"><a href="#exit-codes">9.3 Exit codes</a></li>
+        <li class="toc-l1">10. Detection content &amp; output formats</li>
+        <li class="toc-l1">11. Errors &amp; troubleshooting</li>
+        <li class="toc-l1">12. Honest limits &amp; disclaimer</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ============================ 1. OVERVIEW ============================ -->
+  <div class="section" id="overview">
+    <div class="sec-head">
+      <span class="sec-kicker">01 · overview</span>
+      <h2 class="sec-title">What CAU is</h2>
+      <p class="sec-sub">CAU EDR ("Certs Are Useless") is a transparent open-source malware detection engine in Go. Fifteen detectors read every file once; every finding is explained with a labeled class and an ATT&CK technique; every report is machine-readable with CI exit codes. Three runtime planes (process, network, persistence) are joined by cau defend into a single incident surface. The kernel-level anti-tamper guards live in the sibling cau-kernel project.</p>
+    </div>
+    <div class="card">
+      <h3>Two artifacts</h3>
+      <p><strong>cau</strong> (this repository, MIT) — the engine and agent: all detection content and scanning, the MCP server, the evaluation harness, and all prevention and response on the host (quarantine, restore, block, kill, canaries). Detection and prevention are free and unmetered, forever.</p>
+      <p><strong>cau-kernel</strong> (MIT userspace / GPL-2.0 BPF program) — kernel-integrity sensor: read-only detection of kernel drift, boot attestation, and opt-in execution-freeze enforcement.</p>
+    </div>
+    <div class="notice">
+      <h4>How this guide is organized</h4>
+      <p>Follow the sections in order: download the software, build it, install it, verify it works, then configure the kernel feature flags if you need enforcement. Each command block shows what the command does, what its flags mean, what can go wrong, and how to fix it.</p>
+    </div>
+  </div>
+
+  <!-- ============================ 2. DOWNLOAD ============================ -->
+  <div class="section" id="download">
+    <div class="sec-head">
+      <span class="sec-kicker">02 · download</span>
+      <h2 class="sec-title">Download</h2>
+      <p class="sec-sub">Obtain the CAU engine and the cau-kernel sensor from source, release tarballs, or distro packages.</p>
+    </div>
+
+    <table class="steps">
+      <tr><td>
+        <span class="step-n">01</span>
+        <h3>Clone the repositories</h3>
+<pre><code class="c-mono">$ git clone https://github.com/s-b-repo/cau.git cau
+$ cd cau
+$ git clone https://github.com/s-b-repo/cau-kernel.git cau-kernel</code></pre>
+        <p>Cloning downloads the full source history. You need the cau repository (engine + agent) and cau-kernel (kernel-integrity sensor). Clone cau-kernel inside or alongside cau; they are independent Go modules.</p>
+        <div class="notice-err">
+          <h4>Error: repository not found / authentication required</h4>
+          <p><strong>Meaning:</strong> You mistyped the URL, the repo is private, or you lack network access to GitHub.</p>
+          <p><strong>Fix:</strong> Verify the URL is <code>https://github.com/s-b-repo/cau.git</code>. If behind a proxy, set <code>git config --global http.proxy</code>. If the repo requires auth, generate a GitHub personal access token and use <code>https://&lt;token&gt;@github.com/s-b-repo/cau.git</code>.</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">02</span>
+        <h3>Or download a release tarball</h3>
+        <p>Every v tag triggers CI, which builds cau-tag-linux-amd64.tar.gz with the rules and signature databases, plus SHA256SUMS. Download from https://github.com/s-b-repo/cau/releases/tag/v0.1.0 (first tag v0.1.0, cut 2026-11-02) or build from source.</p>
+        <div class="notice-err">
+          <h4>Error: 404 or file not found on release page</h4>
+          <p><strong>Meaning:</strong> The tag does not exist yet, or the CI release job has not finished uploading artifacts.</p>
+          <p><strong>Fix:</strong> Check https://github.com/s-b-repo/cau/releases for the latest tag. Wait for the CI release job to complete (green checkmark), then download the tarball and its SHA256SUMS file.</p>
+        </div>
+      </td></tr>
+    </table>
+
+    <div class="notice">
+      <h4>Signed releases</h4>
+      <p>Release artifacts carry an Ed25519-signed update bundle (hashes.txt + manifest.json + manifest.json.sig) and a signed SHA256SUMS. Verify before installing: cau verify-self --from dir checks the binary against the signed manifest. Never run an unsigned bundle.</p>
+    </div>
+
+    <table>
+      <tr><th>Source</th><th>Command / location</th><th>Notes</th></tr>
+      <tr><td>Source (Git)</td><td>git clone https://github.com/s-b-repo/cau.git cau</td><td>Engine + agent, MIT</td></tr>
+      <tr><td>Kernel sensor (Git)</td><td>git clone https://github.com/s-b-repo/cau-kernel.git cau-kernel</td><td>Kernel guards, MIT userspace</td></tr>
+      <tr><td>Release tarball</td><td>cau-tag-linux-amd64.tar.gz</td><td>Rules + signatures attached to the GitHub release</td></tr>
+      <tr><td>Debian / Kali .deb</td><td>cau_version-1_amd64.deb</td><td>From GitHub release or signed apt repo</td></tr>
+      <tr><td>Arch PKGBUILD</td><td>packaging/arch or yay -S cau</td><td>Builds from vendored module tree</td></tr>
+      <tr><td>macOS</td><td>brew install go yara pkg-config</td><td>Then build from source</td></tr>
+    </table>
+  </div>
+
+  <!-- ============================ 3. BUILD ============================ -->
+  <div class="section" id="build">
+    <div class="sec-head">
+      <span class="sec-kicker">03 · build</span>
+      <h2 class="sec-title">Build from source</h2>
+      <p class="sec-sub">Requirements, toolchain, and the build commands.</p>
+    </div>
+
+    <table>
+      <tr><th>Dependency</th><th>Version</th><th>Why</th></tr>
+      <tr><td>Go</td><td>1.24 or newer</td><td>The engine is a single Go module.</td></tr>
+      <tr><td>libyara (with headers)</td><td>4.3 or newer</td><td>YARA runs in-process via go-yara; the yara binary is not needed.</td></tr>
+      <tr><td>pkg-config</td><td>any</td><td>go-yara locates libyara through it.</td></tr>
+      <tr><td>C compiler</td><td>any</td><td>cgo, for the libyara binding.</td></tr>
+    </table>
+
+    <table class="steps">
+      <tr><td>
+        <span class="step-n">01</span>
+        <h3>Install dependencies</h3>
+<pre><code class="c-mono"># Debian / Ubuntu / Kali
+sudo apt install golang-go libyara-dev pkg-config build-essential
+# Fedora
+sudo dnf install golang yara-devel pkgconf-pkg-config gcc
+# Arch Linux
+sudo pacman -S go yara pkgconf
+# macOS
+brew install go yara pkg-config</code></pre>
+        <p>These packages provide the Go compiler, the libyara development headers (required because YARA runs in-process through go-yara), pkg-config so Go can find libyara, and a C compiler for cgo.</p>
+        <div class="notice-err">
+          <h4>Error: package yara was not found in the pkg-config search path</h4>
+          <p><strong>Meaning:</strong> pkg-config cannot locate libyara, usually because libyara-dev is not installed or is in a non-standard prefix.</p>
+          <p><strong>Fix:</strong> Install libyara-dev (or yara-devel on Fedora). If installed under ~/~/.local, source <code>scripts/dev-env.sh</code> or export <code>PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH</code>.</p>
+        </div>
+        <div class="notice-err">
+          <h4>Error: go command not found</h4>
+          <p><strong>Meaning:</strong> Go is not installed or not on PATH.</p>
+          <p><strong>Fix:</strong> Install Go (golang-go on Debian/Kali, golang on Fedora, go on Arch, brew install go on macOS). Verify with <code>go version</code>.</p>
+        </div>
+        <div class="notice-err">
+          <h4>Error: cc1: error: cannot find -lyara / undefined reference to yr_*</h4>
+          <p><strong>Meaning:</strong> The C compiler cannot link libyara; headers may be present but the shared library is missing or not on the linker path.</p>
+          <p><strong>Fix:</strong> Ensure libyara-dev is installed (provides both headers and the shared library). If in a custom prefix, export <code>LD_LIBRARY_PATH</code> and <code>CGO_LDFLAGS=-L/your/lib/path</code>.</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">02</span>
+        <h3>Build the engine</h3>
+<pre><code class="c-mono">git clone https://github.com/s-b-repo/cau.git cau
+cd cau
+make build          # -> ./cau  (version stamped from git describe)
+./cau version</code></pre>
+        <p><code>make build</code> runs <code>go build</code> and stamps the binary version from <code>git describe</code> (the latest tag). Plain <code>go build .</code> also works but reports <code>0.1.0-dev</code> because no tag was found.</p>
+        <div class="notice-err">
+          <h4>Error: make: *** No rule to make target 'build'. Stop.</h4>
+          <p><strong>Meaning:</strong> You are not in the cau repository root, or the Makefile is missing.</p>
+          <p><strong>Fix:</strong> Run <code>cd cau</code> first, then confirm <code>ls Makefile</code> exists. If you cloned into a subdirectory, adjust the path.</p>
+        </div>
+        <div class="notice-err">
+          <h4>Error: module cau not found / go: cannot find module</h4>
+          <p><strong>Meaning:</strong> Go cannot locate the module, usually because you are outside the module root or vendor/ is missing.</p>
+          <p><strong>Fix:</strong> Run from the repository root where go.mod lives. If vendor/ is expected but missing, run <code>go mod vendor</code> (requires network) or ensure the vendored tree is committed.</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">03</span>
+        <h3>User-local toolchain (no root)</h3>
+        <p>If Go or libyara live under your home directory, scripts/dev-env.sh exports PATH, PKG_CONFIG_PATH, LD_LIBRARY_PATH and CGO_ENABLED=1 for ~/.local/go and ~/.local/yara:</p>
+<pre><code class="c-mono">source scripts/dev-env.sh
+make build</code></pre>
+        <p>This lets you build without sudo when tools are installed to ~/.local rather than system paths.</p>
+        <div class="notice-err">
+          <h4>Error: scripts/dev-env.sh: Permission denied</h4>
+          <p><strong>Meaning:</strong> The script is not executable.</p>
+          <p><strong>Fix:</strong> Run <code>chmod +x scripts/dev-env.sh</code> then source it again.</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">04</span>
+        <h3>Build cau-kernel</h3>
+<pre><code class="c-mono">cd cau-kernel
+go build -o cau-kernel .        # pure Go, standard library only</code></pre>
+        <p>cau-kernel is pure Go with no cgo, so it needs no libyara or C compiler. The default binary has no eBPF dependency and reports enforcement unavailable.</p>
+        <div class="notice-err">
+          <h4>Error: build constrained / build tags not satisfied</h4>
+          <p><strong>Meaning:</strong> You need the ebpf build tag for enforcement (make enforce) but built without it.</p>
+          <p><strong>Fix:</strong> For the BPF-LSM enforcer, run <code>make enforce</code> which compiles the BPF object and builds with <code>-tags ebpf</code> (needs clang). The default <code>go build -o cau-kernel .</code> intentionally omits ebpf.</p>
+        </div>
+      </td></tr>
+    </table>
+  </div>
+
+  <!-- ============================ 4. INSTALL ============================ -->
+  <div class="section" id="install">
+    <div class="sec-head">
+      <span class="sec-kicker">04 · install</span>
+      <h2 class="sec-title">Install &amp; deploy</h2>
+      <p class="sec-sub">Install the binary, rules, signatures, man pages, completions, and optional systemd units.</p>
+    </div>
+
+    <table class="steps">
+      <tr><td>
+        <span class="step-n">01</span>
+        <h3>Install system-wide</h3>
+<pre><code class="c-mono">sudo make install                 # PREFIX=/usr/local by default</code></pre>
+        <p>Copies the cau binary, cau-mcp server, YARA rules, signature databases, man pages, license, docs, and shell completions to /usr/local by default. Requires root because it writes to system directories.</p>
+        <div class="notice-err">
+          <h4>Error: install: cannot create directory '/usr/local/...': Permission denied</h4>
+          <p><strong>Meaning:</strong> You ran make install without sudo, or PREFIX points to a directory you cannot write.</p>
+          <p><strong>Fix:</strong> Prefix with sudo, or use a user-local prefix: <code>make install PREFIX=$HOME/.local</code>.</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">02</span>
+        <h3>Install user-local (no root)</h3>
+<pre><code class="c-mono">make install PREFIX=$HOME/.local</code></pre>
+        <p>Installs everything under your home directory so no root is needed. The binary goes to $HOME/.local/bin — make sure that directory is on your PATH.</p>
+        <div class="notice-err">
+          <h4>Error: cau: command not found after user-local install</h4>
+          <p><strong>Meaning:</strong> $HOME/.local/bin is not on your PATH.</p>
+          <p><strong>Fix:</strong> Add <code>export PATH=$HOME/.local/bin:$PATH</code> to your shell rc file (~/.bashrc, ~/.zshrc), then run <code>source ~/.bashrc</code> or log out and back in.</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">03</span>
+        <h3>Optional systemd units</h3>
+<pre><code class="c-mono">sudo make install-systemd PREFIX=/usr
+sudo make install-config          # /etc/cau/cau.conf
+sudo make install-logrotate       # /etc/logrotate.d/cau</code></pre>
+        <p>Installs the systemd service/timer units, the agent configuration file at /etc/cau/cau.conf, and the logrotate policy for cau-defend's log. These are optional; cau works without them.</p>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">04</span>
+        <h3>Shell completion</h3>
+<pre><code class="c-mono">cau completion bash  &gt; /etc/bash_completion.d/cau
+cau completion zsh   &gt; /usr/share/zsh/site-functions/_cau
+cau completion fish  &gt; /usr/share/fish/vendor_completions.d/cau.fish</code></pre>
+        <p>Prints shell completion scripts. Redirect to the appropriate completions directory for your shell so tab-completion works for cau subcommands and flags.</p>
+        <div class="notice-err">
+          <h4>Error: cau completion: command not found</h4>
+          <p><strong>Meaning:</strong> The cau binary is not installed or not on PATH.</p>
+          <p><strong>Fix:</strong> Complete the install step first, or run <code>./cau completion bash</code> from the build directory.</p>
+        </div>
+      </td></tr>
+    </table>
+
+    <table>
+      <tr><th>Path</th><th>Content</th></tr>
+      <tr><td>$PREFIX/bin/cau</td><td>The engine binary</td></tr>
+      <tr><td>$PREFIX/bin/cau-mcp</td><td>The MCP server</td></tr>
+      <tr><td>$PREFIX/share/cau/rules/*.yar</td><td>Bundled YARA rules</td></tr>
+      <tr><td>$PREFIX/share/cau/signatures/hashes.txt</td><td>Hash signature database</td></tr>
+      <tr><td>$PREFIX/share/cau/signatures/fuzzy.txt</td><td>Fuzzy-hash database (empty by design)</td></tr>
+      <tr><td>$PREFIX/share/man/man1/cau*.1</td><td>Man pages</td></tr>
+      <tr><td>$PREFIX/share/licenses/cau/LICENSE</td><td>MIT license</td></tr>
+      <tr><td>$PREFIX/share/doc/cau/</td><td>Documentation, README, changelog</td></tr>
+      <tr><td>bash / zsh / fish completions</td><td>Shell completion scripts</td></tr>
+    </table>
+
+    <div class="notice">
+      <h4>cau-defend service</h4>
+      <p>cau defend runs as cau-defend.service and reads /etc/cau/cau.conf. A command-line flag wins over the file. It defends by default. Set <code>report-only = true</code> to watch a host first. A host that must never act should put <code>--report-only</code> on the unit's ExecStart line, because the command line wins over the config file.</p>
+    </div>
+  </div>
+
+  <!-- ============================ 5. PACKAGES ============================ -->
+  <div class="section" id="packages">
+    <div class="sec-head">
+      <span class="sec-kicker">05 · packages</span>
+      <h2 class="sec-title">Package managers</h2>
+      <p class="sec-sub">The fastest supported install path. Every package is built, installed and smoke-tested by CI on Debian, Kali Linux and Arch Linux.</p>
+    </div>
+
+    <div class="card">
+      <h4>Debian and Kali Linux</h4>
+<pre><code class="c-mono"># GitHub release asset
+sudo apt install ./cau_version-1_amd64.deb
+
+# Or add the signed repository
+curl -fsSL https://host/pubkey.asc | sudo tee /usr/share/keyrings/cau.asc
+echo 'deb [signed-by=/usr/share/keyrings/cau.asc] https://host stable main' | sudo tee /etc/apt/sources.list.d/cau.list
+sudo apt update && sudo apt install cau</code></pre>
+      <p>Install a downloaded .deb directly with apt, or add the signed apt repository to receive updates through apt. Replace <code>&lt;host&gt;</code> with your repository host.</p>
+      <div class="notice-err">
+        <h4>Error: unable to locate package cau / E: Repository not signed</h4>
+        <p><strong>Meaning:</strong> The repository key is not trusted, or apt's package list does not include cau.</p>
+          <p><strong>Fix:</strong> Import the pubkey with the curl command above, run <code>sudo apt update</code> to refresh package lists, then install. For a direct .deb, ensure you are installing the correct architecture (amd64) and run <code>sudo apt install ./cau_*.deb</code> from the download directory.</p>
+      </div>
+      <div class="notice-err">
+        <h4>Error: dpkg: error processing cau (--install): dependency problems</h4>
+          <p><strong>Meaning:</strong> The .deb depends on libyara or golang packages not yet installed.</p>
+          <p><strong>Fix:</strong> Run <code>sudo apt install -f</code> to fix broken dependencies, then retry <code>sudo apt install ./cau_*.deb</code>.</p>
+        </div>
+    </div>
+
+    <div class="card">
+      <h4>Build the .deb from source</h4>
+<pre><code class="c-mono">sudo apt install build-essential debhelper golang-go libyara-dev pkg-config
+dpkg-buildpackage -us -uc          # needs a checkout with vendor/ committed
+sudo apt install ../cau_*_amd64.deb</code></pre>
+      <p>Build a Debian package from a source checkout. The vendored module tree must be committed so the build never touches the Go module proxy.</p>
+      <div class="notice-err">
+        <h4>Error: dpkg-buildpackage: cannot find go module / vendor missing</h4>
+          <p><strong>Meaning:</strong> The checkout does not have vendor/ committed.</p>
+          <p><strong>Fix:</strong> Run <code>go mod vendor</code> and commit vendor/ before building the package, or ensure you are building from a tagged release that includes it.</p>
+        </div>
+    </div>
+
+    <div class="card">
+      <h4>Arch Linux</h4>
+<pre><code class="c-mono">cd packaging/arch && makepkg -si        # from a checkout
+yay -S cau                              # from the AUR</code></pre>
+      <p>Build from the packaging/arch directory with makepkg, or install from the AUR with yay. The PKGBUILD builds from the committed vendored module tree and stamps the version from the git tag.</p>
+      <div class="notice-err">
+        <h4>Error: makepkg: cannot find go / missing dependencies</h4>
+          <p><strong>Meaning:</strong> go or base-devel is not installed.</p>
+          <p><strong>Fix:</strong> Install <code>go</code> and <code>base-devel</code> (or the equivalent build tools), then retry makepkg -si.</p>
+        </div>
+    </div>
+
+    <div class="notice-warn">
+      <h4>What the package does not do for you</h4>
+      <p>cau selftest refuses to trust content it cannot verify and exits 3 until an integrity manifest has been recorded with cau selftest --record. That is documented behaviour, not a broken install: the manifest that ships in a release is the one cau selftest verifies against.</p>
+    </div>
+  </div>
+
+  <!-- ============================ 6. VERIFY ============================ -->
+  <div class="section" id="verify">
+    <div class="sec-head">
+      <span class="sec-kicker">06 · verify</span>
+      <h2 class="sec-title">Verify the installation</h2>
+      <p class="sec-sub">Confirm the binary runs and detects a known sample.</p>
+    </div>
+<pre><code class="c-mono">cau scan --file corpus/smoke/malicious/mimikatz_strings.bin --db corpus/smoke/hashes.txt
+echo "exit $?"          # 1: a YARA rule matched
+make eval              # validate the smoke corpus, run it, gate against the baseline</code></pre>
+    <div class="card">
+      <h4>What this does</h4>
+      <p>Scans a known-malicious sample (mimikatz strings binary) against the smoke hash database. A YARA rule should match, returning exit code 1 (findings). <code>make eval</code> runs the full smoke corpus evaluation harness and gates results against the baseline.</p>
+      <div class="notice-err">
+        <h4>Error: cau: command not found</h4>
+        <p><strong>Meaning:</strong> cau is not installed or not on PATH.</p>
+        <p><strong>Fix:</strong> Complete the install step, or run the binary directly from the build directory: <code>./cau scan ...</code>.</p>
+      </div>
+      <div class="notice-err">
+        <h4>Error: could not open file corpus/smoke/...: no such file or directory</h4>
+        <p><strong>Meaning:</strong> You are not in the cau repository root, or the smoke corpus is missing.</p>
+        <p><strong>Fix:</strong> Run <code>cd cau</code> first. Confirm <code>ls corpus/smoke/malicious/mimikatz_strings.bin</code> exists.</p>
+      </div>
+    </div>
+    <div class="card">
+      <h4>Expected output</h4>
+<pre><code class="c-mono">[!] DETECTED (YARA) — corpus/smoke/malicious/mimikatz_strings.bin
+     Verdict   : MALICIOUS
+     [YARA] default::mimikatz_strings
+            author=CAU threat_level=5 in_the_wild=true desc="…"
+            $m1 @ 0x48 : "sekurlsa::logonpasswords"
+[+] Fusion — corpus/smoke/malicious/mimikatz_strings.bin
+     Verdict   : MALICIOUS (fused 1.14 / 1.00, high confidence)
+     Agreed    : yara, heuristic
+     Techniques: T1003</code></pre>
+    </div>
+    <div class="notice">
+      <h4>Exit codes</h4>
+      <p>0 clean · 1 findings at the --fail-on level · 2 unscannable files · 3 the run failed · 4 usage.</p>
+    </div>
+  </div>
+
+  <!-- ============================ 7. RESOURCE DISCOVERY ============================ -->
+  <div class="section" id="resources">
+    <div class="sec-head">
+      <span class="sec-kicker">07 · resource discovery</span>
+      <h2 class="sec-title">Resource discovery</h2>
+      <p class="sec-sub">The binary looks for its signature database, rules directory and fuzzy database in this order and uses the first that exists:</p>
+    </div>
+    <ol>
+      <li>The flag (--db, --rules, --fuzzy-db)</li>
+      <li>The environment (CAU_SIGNATURES, CAU_RULES, CAU_FUZZY)</li>
+      <li>Next to the binary (dir of cau/signatures/hashes.txt, dir of cau/rules)</li>
+      <li>Share directory relative to the binary (dir of cau/../share/cau/...)</li>
+      <li>/usr/local/share/cau and /usr/share/cau</li>
+      <li>The current working directory</li>
+    </ol>
+    <div class="notice">
+      <h4>Missing resources</h4>
+      <p>When nothing is found, the error lists every path that was tried. A missing signature database is fatal; missing rules or a missing fuzzy database turn that detector off with a message on stderr.</p>
+    </div>
+    <div class="notice-err">
+      <h4>Error: signature database not found (fatal)</h4>
+      <p><strong>Meaning:</strong> cau could not locate hashes.txt in any of the six discovery locations.</p>
+      <p><strong>Fix:</strong> Pass <code>--db /path/to/hashes.txt</code> explicitly, set <code>CAU_SIGNATURES=/path/to/hashes.txt</code> in the environment, or install cau so the database lands in /usr/share/cau/signatures/hashes.txt.</p>
+    </div>
+    <div class="notice-err">
+      <h4>Error: rules not found / YARA disabled</h4>
+      <p><strong>Meaning:</strong> No YARA rule directory was found, so the YARA detector is turned off.</p>
+      <p><strong>Fix:</strong> Pass <code>--rules /path/to/rules</code> or set <code>CAU_RULES</code>. This is non-fatal — cau continues with other detectors.</p>
+    </div>
+  </div>
+
+  <!-- ============================ 8. CAU-KERNEL ============================ -->
+  <div class="section" id="kernel-overview">
+    <div class="sec-head">
+      <span class="sec-kicker">08 · cau-kernel</span>
+      <h2 class="sec-title">cau-kernel — kernel feature flags</h2>
+      <p class="sec-sub">The kernel-integrity sensor for CAU. Two halves: read-only detection (userspace Go) and opt-in enforcement (BPF-LSM guard or kernel module).</p>
+    </div>
+
+    <div class="card">
+      <h3>Detection (default binary — userspace, read-only)</h3>
+      <p>Pure Go, standard library only, no cgo, no kernel component. Reads /proc and /sys under a configurable root, summarises kernel integrity-relevant state, and diffs against a signed baseline. Cannot change anything. Deploy widely, run from a timer.</p>
+      <ul>
+        <li><strong>Modules</strong> — /proc/modules vs /sys/module cross-view (hidden-module reconciliation), refcounts, dependents.</li>
+        <li><strong>Taint</strong> — /proc/sys/kernel/tainted, decoded (E unsigned module, O out-of-tree, F force-loaded, K live-patched, D OOPS/BUG).</li>
+        <li><strong>eBPF surface</strong> — bpffs mounts, pinned maps/programs, bpf_jit_harden, unprivileged_bpf_disabled sysctls.</li>
+        <li><strong>Kernel memory</strong> — /dev/mem, /dev/kmem, /dev/port, /proc/kcore, lockdown.</li>
+        <li><strong>Posture</strong> — hardening sysctls, lockdown mode, active LSM list (/sys/kernel/security/lsm), IMA presence.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>Enforcement (opt-in, privileged)</h3>
+      <p>Two interchangeable backends implement the same primitive — an execution freeze: while armed, every new execve is denied. Both are fail-open: if the resident enforcer dies, the attachment drops and execution resumes, so a bug can never permanently brick the host.</p>
+      <table>
+        <tr><th></th><th>BPF-LSM (bpf/, default)</th><th>Kernel module (kmod/)</th></tr>
+        <tr><td>Mechanism</td><td>lsm/bprm_check_security eBPF program</td><td>kretprobe on security_bprm_check</td></tr>
+        <tr><td>Power</td><td>Verifier-bounded; LSM hooks only</td><td>Arbitrary in-kernel C; any kprobe</td></tr>
+        <tr><td>Safety</td><td>Cannot crash the kernel; auto-detaches</td><td>Can panic; taints the kernel</td></tr>
+        <tr><td>Build</td><td>-tags ebpf (cilium/ebpf), needs clang</td><td>Out-of-tree module, DKMS, kernel headers</td></tr>
+        <tr><td>Default?</td><td>Yes</td><td>Only where BPF-LSM cannot serve</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="section" id="kernel-requirements">
+    <div class="sec-head">
+      <span class="sec-kicker">08.2 · kernel requirements</span>
+      <h2 class="sec-title">Kernel requirements &amp; feature flags</h2>
+      <p class="sec-sub">What the running kernel must provide, and the sysctl knobs cau-kernel reads and reports on.</p>
+    </div>
+
+    <div class="card">
+      <h4>BPF-LSM requirements</h4>
+      <ul>
+        <li>Kernel with CONFIG_BPF_LSM</li>
+        <li>bpf present in /sys/kernel/security/lsm</li>
+        <li>Root, or CAP_BPF + CAP_MAC_ADMIN</li>
+        <li>clang (to compile the BPF object)</li>
+      </ul>
+      <div class="notice-err">
+        <h4>Error: enforcement unavailable</h4>
+        <p><strong>Meaning:</strong> The default cau-kernel binary was built without -tags ebpf, or the kernel lacks BPF-LSM support.</p>
+        <p><strong>Fix:</strong> Rebuild with <code>make enforce</code> (needs clang). Verify the kernel has <code>CONFIG_BPF_LSM</code> and that <code>bpf</code> appears in <code>cat /sys/kernel/security/lsm</code>. If not, use the kernel-module backend instead.</p>
+      </div>
+      <div class="notice-err">
+        <h4>Error: bpf not in /sys/kernel/security/lsm</h4>
+        <p><strong>Meaning:</strong> The kernel does not have BPF-LSM registered as an LSM.</p>
+        <p><strong>Fix:</strong> You need a kernel built with CONFIG_BPF_LSM and LSM=...,bpf,... in the kernel boot parameters or config. Otherwise use the kmod backend.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h4>Posture sysctls (cau-kernel posture)</h4>
+      <p>Each knob is marked ok or weak with the reason it matters. State, not scolding — the operator owns the policy call.</p>
+      <table>
+        <tr><th>sysctl</th><th>Hardened</th><th>Why</th></tr>
+        <tr><td>kernel.kptr_restrict</td><td>≥ 1</td><td>Kernel pointer exposure via /proc</td></tr>
+        <tr><td>kernel.dmesg_restrict</td><td>1</td><td>Unprivileged kernel-log access</td></tr>
+        <tr><td>kernel.kexec_load_disabled</td><td>1</td><td>Loading a new kernel over the running one</td></tr>
+        <tr><td>kernel.modules_disabled</td><td>1</td><td>Further module loading (one-way latch)</td></tr>
+        <tr><td>kernel.unprivileged_bpf_disabled</td><td>≥ 1</td><td>Unprivileged eBPF attack surface</td></tr>
+        <tr><td>net.core.bpf_jit_harden</td><td>≥ 1</td><td>BPF JIT-spray hardening</td></tr>
+        <tr><td>kernel.yama.ptrace_scope</td><td>≥ 1</td><td>Cross-process ptrace (credential theft)</td></tr>
+        <tr><td>kernel.perf_event_paranoid</td><td>≥ 2</td><td>perf_event_open exposure</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h4>Taint flags (decoded from /proc/sys/kernel/tainted)</h4>
+      <table>
+        <tr><th>Flag</th><th>Meaning</th><th>Security-relevant?</th></tr>
+        <tr><td>E</td><td>Unsigned module loaded</td><td>Yes</td></tr>
+        <tr><td>O</td><td>Out-of-tree module loaded</td><td>Yes</td></tr>
+        <tr><td>F</td><td>Force-loaded module</td><td>Yes</td></tr>
+        <tr><td>R</td><td>Force-unloaded module</td><td>Yes</td></tr>
+        <tr><td>K</td><td>Live-patched kernel</td><td>Yes</td></tr>
+        <tr><td>D</td><td>Kernel OOPS / BUG</td><td>Yes</td></tr>
+        <tr><td>W</td><td>Warning (taint warning)</td><td>No</td></tr>
+        <tr><td>X</td><td>External (out-of-tree) module</td><td>No</td></tr>
+        <tr><td>t</td><td>Unprivileged BPF</td><td>No</td></tr>
+        <tr><td>n</td><td>Retpoline</td><td>No</td></tr>
+        <tr><td>u</td><td>Upper 32-bit / upper 64-bit</td><td>No</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="section" id="bpf-lsm">
+    <div class="sec-head">
+      <span class="sec-kicker">08.3 · BPF-LSM</span>
+      <h2 class="sec-title">BPF-LSM backend (default)</h2>
+      <p class="sec-sub">Built with the ebpf tag (make enforce). Attaches to lsm/bprm_check_security and pins the control map to /sys/fs/bpf/cau-kernel.</p>
+    </div>
+
+    <table class="steps">
+      <tr><td>
+        <span class="step-n">01</span>
+        <h3>Build the enforcer</h3>
+<pre><code class="c-mono">cd cau-kernel
+make enforce              # compile the BPF object + build with -tags ebpf</code></pre>
+        <p>Compiles the BPF object (bpf/lsm.bpf.o or similar) with clang and builds the cau-kernel binary with the -tags ebpf build tag so it can load the eBPF program.</p>
+        <div class="notice-err">
+          <h4>Error: clang: command not found</h4>
+          <p><strong>Meaning:</strong> clang is not installed, required to compile BPF objects.</p>
+          <p><strong>Fix:</strong> Install clang (sudo apt install clang on Debian/Kali).</p>
+        </div>
+        <div class="notice-err">
+          <h4>Error: BPF verifier rejected program / invalid argument</h4>
+          <p><strong>Meaning:</strong> The eBPF program failed kernel verifier checks (too complex, unsafe access).</p>
+          <p><strong>Fix:</strong> Use a newer kernel with a more permissive verifier, or simplify the BPF program. This is rare with the shipped guard.</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">02</span>
+        <h3>Run the resident guard</h3>
+<pre><code class="c-mono">sudo ./cau-kernel enforce run      # attach the guard, state = allow</code></pre>
+        <p>Attaches the BPF-LSM program to lsm/bprm_check_security and pins the control map to bpffs. The guard is resident and starts in allow state (executions permitted). Requires root or CAP_BPF + CAP_MAC_ADMIN.</p>
+        <div class="notice-err">
+          <h4>Error: operation not permitted / permission denied</h4>
+          <p><strong>Meaning:</strong> You lack CAP_BPF + CAP_MAC_ADMIN or are not root.</p>
+          <p><strong>Fix:</strong> Run with sudo, or grant the capabilities: <code>sudo setcap cap_bpf,cap_mac_admin+ep ./cau-kernel</code>.</p>
+        </div>
+        <div class="notice-err">
+          <h4>Error: no such file or directory /sys/fs/bpf/cau-kernel</h4>
+          <p><strong>Meaning:</strong> bpffs is not mounted at /sys/fs/bpf.</p>
+          <p><strong>Fix:</strong> Mount bpffs: <code>sudo mount -t bpf bpf /sys/fs/bpf</code>.</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">03</span>
+        <h3>Freeze / release execution</h3>
+<pre><code class="c-mono">sudo ./cau-kernel enforce on       # freeze: deny every new execve
+sudo ./cau-kernel enforce off      # release
+./cau-kernel enforce status        # report current state</code></pre>
+        <p><code>on</code> flips the pinned control map to deny all new execve (execution freeze). <code>off</code> releases it. <code>status</code> reads the pinned map and reports allow or deny.</p>
+        <div class="notice-err">
+          <h4>Error: control map not found / map not pinned</h4>
+          <p><strong>Meaning:</strong> enforce run has not been executed, or the resident guard died and detached.</p>
+          <p><strong>Fix:</strong> Start the guard first with <code>sudo ./cau-kernel enforce run</code>, then use on/off/status.</p>
+        </div>
+        <div class="notice">
+          <h4>Fail-open, by design</h4>
+          <p>run holds the LSM attachment and pins the control map to bpffs; on/off/status flip or read that pinned map. If run dies, the program detaches and execution is no longer frozen — a crash can never brick the host. The attachment lives only as long as run.</p>
+        </div>
+      </td></tr>
+    </table>
+  </div>
+
+  <div class="section" id="kmod">
+    <div class="sec-head">
+      <span class="sec-kicker">08.4 · kernel module</span>
+      <h2 class="sec-title">Kernel-module backend</h2>
+      <p class="sec-sub">More capable than eBPF (arbitrary in-kernel C, no verifier, hooks eBPF cannot reach) but heavier and less safe: it can panic and taints the kernel. Use only where BPF-LSM cannot serve.</p>
+    </div>
+
+    <table class="steps">
+      <tr><td>
+        <span class="step-n">01</span>
+        <h3>Install kernel headers</h3>
+<pre><code class="c-mono">sudo apt-get install -y linux-headers-$(uname -r)</code></pre>
+        <p>Installs the kernel headers matching your running kernel, required to build an out-of-tree module.</p>
+        <div class="notice-err">
+          <h4>Error: package linux-headers-$(uname -r) not found</h4>
+          <p><strong>Meaning:</strong> Headers for your exact kernel version are unavailable in the repos.</p>
+          <p><strong>Fix:</strong> Update and reboot into a kernel for which headers exist, or install the generic headers package (linux-headers-generic).</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">02</span>
+        <h3>Build the module</h3>
+<pre><code class="c-mono">make -C kmod                      # build cau_guard.ko</code></pre>
+        <p>Builds cau_guard.ko from the kmod directory using the kernel build system.</p>
+        <div class="notice-err">
+          <h4>Error: make: *** /lib/modules/$(uname -r)/build: No such file or directory</h4>
+          <p><strong>Meaning:</strong> Kernel headers are not installed or the build symlink is broken.</p>
+          <p><strong>Fix:</strong> Install linux-headers-$(uname -r) and ensure /lib/modules/$(uname -r)/build points to the kernel source.</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">03</span>
+        <h3>Load and freeze</h3>
+<pre><code class="c-mono">sudo insmod kmod/cau_guard.ko
+echo 1 | sudo tee /sys/module/cau_guard/parameters/enforce   # freeze</code></pre>
+        <p>Loads the module into the kernel, then sets the enforce parameter to 1, which freezes all new execve via a kretprobe on security_bprm_check returning -EPERM.</p>
+        <div class="notice-err">
+          <h4>Error: insmod: ERROR: could not insert module cau_guard: Required key not available</h4>
+          <p><strong>Meaning:</strong> Secure Boot is enabled and the module is not signed by an enrolled key.</p>
+          <p><strong>Fix:</strong> Sign the module with an enrolled MOK key (see kmod/README.md for DKMS packaging and Secure Boot signing), or disable Secure Boot in firmware settings (not recommended for production).</p>
+        </div>
+        <div class="notice-err">
+          <h4>Error: insmod: ERROR: could not insert module cau_guard: Invalid argument</h4>
+          <p><strong>Meaning:</strong> The module is tainted or incompatible with the running kernel.</p>
+          <p><strong>Fix:</strong> Ensure you built against the exact running kernel headers. The module taints the kernel (expect an O/E taint flag).</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">04</span>
+        <h3>Release and unload</h3>
+<pre><code class="c-mono">echo 0 | sudo tee /sys/module/cau_guard/parameters/enforce   # release
+sudo rmmod cau_guard</code></pre>
+        <p>Sets enforce to 0 (release the freeze), then removes the module from the kernel.</p>
+        <div class="notice-err">
+          <h4>Error: rmmod: ERROR: Module cau_guard is in use</h4>
+          <p><strong>Meaning:</strong> Something still references the module.</p>
+          <p><strong>Fix:</strong> Ensure enforce is set to 0 first, then retry rmmod. If a process holds it, identify and stop that process.</p>
+        </div>
+      </td></tr>
+    </table>
+
+    <div class="card">
+      <h4>Mechanism</h4>
+      <p>Kretprobes security_bprm_check and overrides the return to -EPERM while enforce is set. DKMS packaging and Secure Boot signing are in kmod/README.md. Under Secure Boot the module must be signed by an enrolled MOK key or the kernel refuses it.</p>
+    </div>
+  </div>
+
+  <div class="section" id="enforce-flags">
+    <div class="sec-head">
+      <span class="sec-kicker">08.5 · enforce flags</span>
+      <h2 class="sec-title">Enforce command reference</h2>
+      <p class="sec-sub">All cau-kernel enforce subcommands.</p>
+    </div>
+
+    <table>
+      <tr><th>Command</th><th>Effect</th></tr>
+      <tr><td>enforce run [--core obj]</td><td>Resident: attach the guard (state = allow). With --core, load a CO-RE object for path-aware policy.</td></tr>
+      <tr><td>enforce on</td><td>Freeze: deny every new execve.</td></tr>
+      <tr><td>enforce off</td><td>Release the freeze.</td></tr>
+      <tr><td>enforce status</td><td>Report current state (reads the pinned control map).</td></tr>
+      <tr><td>enforce block path</td><td>Deny opening that file (keyed on device + inode).</td></tr>
+      <tr><td>enforce unblock path</td><td>Remove the block.</td></tr>
+      <tr><td>enforce blocked</td><td>List blocked files.</td></tr>
+      <tr><td>enforce killguard --obj obj</td><td>Resident: attach kill + ptrace guard hooks.</td></tr>
+      <tr><td>enforce protect --pid pid</td><td>Defend a process from kill/ptrace.</td></tr>
+      <tr><td>enforce unprotect --pid pid</td><td>Remove protection.</td></tr>
+      <tr><td>enforce protected</td><td>List protected PIDs.</td></tr>
+      <tr><td>enforce netshell [--mode audit\|deny] [--any-program audit\|deny] [--memfd audit\|deny] [--log file]</td><td>Network-shell guard (see next section).</td></tr>
+    </table>
+  </div>
+
+  <div class="section" id="netshell">
+    <div class="sec-head">
+      <span class="sec-kicker">08.6 · network-shell guard</span>
+      <h2 class="sec-title">Network-shell guard flags</h2>
+      <p class="sec-sub">lsm_netshell.bpf.c fires on every execve (lsm/bprm_check_security) before the new image runs. A program whose stdin and stdout are both an established AF_INET/AF_INET6 socket is a reverse or bind shell.</p>
+    </div>
+
+    <table class="steps">
+      <tr><td>
+        <span class="step-n">01</span>
+        <h3>Build and run in audit mode</h3>
+<pre><code class="c-mono">make enforce
+sudo ./cau-kernel enforce netshell                  # audit everything, print JSON events</code></pre>
+        <p>Starts the network-shell guard in audit mode: it logs every program on network stdio without blocking anything. Use this first to see what would be caught.</p>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">02</span>
+        <h3>Enable deny mode</h3>
+<pre><code class="c-mono">sudo ./cau-kernel enforce netshell --mode deny      # refuse interpreters on network stdio
+sudo ./cau-kernel enforce netshell --mode deny --log /run/cau-kernel.jsonl</code></pre>
+        <p><code>--mode deny</code> refuses interpreters (shells, Python, Perl, Ruby, PHP, Lua, Node, awk) whose stdin and stdout are both network sockets. <code>--log</code> writes JSON events for later correlation.</p>
+        <div class="notice-warn">
+          <h4>Start in audit</h4>
+          <p><code>deny</code> refuses a legitimate inetd-style service as readily as a reverse shell, and <code>--memfd deny</code> breaks runc, which re-executes through a memfd. Blind spots: a shell on a pty, a pipe relay (mkfifo | sh | nc), and a shell started first and connected afterwards by an in-process implant. cau ps catches the relay from userspace.</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">03</span>
+        <h3>Correlate with live processes</h3>
+<pre><code class="c-mono">cau ps --kernel-events /run/cau-kernel.jsonl        # correlate with live processes</code></pre>
+        <p>Joins the guard's JSON events with live process data from cau ps so you can see which process triggered which network-shell event.</p>
+      </td></tr>
+    </table>
+
+    <table>
+      <tr><th>Flag</th><th>Default</th><th>Applies to</th></tr>
+      <tr><td>--mode</td><td>audit</td><td>Interpreters on network stdio (shells, Python, Perl, Ruby, PHP, Lua, Node, awk)</td></tr>
+      <tr><td>--any-program</td><td>audit</td><td>Every other program on network stdio (catches cp /bin/bash /tmp/x)</td></tr>
+      <tr><td>--memfd</td><td>audit</td><td>Execution from a memfd (fileless path, nothing on disk records)</td></tr>
+    </table>
+
+    <div class="notice-err">
+      <h4>Error: --memfd deny breaks runc</h4>
+        <p><strong>Meaning:</strong> runc re-executes through a memfd, so denying memfd execution breaks container runtimes.</p>
+        <p><strong>Fix:</strong> Keep <code>--memfd audit</code> unless you are certain no container runtime runs on this host.</p>
+      </div>
+  </div>
+
+  <div class="section" id="path-aware">
+    <div class="sec-head">
+      <span class="sec-kicker">08.7 · path-aware policy</span>
+      <h2 class="sec-title">Path-aware (per-inode) blocklist</h2>
+      <p class="sec-sub">Load the CO-RE object (make -C bpf lsm_fileopen.bpf.o, no libbpf-dev needed) to add per-file denial on top of the global freeze. Files are keyed on device and inode.</p>
+    </div>
+
+    <table class="steps">
+      <tr><td>
+        <span class="step-n">01</span>
+        <h3>Run with path-aware core object</h3>
+<pre><code class="c-mono">sudo ./cau-kernel enforce run --core bpf/lsm_fileopen.bpf.o   # resident, path-aware</code></pre>
+        <p>Loads the CO-RE lsm/file_open object alongside the freeze guard, enabling per-file denial keyed on device and inode.</p>
+        <div class="notice-err">
+          <h4>Error: CO-RE object not found / failed to load</h4>
+            <p><strong>Meaning:</strong> bpf/lsm_fileopen.bpf.o was not built, or the kernel lacks CO-RE support (BTF).</p>
+            <p><strong>Fix:</strong> Run <code>make -C bpf lsm_fileopen.bpf.o</code> to build it. Ensure the kernel has BTF (CONFIG_DEBUG_INFO_BTF) for CO-RE to work.</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">02</span>
+        <h3>Block / unblock a file</h3>
+<pre><code class="c-mono">sudo ./cau-kernel enforce block   /path/to/implant            # deny opening that file
+sudo ./cau-kernel enforce unblock /path/to/implant</code></pre>
+        <p>Resolves a path to its device+inode and flips the cau_blocked_inodes pinned map. block denies opening that specific file; unblock restores access.</p>
+        <div class="notice-err">
+          <h4>Error: path not found / cannot resolve inode</h4>
+            <p><strong>Meaning:</strong> The file does not exist or is on a filesystem where inode resolution fails.</p>
+            <p><strong>Fix:</strong> Use an absolute path to an existing file. block refuses system paths and interpreters (e.g. /bin/bash) to prevent bricking the system.</p>
+        </div>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">03</span>
+        <h3>List blocked files</h3>
+<pre><code class="c-mono">./cau-kernel enforce blocked                                   # list blocked files</code></pre>
+        <p>Lists all files currently in the blocked-inodes map.</p>
+      </td></tr>
+    </table>
+
+    <div class="card">
+      <h4>How it works</h4>
+      <p>run --core loads lsm/file_open and pins both the freeze flag and the cau_blocked_inodes map. block/unblock resolve a path to its inode and flip that pinned map. cau ps --respond stop --block-exe drives this for a confirmed implant and refuses to block a system path or an interpreter.</p>
+    </div>
+  </div>
+
+  <div class="section" id="killguard">
+    <div class="sec-head">
+      <span class="sec-kicker">08.8 · killguard</span>
+      <h2 class="sec-title">Kill / ptrace guard (self-protection)</h2>
+      <p class="sec-sub">Protects the sensor itself — stops malware from killing or hooking the EDR (ATT&CK T1562.001, Impair Defenses). Hooks lsm/task_kill (deny every signal, including SIGKILL/SIGSTOP) and lsm/ptrace_access_check (deny debugger/injector attach).</p>
+    </div>
+
+    <table class="steps">
+      <tr><td>
+        <span class="step-n">01</span>
+        <h3>Build the killguard object</h3>
+<pre><code class="c-mono">make -C bpf core                                                   # builds lsm_killguard.bpf.o</code></pre>
+        <p>Builds the CO-RE BPF object containing both lsm/task_kill and lsm/ptrace_access_check hooks.</p>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">02</span>
+        <h3>Attach both hooks</h3>
+<pre><code class="c-mono">sudo ./cau-kernel enforce killguard --obj bpf/lsm_killguard.bpf.o  # resident: attach both hooks</code></pre>
+        <p>Attaches the killguard program as a resident process; it pins the cau_protected_pids map.</p>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">03</span>
+        <h3>Protect the sensor</h3>
+<pre><code class="c-mono">sudo ./cau-kernel enforce protect   --pid "$(pgrep -x cau)"        # defend the sensor's PID</code></pre>
+        <p>Adds cau's PID to the protected-pids map, so signals and ptrace attaches to it are denied.</p>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">04</span>
+        <h3>Remove protection / list protected</h3>
+<pre><code class="c-mono">sudo ./cau-kernel enforce unprotect --pid 1234
+./cau-kernel enforce protected                                     # list protected PIDs</code></pre>
+        <p>Remove a PID from protection, or list all currently protected PIDs.</p>
+      </td></tr>
+    </table>
+
+    <div class="card">
+      <h4>Honest limits</h4>
+      <ul>
+        <li><strong>Fail-open.</strong> Kill the resident killguard (it is not itself protected) and all protection lifts. protect refuses PID 1 and its own PID so the guard can never be made un-teardownable.</li>
+        <li><strong>User-space signals only.</strong> Some kernel-internal paths (e.g. the OOM killer) do not pass through security_task_kill.</li>
+        <li><strong>Real kernel only.</strong> Needs CONFIG_BPF_LSM and bpf in /sys/kernel/security/lsm, as root. CI only proves it compiles.</p>
+      </ul>
+    </div>
+  </div>
+
+  <div class="section" id="posture">
+    <div class="sec-head">
+      <span class="sec-kicker">08.9 · posture</span>
+      <h2 class="sec-title">cau-kernel posture</h2>
+      <p class="sec-sub">Just the hardening posture, each knob marked ok or weak. Run read-only, any time.</p>
+    </div>
+<pre><code class="c-mono">cau-kernel inventory      # full snapshot of kernel state the sensor watches
+cau-kernel posture        # just the hardening posture</code></pre>
+    <div class="notice">
+      <h4>What posture reports</h4>
+      <p>kptr_restrict, dmesg_restrict, kexec_load_disabled, modules_disabled, unprivileged_bpf_disabled, bpf_jit_harden, yama.ptrace_scope, perf_event_paranoid, lockdown mode, the active LSM list, and whether IMA is present. Some nodes (IMA, kprobes) need root; unreadable nodes become warnings, never silent gaps.</p>
+    </div>
+    <div class="notice-err">
+      <h4>Error: permission denied reading /sys/kernel/security/ima/</h4>
+        <p><strong>Meaning:</strong> IMA measurement log requires root; running as unprivileged user degrades to a warning.</p>
+        <p><strong>Fix:</strong> Run with sudo for full IMA visibility, or accept the warning — posture still reports what it can read.</p>
+      </div>
+  </div>
+
+  <div class="section" id="baseline-drift">
+    <div class="sec-head">
+      <span class="sec-kicker">08.10 · baseline &amp; drift</span>
+      <h2 class="sec-title">Baseline &amp; drift detection</h2>
+      <p class="sec-sub">Record a signed baseline from a known-good boot, then detect drift on a schedule.</p>
+    </div>
+
+    <table class="steps">
+      <tr><td>
+        <span class="step-n">01</span>
+        <h3>Record a signed baseline</h3>
+<pre><code class="c-mono">cau-kernel baseline --out /var/lib/cau-kernel/baseline.json --sign-key priv.hex</code></pre>
+        <p>Creates a signed snapshot of current kernel state. The --sign-key is an Ed25519 private key (hex). Store the baseline on a known-good host.</p>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">02</span>
+        <h3>Detect drift</h3>
+<pre><code class="c-mono">cau-kernel drift --baseline /var/lib/cau-kernel/baseline.json --pubkey pub.hex</code></pre>
+        <p>Compares current kernel state against the signed baseline. Exits non-zero on security-relevant changes: new module, new taint flag, new kernel-memory channel, new pinned eBPF object, hardening regression (ok → weak), or hidden-module suspect.</p>
+      </td></tr>
+    </table>
+
+    <div class="card">
+      <h4>drift flags</h4>
+      <ul>
+        <li>--baseline file — signed baseline to compare against</li>
+        <li>--pubkey file — Ed25519 public key for fail-closed verification</li>
+        <li>--all — show info-level (benign) changes too</li>
+        <li>--format text\|json — output format</li>
+        <li>--root path — run against a fixture tree (default /)</li>
+      </ul>
+      <p>The baseline is Ed25519-signed; without --pubkey a tampered baseline is still detected as drift, and with --pubkey a tampered baseline fails closed.</p>
+      <div class="notice-err">
+        <h4>Error: baseline signature does not verify</h4>
+          <p><strong>Meaning:</strong> The baseline file was modified after signing, or the wrong public key was supplied.</p>
+          <p><strong>Fix:</strong> Regenerate the baseline with the correct --sign-key, and verify with the matching --pubkey. Do not edit baseline.json by hand.</p>
+        </div>
+        <div class="notice-err">
+          <h4>Error: drift exit code non-zero (alert)</h4>
+            <p><strong>Meaning:</strong> A security-relevant change was detected since baseline.</p>
+            <p><strong>Fix:</strong> Review the drift output. If the change is expected (legitimate update), record a new baseline. If unexpected, treat as a potential compromise: contain the host, capture evidence, and consider cau-kernel enforce on to freeze execution.</p>
+        </div>
+    </div>
+  </div>
+
+  <div class="section" id="attestation">
+    <div class="sec-head">
+      <span class="sec-kicker">08.11 · attestation</span>
+      <h2 class="sec-title">Boot attestation (TPM / IMA / kdump)</h2>
+      <p class="sec-sub">Records and verifies boot-anchored measurement state — things a running kernel cannot rewrite retroactively — against a signed baseline.</p>
+    </div>
+
+    <table class="steps">
+      <tr><td>
+        <span class="step-n">01</span>
+        <h3>Show current state</h3>
+<pre><code class="c-mono">cau-kernel attest show                                   # print current state</code></pre>
+        <p>Prints current TPM PCR values, IMA measurement count/violations, and kdump readiness.</p>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">02</span>
+        <h3>Record a signed baseline</h3>
+<pre><code class="c-mono">cau-kernel attest baseline --out a.json --sign-key priv.hex</code></pre>
+        <p>Signs the current boot measurements. Record this on a trusted boot, ideally right after provisioning.</p>
+      </td></tr>
+      <tr><td>
+        <span class="step-n">03</span>
+        <h3>Verify against baseline</h3>
+<pre><code class="c-mono">cau-kernel attest verify   --baseline a.json --pubkey pub.hex</code></pre>
+        <p>Compares current PCRs, IMA state, and kdump readiness against the signed baseline. A changed PCR means the boot chain differs (different kernel, initrd, bootloader config, or Secure Boot state).</p>
+      </td></tr>
+    </table>
+
+    <div class="card">
+      <h4>What attest reads</h4>
+      <ul>
+        <li><strong>TPM PCRs</strong> (/sys/class/tpm/tpm0/pcr-sha256/*) — measured-boot registers. World-readable via sysfs.</li>
+        <li><strong>IMA</strong> (/sys/kernel/security/ima/) — runtime measurement count, appraisal violation count, SHA-256 digest of the measurement log.</li>
+        <li><strong>kdump readiness</strong> (/sys/kernel/kexec_crash_loaded, kexec_crash_size) — whether a crash kernel is reserved and loaded.</li>
+      </ul>
+    </div>
+
+    <div class="notice-err">
+      <h4>Error: TPM not found / no pcr-sha256 directory</h4>
+        <p><strong>Meaning:</strong> The host has no TPM, or TPM sysfs is not available.</p>
+        <p><strong>Fix:</strong> Attestation reports PCR absence as a warning; attest still works using IMA and kdump where available.</p>
+      </div>
+      <div class="notice-err">
+        <h4>Error: attest verify exit non-zero (alert)</h4>
+          <p><strong>Meaning:</strong> A PCR changed, IMA count regressed/violations increased, kdump readiness was lost, or the baseline signature failed.</p>
+          <p><strong>Fix:</strong> A changed PCR on a host that was not reinstalled is a strong boot-tamper indicator. Investigate before trusting the host.</p>
+        </div>
+    </div>
+
+    <div class="card">
+      <h4>Deployment</h4>
+      <p>Record the baseline on a trusted boot (ideally right after provisioning, as root so IMA is captured), store it signed, and run attest verify --pubkey early in boot or from a timer. Route an alert to the console.</p>
+    </div>
+
+    <div class="notice-warn">
+      <h4>Honest limits</h4>
+      <ul>
+        <li>This reads PCRs from sysfs; it does not perform a remote attestation quote (TPM-signed TPM2_Quote with a nonce).</li>
+        <li>A fully compromised kernel can lie to /proc/sys; cross-view and TPM/IMA are the hedge, not a guarantee.</li>
+        <li>Forcing a kdump capture on tamper is a privileged, destructive action left to the operator's response policy.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ============================ 9. CLI ============================ -->
+  <div class="section" id="cli-commands">
+    <div class="sec-head">
+      <span class="sec-kicker">09 · CLI reference</span>
+      <h2 class="sec-title">CAU engine commands</h2>
+      <p class="sec-sub">Every command accepts --help. Flags take one dash or two and can go before or after paths.</p>
+    </div>
+
+    <table>
+      <tr><th>Command</th><th>What it does</th></tr>
+      <tr><td>cau scan [flags] [path ...]</td><td>Scan files and directories with every configured detector</td></tr>
+      <tr><td>cau ps [flags]</td><td>Scan the live process table over /proc; --respond stops confirmed processes</td></tr>
+      <tr><td>cau net [flags]</td><td>Scan the network plane; block\|unblock\|blocks\|clear for reversible drop rules</td></tr>
+      <tr><td>cau persist [flags]</td><td>Audit the host for persistence (read-only)</td></tr>
+      <tr><td>cau defend [flags]</td><td>Chain every layer: incidents, real-time file scanning, automatic response</td></tr>
+      <tr><td>cau installed [flags]</td><td>Audit already-installed packages' maintainer scripts</td></tr>
+      <tr><td>cau firmware [flags]</td><td>Parse a UEFI firmware image: inventory, FV integrity, rules</td></tr>
+      <tr><td>cau boot-scan [flags]</td><td>Read the boot chain, read-only: MBR/GPT, ESP, Secure Boot, firmware tables</td></tr>
+      <tr><td>cau hwid [flags]</td><td>Snapshot the hardware identity; --check compares against a baseline</td></tr>
+      <tr><td>cau peel [flags] file...</td><td>Walk obfuscation chains: every common base, rot and Caesar, in parallel</td></tr>
+      <tr><td>cau feed subcommand [flags]</td><td>Abuse-intel feed: list / check / update</td></tr>
+      <tr><td>cau intake --format fmt [flags]</td><td>Ingest STIX, MISP, MalwareBazaar, LOLDrivers or TAXII 2.1 intel</td></tr>
+      <tr><td>cau update (--from\|--url) [flags]</td><td>Install a signed signature-DB bundle, refusing an older one</td></tr>
+      <tr><td>cau selftest [--record] [flags]</td><td>Verify detection content, feed, config and binary against a baseline</td></tr>
+      <tr><td>cau verify-self (--from\|--url)</td><td>Verify this binary against the signed release manifest</td></tr>
+      <tr><td>cau bundle update\|checksums\|sbom</td><td>Produce signed release artifacts and a CycloneDX SBOM</td></tr>
+      <tr><td>cau quarantine subcommand</td><td>Vault flagged files: add / list / restore / verify / delete</td></tr>
+      <tr><td>cau canary plant\|check [flags]</td><td>Plant decoy files and detect tampering</td></tr>
+      <tr><td>cau hash [flags] path...</td><td>Print SHA-256, imphash, TLSH and ssdeep digests</td></tr>
+      <tr><td>cau cluster [flags] path...</td><td>Group PE and ELF files by import-table similarity</td></tr>
+      <tr><td>cau rules lint\|list [flags]</td><td>Lint the YARA rules, or list them with their meta</td></tr>
+      <tr><td>cau coverage [flags]</td><td>ATT&CK coverage matrix of the shipped content</td></tr>
+      <tr><td>cau honesty [flags]</td><td>What is covered, what was measured, whether the content is intact</td></tr>
+      <tr><td>cau version / cau help / cau completion shell</td><td>Version / help / shell completion (bash, zsh, fish)</td></tr>
+    </table>
+
+    <div class="card">
+      <h4>cau scan detector flags</h4>
+      <table>
+        <tr><th>Flag</th><th>Default</th><th>Meaning</th></tr>
+        <tr><td>--no-yara</td><td>off</td><td>Disable YARA</td></tr>
+        <tr><td>--no-heuristics</td><td>off</td><td>Disable string and API heuristics</td></tr>
+        <tr><td>--no-static</td><td>off</td><td>Disable the static structural pass</td></tr>
+        <tr><td>--no-fuzzy</td><td>off</td><td>Keep static but skip TLSH/ssdeep (faster on large files)</td></tr>
+        <tr><td>--signers file</td><td>off</td><td>Known-abused code-signing cert blocklist (lolcerts)</td></tr>
+        <tr><td>--no-stego</td><td>off</td><td>Disable invisible-codepoint pass</td></tr>
+        <tr><td>--no-encchain</td><td>off</td><td>Disable encoded-executable pass</td></tr>
+        <tr><td>--no-lnk</td><td>off</td><td>Disable Windows Shell Link (.lnk) pass</td></tr>
+        <tr><td>--no-ole</td><td>off</td><td>Disable OLE compound-file (VBA macro) pass</td></tr>
+        <tr><td>--no-pdf</td><td>off</td><td>Disable malicious-document pass</td></tr>
+        <tr><td>--no-iso</td><td>off</td><td>Disable ISO 9660 container pass</td></tr>
+        <tr><td>--no-pkg</td><td>off</td><td>Disable Linux software-package pass</td></tr>
+        <tr><td>--no-archive</td><td>off</td><td>Disable compressed-container pass (ZIP/TAR/gzip)</td></tr>
+        <tr><td>--no-chm</td><td>off</td><td>Disable CHM help-file pass</td></tr>
+        <tr><td>--no-tradecraft</td><td>off</td><td>Disable behavioural pass over scripts and payload bytes</td></tr>
+        <tr><td>--no-peel</td><td>off</td><td>Disable obfuscation-chain peeler</td></tr>
+        <tr><td>--no-fusion</td><td>off</td><td>Disable fusion lattice</td></tr>
+        <tr><td>--heuristic-threshold N</td><td>7</td><td>Heuristic score for SUSPICIOUS</td></tr>
+        <tr><td>--static-threshold N</td><td>8</td><td>Static anomaly score for SUSPICIOUS</td></tr>
+        <tr><td>--stego-threshold N</td><td>4</td><td>Stego score for SUSPICIOUS</td></tr>
+        <tr><td>--encchain-threshold N</td><td>8</td><td>Encoded-executable score for SUSPICIOUS</td></tr>
+        <tr><td>--fail-on level</td><td>—</td><td>CI failure threshold: none, heuristic, suspicious, malicious</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="section" id="cli-flags">
+    <div class="sec-head">
+      <span class="sec-kicker">09.2 · common flags</span>
+      <h2 class="sec-title">Common scan flags</h2>
+    </div>
+    <table>
+      <tr><th>Flag</th><th>Meaning</th></tr>
+      <tr><td>--file PATH</td><td>Single file (positional paths accepted too)</td></tr>
+      <tr><td>--dir PATH</td><td>Directory to scan recursively (also sets SARIF source root)</td></tr>
+      <tr><td>--db PATH</td><td>Signature database (default: auto-discovered)</td></tr>
+      <tr><td>--rules PATH</td><td>YARA rule file or directory (default: auto-discovered)</td></tr>
+      <tr><td>--fuzzy-db PATH</td><td>Fuzzy signature database (default: auto-discovered, optional)</td></tr>
+      <tr><td>--format fmt</td><td>Output format: text, json, sarif, ocsf, syslog, cef, leef, otlp, ecs, stix</td></tr>
+      <tr><td>--output PATH</td><td>Write report to file instead of stdout</td></tr>
+      <tr><td>--jobs N</td><td>Parallel workers for directory scans</td></tr>
+      <tr><td>--quiet</td><td>Suppress banner and progress (stderr)</td></tr>
+      <tr><td>--respond stop\|quarantine\|block-exe\|netblock</td><td>Response action on confirmed findings</td></tr>
+      <tr><td>--report-only</td><td>Watch without changing anything</td></tr>
+    </table>
+  </div>
+
+  <div class="section" id="exit-codes">
+    <div class="sec-head">
+      <span class="sec-kicker">09.3 · exit codes</span>
+      <h2 class="sec-title">Exit codes</h2>
+    </div>
+    <table>
+      <tr><th>Code</th><th>Meaning</th></tr>
+      <tr><td>0</td><td>Clean — no findings at the --fail-on level</td></tr>
+      <tr><td>1</td><td>Findings at the --fail-on level</td></tr>
+      <tr><td>2</td><td>Unscannable files</td></tr>
+      <tr><td>3</td><td>The run failed</td></tr>
+      <tr><td>4</td><td>Usage error</td></tr>
+    </table>
+  </div>
+
+  <!-- ============================ 10. DETECTION ============================ -->
+  <div class="section" id="detection">
+    <div class="sec-head">
+      <span class="sec-kicker">10 · detection content</span>
+      <h2 class="sec-title">Detection content &amp; output formats</h2>
+      <p class="sec-sub">Fifteen file detectors, three runtime planes, and a fusion lattice. Thirteen output formats including OCSF, SARIF, CEF, LEEF, syslog, OTLP, ECS and STIX.</p>
+    </div>
+
+    <div class="card">
+      <h4>File detectors (fifteen, single-pass)</h4>
+      <ul>
+        <li>Hash signatures — exact content known-malicious</li>
+        <li>YARA (in-process libyara, per-file timeout)</li>
+        <li>Heuristics — suspicious capability naming</li>
+        <li>Static structure — PE, ELF, Mach-O parsers, entropy, TLSH/ssdeep/imphash/telfhash</li>
+        <li>Invisible codepoints (stego)</li>
+        <li>Encoded executable (base64/hex multi-layer)</li>
+        <li>Obfuscation-chain peeler</li>
+        <li>Shell Link (.lnk)</li>
+        <li>OLE macro (VBA)</li>
+        <li>PDF document</li>
+        <li>ISO container</li>
+        <li>Linux software package (.deb/.rpm/Arch/Flatpak/AppImage/Docker/Snap)</li>
+        <li>Archive (ZIP/TAR/gzip)</li>
+        <li>CHM help file</li>
+        <li>Tradecraft (behaviour in scripts and payload bytes)</li>
+        <li>Fusion — cross-detector corroboration</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h4>Runtime planes</h4>
+      <table>
+        <tr><th>Plane</th><th>Command</th><th>Question it answers</th></tr>
+        <tr><td>Process</td><td>cau ps</td><td>Is anything running that a benign system would not run? (fileless, masquerade, injection, network shells)</td></tr>
+        <tr><td>Network</td><td>cau net</td><td>What is this host talking to, and who on this host is doing it? Every socket attributed to its process and file.</td></tr>
+        <tr><td>Persistence</td><td>cau persist</td><td>What will run again after a reboot or a login?</td></tr>
+      </table>
+      <p>cau defend joins all three planes with the file detectors into one incident. Response is tiered: --respond stop freezes a confirmed process, --quarantine seals a file, --block-exe asks the kernel guard to refuse it, --netblock drops its peers in cau's own nftables table.</p>
+    </div>
+  </div>
+
+  <!-- ============================ 11. ERRORS ============================ -->
+  <div class="section" id="errors">
+    <div class="sec-head">
+      <span class="sec-kicker">11 · errors &amp; troubleshooting</span>
+      <h2 class="sec-title">Common errors &amp; fixes</h2>
+      <p class="sec-sub">A consolidated reference for errors you may encounter and how to resolve them.</p>
+    </div>
+
+    <table>
+      <tr><th>Error</th><th>Meaning</th><th>Fix</th></tr>
+      <tr><td>package yara was not found in the pkg-config search path</td><td>pkg-config cannot see libyara</td><td>Install libyara-dev; source scripts/dev-env.sh or export PKG_CONFIG_PATH</td></tr>
+      <tr><td>make: No rule to make target 'build'</td><td>Not in repo root / Makefile missing</td><td>cd into cau; confirm Makefile exists</td></tr>
+      <tr><td>go: command not found</td><td>Go not installed or not on PATH</td><td>Install Go; verify with go version</td></tr>
+      <tr><td>cau: command not found</td><td>Binary not installed or not on PATH</td><td>Run make install; add $HOME/.local/bin to PATH if user-local</td></tr>
+      <tr><td>signature database not found (fatal)</td><td>No hashes.txt in discovery order</td><td>Pass --db explicitly or set CAU_SIGNATURES env var</td></tr>
+      <tr><td>operation not permitted (enforce run)</td><td>Missing CAP_BPF + CAP_MAC_ADMIN or root</td><td>Run with sudo or setcap cap_bpf,cap_mac_admin+ep</td></tr>
+      <tr><td>bpf not in /sys/kernel/security/lsm</td><td>Kernel lacks BPF-LSM</td><td>Use kmod backend or rebuild kernel with CONFIG_BPF_LSM</td></tr>
+      <tr><td>insmod: Required key not available</td><td>Secure Boot blocks unsigned module</td><td>Sign module with enrolled MOK key or disable Secure Boot</td></tr>
+      <tr><td>control map not found / map not pinned</td><td>enforce run not executed or guard died</td><td>Start guard with enforce run first</td></tr>
+      <tr><td>baseline signature does not verify</td><td>Baseline tampered or wrong pubkey</td><td>Regenerate baseline with matching sign-key/pubkey</td></tr>
+      <tr><td>drift exit code non-zero</td><td>Security-relevant change since baseline</td><td>Review output; contain host if unexpected</td></tr>
+      <tr><td>rmmod: Module is in use</td><td>Module still referenced</td><td>Set enforce to 0 first, then rmmod</td></tr>
+      <tr><td>--memfd deny breaks runc</td><td>runc re-executes through memfd</td><td>Keep --memfd audit unless no container runtime</td></tr>
+    </table>
+  </div>
+
+  <!-- ============================ 12. LIMITS ============================ -->
+  <div class="section section-no-break" id="limits">
+    <div class="sec-head">
+      <span class="sec-kicker">12 · limits</span>
+      <h2 class="sec-title">Honest limits &amp; disclaimer</h2>
+      <p class="sec-sub">What the software cannot do, and the scope of this guide.</p>
+    </div>
+
+    <div class="card">
+      <h4>Kernel enforcement limits</h4>
+      <ul>
+        <li>BPF-LSM needs CONFIG_BPF_LSM and bpf in /sys/kernel/security/lsm; not all kernels have it.</li>
+        <li>Both backends are fail-open — a crash lifts the freeze, by design.</li>
+        <li>Network-shell guard blind spots: shells on a pty, pipe relays, and shells started first then connected by an in-process implant.</li>
+        <li>Killguard refuses PID 1 and its own PID; it is not itself protected.</li>
+        <li>A fully compromised kernel can lie to /proc/sys; cross-view and TPM/IMA are the hedge.</li>
+      </ul>
+    </div>
+
+    <div class="notice-warn">
+      <h4>Disclaimer</h4>
+      <p>For educational and research use. Only analyze files and systems you own or are authorised to analyze. Handle real malware samples in isolated environments and never commit them to this repository. Authorized testing only — written authorization is required before any assessment begins.</p>
+    </div>
+
+    <div class="section-foot">
+      CAU EDR — Download, Deploy & Kernel Feature Flags Guide · Styled on the Cyber Sec site theme (Sentinel Blue) · MIT Licensed
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

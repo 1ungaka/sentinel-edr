@@ -1,0 +1,11 @@
+# systemd-sysusers snippet for the cau package.
+#
+# The scan, daemon and update units run as User=cau/Group=cau, so a clean
+# install has to create that account before any of them can start. Debian's
+# postinst and the RPM %pre already do this; this is the equivalent for a
+# `make install` host and for the Arch package, both of which install it under
+# /usr/lib/sysusers.d so systemd's sysusers hook applies it at install time.
+#
+# The account is a system account with no home directory creation and no login
+# shell, matching the Debian postinst: a service user, not a person.
+u cau - "CAU EDR unprivileged service user" /var/lib/cau /usr/sbin/nologin

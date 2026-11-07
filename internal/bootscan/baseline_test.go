@@ -991,7 +991,7 @@ func TestParseRejectsWhatIsNotABaseline(t *testing.T) {
           "type"`, `"scheme": "zfs",
           "type"`),
 		"order without state": edit(`"boot_order_state": "present"`, `"boot_order_state": "absent"`),
-		"negative size":       edit(`"size": 512`, `"size": -1`),
+		"negative size":       edit(`"size": 8192`, `"size": -1`),
 		"overlong string":     edit(`"description": "debian"`, `"description": "`+strings.Repeat("A", maxBaselineLabel+1)+`"`),
 		"overlong signature":  edit(`"schema": 1`, `"schema": 1, "signature": "`+strings.Repeat("0", 200)+`"`),
 		"wpbt without table":  edit(`"pci_read": true`, `"pci_read": true, "wpbt": {"size_known": false}`),

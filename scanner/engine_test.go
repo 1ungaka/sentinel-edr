@@ -302,3 +302,89 @@ func TestEngineHostileFileDoesNotBreakBatch(t *testing.T) {
 		t.Error("ScanFile returned an empty result on hostile input")
 	}
 }
+
+// A YARA pass that errored or timed out judged only part of the file, so the
+// result must not be readable as a full scan of a clean file. A closed scanner
+// fails every scan: the error path and the timeout path meet there.
+func TestIncompleteYaraPassIsNotACleanVerdict(t *testing.T) {
+	const rule = "rule no_needle { strings: $n = \"CAU_NO_SUCH_BYTES_ANYWHERE\" condition: $n }"
+	ys, _, err := LoadYaraRuleFiles([]RuleSource{{Text: rule}}, WithWarnFunc(func(string, ...interface{}) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ys.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	path := writeTempFile(t, "partial.bin", []byte("plain bytes, nothing wrong with them"))
+	res, _ := (&Engine{Yara: ys}).ScanFile(path)
+	if res.Verdict != VerdictError || res.Error == nil {
+		t.Fatalf("verdict %v, err %v: a YARA pass that did not finish must not read as clean", res.Verdict, res.Error)
+	}
+	if !strings.Contains(strings.Join(res.Warnings, "\n"), "YARA:") {
+		t.Fatalf("the warning is the trace of what happened: %v", res.Warnings)
+	}
+	if res.Detected || len(res.YaraMatches) != 0 {
+		t.Fatalf("nothing matched, so no detection may be invented: %+v", res)
+	}
+
+	// The other side of the same rule: a pass that ran keeps its clean verdict.
+	ok, _, err := LoadYaraRuleFiles([]RuleSource{{Text: rule}}, WithWarnFunc(func(string, ...interface{}) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ok.Close()
+	res2, _ := (&Engine{Yara: ok}).ScanFile(path)
+	if res2.Verdict != VerdictClean || res2.Error != nil {
+		t.Fatalf("a YARA pass that ran on a clean file: verdict %v, err %v", res2.Verdict, res2.Error)
+	}
+}
+
+// Above the in-memory limit the digests come from one open of the path and
+// YARA's matches from a later one. A file replaced in between must be reported
+// as an incomplete scan, never as coherent evidence about one version.
+func TestFileReplacedBetweenHashAndYaraIsFlagged(t *testing.T) {
+	const needle = "CAU_SWAP_NEEDLE"
+	ys, _, err := LoadYaraRuleFiles([]RuleSource{{
+		Text: "rule swap_probe { strings: $n = \"" + needle + "\" condition: $n }",
+	}}, WithWarnFunc(func(string, ...interface{}) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ys.Close()
+
+	original := bytes.Repeat([]byte{0x20}, 8192)
+	want := hashBytes(original)
+	path := writeTempFile(t, "streamed.bin", original)
+
+	e := &Engine{Yara: ys, MaxInMemory: 4096}
+	swapped := false
+	e.beforeDetector = func(name string) {
+		if name != "yara" || swapped {
+			return
+		}
+		// The write happens on the detector goroutine, so the error is only
+		// visible here; a temp-directory write is not the thing under test.
+		swapped = true
+		_ = os.WriteFile(path, append(bytes.Repeat([]byte{0x20}, 4096), needle...), 0o644)
+	}
+	res, _ := e.ScanFile(path)
+	if !swapped {
+		t.Fatal("the swap never happened, so this proves nothing")
+	}
+
+	// The digests kept their version, which is exactly the mixing to prevent.
+	if res.SHA256 != want.sha256 || res.MD5 != want.md5 {
+		t.Errorf("hashes drifted from the version that was read first")
+	}
+	if res.Verdict != VerdictError || res.Error == nil {
+		t.Fatalf("verdict %v, err %v: hashes and matches may describe different versions", res.Verdict, res.Error)
+	}
+	if !strings.Contains(strings.Join(res.Warnings, "\n"), "changed while it was scanned") {
+		t.Fatalf("the report has to say what happened: %v", res.Warnings)
+	}
+	// YARA read the second version, so its matches are kept rather than dropped.
+	if got := ruleNames(res.YaraMatches); len(got) != 1 || got[0] != "swap_probe" {
+		t.Fatalf("YARA matches = %v, want swap_probe (the match must not be dropped)", got)
+	}
+}

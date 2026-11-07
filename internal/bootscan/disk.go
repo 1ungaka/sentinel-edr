@@ -20,6 +20,12 @@ const (
 	maxGPTEntries    = 1024
 	maxGPTEntrySize  = 4096
 	maxVBRPartitions = 128
+	// maxEBRChain bounds the extended boot record chain of an MBR disk: a
+	// container that holds more logical partitions than this leaves the rest
+	// unscanned, which a hostile image can otherwise turn into a chain that
+	// never ends. Four fewer than the boot-sector cap, so the primaries and
+	// the whole chain still fit.
+	maxEBRChain = maxVBRPartitions - 4
 	// bootAreaSectors is how much of the disk start is searched for boot-area
 	// text: the classic 63-sector pre-partition gap, rounded up.
 	bootAreaSectors = 64
@@ -186,6 +192,10 @@ func AnalyzeDisk(r io.ReaderAt, size int64) (*DiskReport, []Finding) {
 				"the disk has a GPT but its MBR carries no protective 0xEE entry", ""))
 		}
 	default:
+		// The logical partitions live in the extended boot record chain an
+		// extended container entry names, and their boot sectors are scanned
+		// like any primary's.
+		mbrParts = append(mbrParts, logicalPartitions(r, size, ss, mbrParts)...)
 		rep.Partitions = mbrParts
 		out = append(out, mbrFindings(mbr, mbrParts, totalSectors)...)
 	}
@@ -285,6 +295,62 @@ func parseMBR(s []byte) (*MBRInfo, []Partition) {
 	return m, parts
 }
 
+// mbrExtendedType reports whether an MBR entry type names an extended boot
+// record container: the chain of EBRs that holds the logical partitions. The
+// three spellings are the fixed-disk, the extended-LBA and the Linux
+// containers; a logical partition never carries one of them as its own type.
+func mbrExtendedType(t string) bool {
+	return t == "0x05" || t == "0x0f" || t == "0x85"
+}
+
+// logicalPartitions walks the extended boot record chain of every extended
+// container in the MBR and returns the logical partitions it holds. In each
+// EBR the first entry is the partition, relative to that EBR's own start, and
+// the second names the next EBR, relative to the container's. The chain is
+// bounded in depth and in total count, because a hostile image can make it
+// point at itself.
+func logicalPartitions(r io.ReaderAt, size, ss int64, primaries []Partition) []Partition {
+	var out []Partition
+	for _, p := range primaries {
+		if !mbrExtendedType(p.Type) || len(out) >= maxEBRChain {
+			continue
+		}
+		lba := p.StartLBA // the container itself holds the first EBR
+		for depth := 0; lba > 0 && depth < maxEBRChain && len(out) < maxEBRChain; depth++ {
+			off, ok := lbaOffset(lba, ss)
+			if !ok {
+				break
+			}
+			// The partition table of an EBR sits in the same place as the
+			// MBR's; the code ahead of it, where some loaders keep a second
+			// stage, is not read.
+			ebr := readAt(r, size, off, 512)
+			if ebr == nil {
+				break
+			}
+			e := ebr[446:462]
+			if typ := e[4]; typ != 0 {
+				out = append(out, Partition{
+					Index: len(out) + 5, Scheme: "mbr", Type: fmt.Sprintf("0x%02x", typ),
+					StartLBA: lba + uint64(binary.LittleEndian.Uint32(e[8:12])),
+					Sectors:  uint64(binary.LittleEndian.Uint32(e[12:16])),
+					Active:   e[0] == 0x80, ESP: typ == mbrTypeESP,
+				})
+			}
+			next := ebr[462:478]
+			if next[4] == 0 {
+				break // the last EBR in this chain
+			}
+			rel := uint64(binary.LittleEndian.Uint32(next[8:12]))
+			if rel == 0 {
+				break
+			}
+			lba = p.StartLBA + rel
+		}
+	}
+	return out
+}
+
 // loaderMarkers are message strings standard boot loaders carry in sector 0.
 var loaderMarkers = []struct{ marker, family string }{
 	{"GRUB ", "grub"},
@@ -337,7 +403,7 @@ func mbrFindings(m *MBRInfo, parts []Partition, totalSectors uint64) []Finding {
 func firstOverlap(parts []Partition) (a, b int, found bool) {
 	var ps []Partition
 	for _, p := range parts {
-		if p.Sectors == 0 || p.Type == "0x05" || p.Type == "0x0f" || p.Type == "0x85" || p.Type == fmt.Sprintf("0x%02x", mbrTypeGPT) {
+		if p.Sectors == 0 || mbrExtendedType(p.Type) || p.Type == fmt.Sprintf("0x%02x", mbrTypeGPT) {
 			continue
 		}
 		ps = append(ps, p)
@@ -467,6 +533,16 @@ func parseGPT(r io.ReaderAt, size, ss int64, totalSectors uint64) (*GPTInfo, []P
 		entries := readGPTEntries(r, size, ss, backup)
 		if entries != nil {
 			info.EntriesCRCValid = crc32.ChecksumIEEE(entries) == backup.entriesCRC
+		}
+		// The array behind the backup header is the only partition table this
+		// disk has left, so an unusable one is reported rather than replaced
+		// by whatever partitions could still be read out of it.
+		if !info.EntriesCRCValid {
+			detail := "the partition entry array does not match the CRC32 in the backup GPT header"
+			if entries == nil {
+				detail = "the partition entry array the backup GPT header points at is out of range or could not be read"
+			}
+			out = append(out, finding("gpt.entries-crc-invalid", "", detail, ""))
 		}
 		parts := gptPartitions(entries, backup)
 		info.Entries = len(parts)

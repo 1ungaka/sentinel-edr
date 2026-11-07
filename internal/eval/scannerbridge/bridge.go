@@ -459,10 +459,11 @@ var formatPasses = []struct {
 	{fusion.SourceTradecraft, func(e *scanner.Engine) { e.Tradecraft = true }},
 }
 
-// EnableFormatPasses switches on every pass PassDetectors reports, plus the
-// encoded-executable pass: the set the CLI enables by default.
+// EnableFormatPasses switches on every pass PassDetectors reports. It does
+// not touch the encoded-executable pass: that one has its own adapter and is
+// enabled by the caller through Engine.EncChain, so the fusion engine's
+// source set matches the standalone detectors under every flag combination.
 func EnableFormatPasses(e *scanner.Engine) {
-	e.EncChain = true
 	for _, p := range formatPasses {
 		p.enable(e)
 	}

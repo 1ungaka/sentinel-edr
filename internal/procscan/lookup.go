@@ -32,6 +32,7 @@ func Lookup(procRoot string, pid int) (Process, bool) {
 	}
 	return Process{
 		startTicks: rp.startTicks,
+		StartTicks: rp.startTicks,
 		PID:        rp.pid,
 		PPID:       rp.ppid,
 		Comm:       rp.comm,

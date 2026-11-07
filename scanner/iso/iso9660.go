@@ -288,14 +288,23 @@ func (im *image) walk(data []byte, rootLBA, rootLen uint32) {
 					})
 				}
 
-				if isDir && job.depth+1 <= maxDepth && !visited[extent] && len(queue) < maxDirsQueued {
-					visited[extent] = true
-					queue = append(queue, dirJob{
-						lba:      extent,
-						length:   dataLen,
-						depth:    job.depth + 1,
-						inHidden: effHidden,
-					})
+				if isDir && job.depth+1 <= maxDepth && !visited[extent] {
+					if len(queue) < maxDirsQueued {
+						visited[extent] = true
+						queue = append(queue, dirJob{
+							lba:      extent,
+							length:   dataLen,
+							depth:    job.depth + 1,
+							inHidden: effHidden,
+						})
+					} else {
+						// The directory record itself is retained as an entry, but
+						// its extent is not queued for traversal once the queue is
+						// full: the subtree beyond it would otherwise silently
+						// disappear from the inventory, so the enumeration is
+						// marked partial.
+						im.warn("queued-directory cap reached: later directory subtrees not enumerated")
+					}
 				}
 			}
 		}

@@ -27,24 +27,30 @@
 //   - Malicious command lines: the process argv run through the same install-
 //     script vectors the file scanner uses (reverse shells, curl|bash, droppers).
 //   - Being traced: a non-zero TracerPid, surfaced as context (T1055.008).
-//   - Network shells: an interpreter whose stdin and stdout are both a live TCP
-//     connection, which is what a reverse or bind shell is whatever its argv
-//     says (T1059.004).
+//   - Network shells: an interpreter whose stdin and stdout are both the same
+//     live TCP connection, which is what a reverse or bind shell is whatever
+//     its argv says (T1059.004). Two different connections instead are reported
+//     as context: a harness or multiplexer leaves that shape, and nothing is
+//     stopped on it alone.
 //   - Pipe relays: an interpreter fed by, and writing to, a network tool through
 //     pipes, the `mkfifo | sh | nc` shape that puts no socket on the shell.
 //   - Setuid shells: an interpreter whose effective uid differs from its real
 //     uid, what a SUID GTFOBin leaves behind (T1548.001).
 //   - Anonymous executable memory: a writable and executable mapping with no
 //     backing file, context only because JIT runtimes do this too (T1055).
-//   - Kernel events: what the cau-kernel exec guard recorded about a live process.
+//   - Kernel events: what the cau-kernel exec guard recorded about a live
+//     process, matched on the start time when the event carries one so a
+//     process that reused the PID does not inherit the finding.
 //
 // Scanning stays read-only. Acting on a result is a separate, explicit step:
 // see Respond.
 package procscan
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,6 +70,9 @@ const (
 	maxMapsBytes   = 4 << 20
 	maxCmdlineByte = 64 << 10
 	maxEnvironByte = 64 << 10
+	// maxMappedEntries caps the distinct mapped pathnames kept from one maps
+	// file, on top of the byte cap above.
+	maxMappedEntries = 4096
 )
 
 // ATT&CK technique ids.
@@ -99,6 +108,11 @@ type Process struct {
 	Cmdline  string    `json:"cmdline,omitempty"`
 	Score    int       `json:"score"`
 	Findings []Finding `json:"findings,omitempty"`
+	// StartTicks is the exported kernel start time: it is the only thing that
+	// tells this PID from the next process that held the number, so a caller
+	// holding evidence recorded earlier (an exec-guard event, say) can check
+	// the evidence is still about this process before acting on it.
+	StartTicks uint64 `json:"start_ticks,omitempty"`
 }
 
 // Result is the whole-scan outcome.
@@ -157,7 +171,8 @@ type rawProc struct {
 	libpath    string   // LD_LIBRARY_PATH from environ
 	tracerPID  int
 	anonRWX    int    // anonymous rwx mappings
-	stdioPeer  string // TCP peer of stdin+stdout, "" when they are not a socket
+	stdioPeer  string // the one TCP peer both descriptors are wired to, "" when they are not
+	stdioSplit string // the two different peers of stdin and stdout, "" when they agree
 	stdin      string // /proc/<pid>/fd/0 target
 	stdout     string // /proc/<pid>/fd/1 target
 	stdinFIFO  bool   // stdin is a pipe or a named pipe
@@ -165,6 +180,9 @@ type rawProc struct {
 	hasUID     bool
 	ruid       int
 	euid       int
+	// partial names the fields this process's reads hit a cap on, so the scan
+	// can report what was left unread instead of presenting the rest as whole.
+	partial map[string]bool
 }
 
 // knownSystemNames are process names that attackers impersonate; a process
@@ -179,6 +197,8 @@ var knownSystemNames = map[string]bool{
 }
 
 // Scan walks the process table under ProcRoot and returns the flagged processes.
+// A read that stopped at one of the byte caps is reported as a warning naming
+// the process, so a partial look at a command line is never read as a whole one.
 func Scan(opts Options) *Result {
 	root := opts.procRoot()
 	th := opts.threshold()
@@ -206,6 +226,7 @@ func Scan(opts Options) *Result {
 	readable := make([]bool, len(pids))
 	parallel.For(len(pids), 0, func(i int) { raw[i], readable[i] = readProc(root, pids[i]) })
 	procs := make([]rawProc, 0, len(pids))
+	partial := map[string]string{}
 	for i := range raw {
 		if !readable[i] {
 			res.Unreadable++
@@ -213,6 +234,18 @@ func Scan(opts Options) *Result {
 		}
 		res.Scanned++
 		procs = append(procs, raw[i])
+		for field := range raw[i].partial {
+			if _, seen := partial[field]; !seen {
+				partial[field] = fieldSample(raw[i], field)
+			}
+		}
+	}
+	// A read that stopped at a cap left something unread, and a report that
+	// presents what was read as the whole is a coverage gap with no marker on
+	// it. Each capped field is named once, with a process it happened to.
+	for _, field := range slices.Sorted(maps.Keys(partial)) {
+		res.Warnings = append(res.Warnings,
+			"partial scan: "+partial[field]+" hit its read cap, so the rest of its "+field+" was not inspected")
 	}
 	markPipeRelays(root, procs)
 	kernel := indexKernelEvents(opts.KernelEvents, res)
@@ -286,9 +319,22 @@ func cmdlineFindings(cmdline string) []Finding {
 	return out
 }
 
+// fieldSample names one process whose field hit a read cap, for the warning
+// that says the scan was partial.
+func fieldSample(rp rawProc, field string) string {
+	name := rp.comm
+	if name == "" {
+		name = "pid " + strconv.Itoa(rp.pid)
+	} else {
+		name = name + " (pid " + strconv.Itoa(rp.pid) + ")"
+	}
+	return name + "'s " + field
+}
+
 func detect(rp rawProc, th int) Process {
 	p := Process{startTicks: rp.startTicks, PID: rp.pid, PPID: rp.ppid, Comm: rp.comm, Cmdline: rp.cmdline}
 	p.Exe = rp.exeTarget
+	p.StartTicks = rp.startTicks
 
 	var out []Finding
 
@@ -333,6 +379,15 @@ func detect(rp rawProc, th int) Process {
 		out = append(out, Finding{Class: "procscan.netshell.socket-stdio", Score: 9, Technique: techUnixShell,
 			Detail:   "an interpreter's stdin and stdout are a live TCP connection (reverse or bind shell)",
 			Evidence: "peer " + rp.stdioPeer})
+	}
+	// The same two descriptors on two different peers: reported, because it is
+	// the shape a multiplexer or a harness leaves, and never conclusive, because
+	// a shell answered to somewhere it was not driven from is an ordinary
+	// process. Nothing may be stopped on this alone.
+	if rp.stdioSplit != "" {
+		out = append(out, Finding{Class: "procscan.netshell.stdio-split", Score: 2, Technique: techUnixShell,
+			Detail:   "an interpreter's stdin and stdout are live TCP connections to two different peers, not one shared connection",
+			Evidence: rp.stdioSplit})
 	}
 
 	if rp.pipeRelay != "" {

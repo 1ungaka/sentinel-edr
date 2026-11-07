@@ -18,6 +18,7 @@ package persist
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -79,6 +80,11 @@ type Result struct {
 	Checked   int       `json:"files_checked"`
 	Threshold int       `json:"threshold"`
 	Findings  []Finding `json:"findings,omitempty"`
+	// Incomplete names the paths the audit could not read. A missing path is
+	// not one: most audited paths exist only on hosts that use them, and their
+	// absence is the documented skip. A path listed here was found but not
+	// read, so it is unverified rather than clean.
+	Incomplete []string `json:"incomplete,omitempty"`
 }
 
 // Flagged returns the findings at or above the threshold.
@@ -105,15 +111,26 @@ type Options struct {
 type audit struct {
 	root string
 
-	mu      sync.Mutex
-	checked int
-	out     []Finding
-	links   map[string]bool // symlinks already judged
+	mu         sync.Mutex
+	checked    int
+	out        []Finding
+	links      map[string]bool // symlinks already judged
+	unreadable map[string]bool // paths a check tried and failed to read
+}
+
+// noteUnreadable records a path a check could not read, so the result can report
+// incomplete coverage instead of presenting an unread location as a clean one.
+// Only a path that is merely absent is skipped: that is the documented skip for
+// paths a host does not use, not a gap in the audit.
+func (a *audit) noteUnreadable(rel string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.unreadable[rel] = true
 }
 
 // Scan runs every check.
 func Scan(opts Options) *Result {
-	a := &audit{root: opts.Root, links: map[string]bool{}}
+	a := &audit{root: opts.Root, links: map[string]bool{}, unreadable: map[string]bool{}}
 	if a.root == "" {
 		a.root = "/"
 	}
@@ -160,12 +177,19 @@ func Scan(opts Options) *Result {
 		}
 		return a.out[i].Evidence < a.out[j].Evidence
 	})
-	return &Result{Root: a.root, Checked: a.checked, Threshold: th, Findings: a.out}
+
+	var incomplete []string
+	for rel := range a.unreadable {
+		incomplete = append(incomplete, rel)
+	}
+	sort.Strings(incomplete)
+	return &Result{Root: a.root, Checked: a.checked, Threshold: th, Findings: a.out, Incomplete: incomplete}
 }
 
 // read returns a regular file's lines, or nil when it is missing, unreadable, or
 // too large to be a configuration file. A symlink is judged by noteSymlink and
-// not read.
+// not read. A path that exists but cannot be opened or scanned is recorded as
+// unreadable: no result from it is a coverage gap, not a clean file.
 func (a *audit) read(rel string) []string {
 	p := filepath.Join(a.root, rel)
 	if fi, err := os.Lstat(p); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
@@ -174,6 +198,9 @@ func (a *audit) read(rel string) []string {
 	}
 	f, fi, err := safefs.OpenNoFollow(p)
 	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			a.noteUnreadable(rel)
+		}
 		return nil
 	}
 	defer f.Close()
@@ -195,14 +222,23 @@ func (a *audit) read(rel string) []string {
 	for s.Scan() {
 		lines = append(lines, s.Text())
 	}
+	// A read that stopped early leaves the rest of the file unseen, so the
+	// lines returned are not the file.
+	if err := s.Err(); err != nil {
+		a.noteUnreadable(rel)
+	}
 	return lines
 }
 
 // list returns the regular files directly under a directory, relative to root.
-// A symlink among them is judged by noteSymlink.
+// A symlink among them is judged by noteSymlink. A directory that is there but
+// cannot be read is recorded as unreadable: its contents are unknown, not empty.
 func (a *audit) list(rel string) []string {
 	entries, err := os.ReadDir(filepath.Join(a.root, rel))
 	if err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			a.noteUnreadable(rel)
+		}
 		return nil
 	}
 	var out []string
@@ -429,6 +465,11 @@ func (a *audit) checkSystemd(accounts []account) {
 		}
 		entries, err := os.ReadDir(filepath.Join(a.root, d))
 		if err != nil {
+			// The drop-in directories below it stay unseen, so this is the same
+			// coverage gap a.list reports.
+			if !errors.Is(err, fs.ErrNotExist) {
+				a.noteUnreadable(d)
+			}
 			continue
 		}
 		for _, e := range entries {
@@ -643,6 +684,11 @@ func (a *audit) checkCapabilities() {
 	for _, d := range interpreterDirs {
 		entries, err := os.ReadDir(filepath.Join(a.root, d))
 		if err != nil {
+			// An interpreter directory that is there but unreadable hides its
+			// programs from the check.
+			if !errors.Is(err, fs.ErrNotExist) {
+				a.noteUnreadable(d)
+			}
 			continue
 		}
 		for _, e := range entries {
@@ -700,8 +746,17 @@ func (a *audit) checkSUID() {
 	walked := 0
 	for _, d := range []string{"tmp", "var/tmp", "dev/shm"} {
 		base := filepath.Join(a.root, d)
-		_ = filepath.WalkDir(safefs.WalkRoot(base), func(p string, e fs.DirEntry, err error) error {
+		walkedRoot := safefs.WalkRoot(base)
+		_ = filepath.WalkDir(walkedRoot, func(p string, e fs.DirEntry, err error) error {
 			if err != nil {
+				// A root that is not there is the documented skip, so one
+				// default list works across hosts. Any other error leaves a
+				// subtree nothing looked at, which is a coverage gap.
+				if p != walkedRoot || !errors.Is(err, fs.ErrNotExist) {
+					if rel, relErr := filepath.Rel(a.root, p); relErr == nil {
+						a.noteUnreadable(rel)
+					}
+				}
 				return nil
 			}
 			if walked++; walked > maxWalk {

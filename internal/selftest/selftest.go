@@ -40,7 +40,23 @@ import (
 // ManifestSchema 2 added Pins. A manifest read from disk keeps the schema it
 // was written with, and SigningBytes emits pins only when there are any, so a
 // signature made over a v1 manifest still verifies byte for byte.
-const ManifestSchema = 2
+// ManifestSchema 3 also signs each entry's Path, which v2 left out: an editor
+// without the key could redirect an entry to a clean copy of a resource while
+// keeping the signature valid. SigningBytes emits the path only from v3 on, so
+// a v2 signature still verifies byte for byte — and a v2 manifest keeps its
+// documented weakness, which is why ReadManifest accepts it only as legacy.
+//
+// Adding a resource to record (the canary manifest, say) needs no new schema:
+// entries are signed as data, so a baseline recorded before that resource
+// existed simply does not cover it, and a build that predates it verifies the
+// entries it knows and ignores the rest.
+const ManifestSchema = 3
+
+// ManifestSchemaLegacy is the oldest schema still readable. Its signatures do
+// not cover the resource paths, so a caller that needs a path to be
+// authenticated has to re-record the baseline with the current schema (or
+// refuse the manifest); Verify still checks the digest at the recorded path.
+const ManifestSchemaLegacy = 2
 
 // Pin names. A pin is signed configuration that is not a file digest.
 const (
@@ -255,16 +271,27 @@ func digestTree(root string) (string, int, error) {
 }
 
 // SigningBytes is the canonical, signature-free serialization the Ed25519
-// signature covers: the schema and every entry's name|sha256|isdir, sorted.
+// signature covers: the schema and every entry's name|path|sha256|isdir, sorted.
 // It deliberately excludes CreatedAt and the Signature field so re-recording the
 // timestamp does not invalidate a signature and the signature cannot cover
 // itself.
+//
+// The path has been signed since schema 3. Leaving it out meant a manifest
+// editor without the signing key could point an entry at a clean copy of a
+// resource — the digest still matched, the signature still verified, and the
+// active resource drifted unnoticed. A schema-2 manifest is serialized without
+// the path so an existing signature keeps verifying byte for byte; that is the
+// documented legacy mode, not a choice to keep making.
 func (m Manifest) SigningBytes() []byte {
 	entries := append([]Entry(nil), m.Entries...)
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	var b strings.Builder
 	fmt.Fprintf(&b, "cau-selftest/v%d\n", m.Schema)
 	for _, e := range entries {
+		if m.Schema >= ManifestSchema {
+			fmt.Fprintf(&b, "%s|%s|%s|%t\n", e.Name, e.Path, e.SHA256, e.IsDir)
+			continue
+		}
 		fmt.Fprintf(&b, "%s|%s|%t\n", e.Name, e.SHA256, e.IsDir)
 	}
 	// Pins are emitted only when present, so the bytes signed for a manifest
@@ -313,22 +340,50 @@ type Drift struct {
 
 // Verify recomputes digests for the baseline's resources and returns the drift.
 // A nil slice means every resource matches. Resources are matched by name.
-func Verify(baseline Manifest) ([]Drift, error) {
+//
+// It verifies the paths the manifest recorded: for a caller that has overrides
+// of its own (an operator who moved a resource, and says where to), use
+// VerifyWithOverrides.
+func Verify(baseline Manifest) ([]Drift, error) { return VerifyWithOverrides(baseline, nil) }
+
+// VerifyWithOverrides is Verify with per-resource path overrides, keyed by the
+// resource's name (its role in the baseline). An override replaces the recorded
+// path for that resource only, so a resource an operator moved is verified where
+// it now lives instead of being reported missing where it used to.
+//
+// An override that names no entry in the baseline is an error rather than a
+// silent skip: the caller asked for a resource the baseline does not cover, and
+// checking something else in its place would report a result about a file the
+// signature says nothing about. A resource absent on disk (empty path) is fine —
+// the baseline's own path is used, or the entry is reported as usual.
+func VerifyWithOverrides(baseline Manifest, overrides map[string]string) ([]Drift, error) {
+	for name, path := range overrides {
+		if path == "" {
+			continue // not given, so nothing to override
+		}
+		if _, ok := baseline.Lookup(name); !ok {
+			return nil, fmt.Errorf("selftest: no baseline entry named %q to override; re-record the baseline to cover it", name)
+		}
+	}
 	var drift []Drift
 	for _, want := range baseline.Entries {
-		info, err := os.Stat(want.Path)
+		path := want.Path
+		if p, ok := overrides[want.Name]; ok && p != "" {
+			path = p
+		}
+		info, err := os.Stat(path)
 		if errors.Is(err, os.ErrNotExist) {
-			drift = append(drift, Drift{Name: want.Name, Reason: "resource missing on disk: " + want.Path})
+			drift = append(drift, Drift{Name: want.Name, Reason: "resource missing on disk: " + path})
 			continue
 		}
 		if err != nil {
-			return nil, fmt.Errorf("selftest: stat %s: %w", want.Path, err)
+			return nil, fmt.Errorf("selftest: stat %s: %w", path, err)
 		}
 		var got string
 		if info.IsDir() {
-			got, _, err = digestTree(want.Path)
+			got, _, err = digestTree(path)
 		} else {
-			got, err = digestFile(want.Path)
+			got, err = digestFile(path)
 		}
 		if err != nil {
 			return nil, err
@@ -363,6 +418,11 @@ func WriteManifest(path string, m Manifest) error {
 const maxManifestBytes = 16 << 20
 
 // ReadManifest loads a manifest.
+//
+// A schema-2 manifest is accepted for backward compatibility and verified as
+// the legacy mode it is: its signature does not cover the resource paths, so a
+// caller that needs the path authenticated must re-record with this build (or
+// refuse the manifest) rather than trusting what it reads.
 func ReadManifest(path string) (Manifest, error) {
 	data, err := safefs.ReadFile(path, maxManifestBytes)
 	if err != nil {
@@ -372,7 +432,7 @@ func ReadManifest(path string) (Manifest, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return Manifest{}, fmt.Errorf("selftest: parse manifest: %w", err)
 	}
-	if m.Schema != ManifestSchema {
+	if m.Schema != ManifestSchema && m.Schema != ManifestSchemaLegacy {
 		return Manifest{}, fmt.Errorf("selftest: manifest schema %d is not supported (want %d)", m.Schema, ManifestSchema)
 	}
 	return m, nil

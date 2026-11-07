@@ -38,6 +38,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/s-b-repo/cau/internal/safefs"
@@ -73,6 +74,11 @@ var (
 	ErrExists = errors.New("quarantine: destination already exists")
 	// ErrTooLarge is returned when a file exceeds maxEntrySize.
 	ErrTooLarge = errors.New("quarantine: file exceeds the entry size cap")
+	// ErrPathChanged is returned when the path no longer names the file whose
+	// bytes were read into the vault. Nothing is unlinked: the bytes stored came
+	// from one file and the name now points at another, so removing it would
+	// destroy whatever an attacker put there instead.
+	ErrPathChanged = errors.New("quarantine: the path no longer names the file that was read")
 )
 
 // Entry is one quarantined file's record. It is the public, JSON-serialized
@@ -164,10 +170,22 @@ func (s *Store) Dir() string { return s.dir }
 // original bytes are read, masked, and written to the vault; on success the
 // original is removed unless keepOriginal is set. A failure at any step leaves
 // the original in place and writes nothing to the index.
+//
+// A final-component symlink is resolved to the file it names, so a file a scan
+// reached through a link is quarantined as that file and the entry records it,
+// rather than refused and left in place.
 func (s *Store) Quarantine(path, threatName string, keepOriginal bool) (Entry, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return Entry{}, fmt.Errorf("quarantine: resolve path: %w", err)
+	}
+	// A scan follows symlinks, so the file it flags is often named by a link
+	// and the link is what a no-follow read refuses. The link is resolved here
+	// so the vault takes the bytes the detection was about, and the entry names
+	// the file itself.
+	abs, err = resolveQuarantinePath(abs)
+	if err != nil {
+		return Entry{}, err
 	}
 	// The path is attacker-writable and this runs privileged: a link swapped in
 	// after an lstat would pull /etc/shadow into the vault. The open refuses it.
@@ -215,7 +233,7 @@ func (s *Store) Quarantine(path, threatName string, keepOriginal bool) (Entry, e
 	}
 
 	if !keepOriginal {
-		if err := os.Remove(abs); err != nil {
+		if err := removeOriginal(abs, info, int64(len(data))); err != nil {
 			// The vault copy is committed; report the removal failure so the
 			// operator knows the live copy is still there, but do not unwind
 			// the vault entry (that would lose the only integrity-checked copy).
@@ -223,6 +241,86 @@ func (s *Store) Quarantine(path, threatName string, keepOriginal bool) (Entry, e
 		}
 	}
 	return e, nil
+}
+
+// removeOriginal unlinks the file at abs, but only after the path has been shown
+// to still name the bytes that were read. The read went through a descriptor a
+// swap could not reach and that descriptor is already closed, so removing the
+// path on the strength of that read alone can unlink a different file an
+// attacker put there in between: the response runs privileged over directories
+// anyone can write to. The identity check is what refuses; the descriptor-
+// relative unlink underneath is what keeps a swapped-in symlink from being
+// followed, because unlinkat removes the name and never its target.
+//
+// Both the check and the removal resolve against one descriptor for the
+// directory holding the name: the check is an lstat against that descriptor
+// and the removal is an unlinkat against it, so the two cannot disagree about
+// which directory they looked in, and a name swapped for a link in between is
+// removed as a link or left alone, never followed.
+//
+// It is a variable so a test can swap the path between Quarantine's read and its
+// unlink, the race this refuses, which cannot be arranged any other way.
+var removeOriginal = func(abs string, read os.FileInfo, size int64) error {
+	dir, base := filepath.Dir(abs), filepath.Base(abs)
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	fi, err := root.Lstat(base)
+	if err != nil {
+		return err
+	}
+	if !sameFile(fi, read, size) {
+		return fmt.Errorf("%w: %s changed after it was read", ErrPathChanged, abs)
+	}
+	return root.Remove(base)
+}
+
+// sameFile reports whether fi describes the file that was read: the same inode
+// on the same device, the size the read actually returned, and an untouched
+// modification time. A name swapped for a link, a hard link to another file, or
+// a rewrite in place all fail one of those.
+func sameFile(fi, read os.FileInfo, size int64) bool {
+	if !fi.Mode().IsRegular() {
+		return false
+	}
+	return os.SameFile(fi, read) && fi.Size() == size && fi.ModTime().Equal(read.ModTime())
+}
+
+// resolveQuarantinePath returns the path whose bytes the vault will store: the
+// path itself, or the file it names when the final component is a symlink.
+// Refusing the link instead would leave the file the detection was about in
+// place — auto-quarantine would warn and continue, and the requested prevention
+// would not have happened.
+//
+// The link is resolved before the read, because the read is deliberately a
+// no-follow one: a path reached through a link is quarantined as its target,
+// and only the target is ever unlinked. A link that resolves nowhere fails
+// loudly rather than silently quarantining nothing.
+//
+// Resolving a link is also the one way a path under a writable directory can
+// name /etc, so the target is checked against the same system-configuration
+// policy the correlation layer applies before it will ask for a quarantine:
+// a cron table, PAM stack or sudoers fragment is never moved out of /etc by
+// machine, however it was reached.
+func resolveQuarantinePath(abs string) (string, error) {
+	fi, err := os.Lstat(abs)
+	if err != nil {
+		return "", fmt.Errorf("quarantine: resolve path: %w", err)
+	}
+	target := abs
+	if fi.Mode()&os.ModeSymlink != 0 {
+		target, err = filepath.EvalSymlinks(abs)
+		if err != nil {
+			return "", fmt.Errorf("quarantine: resolve link: %w", err)
+		}
+	}
+	clean := filepath.Clean(target)
+	if clean == "/etc" || strings.HasPrefix(clean, "/etc/") {
+		return "", fmt.Errorf("quarantine: %s is system configuration, which is never quarantined: it stays an alert for a human", clean)
+	}
+	return target, nil
 }
 
 // Restore writes entry id back to dest. The masked blob's digest is verified

@@ -943,14 +943,20 @@ func (c config) buildDocument(in Input) Document {
 	}
 
 	byPath := in.HeuristicsByPath()
-	results := make(map[string]scanner.ScanResult, len(in.Results))
-	for _, res := range in.Results {
-		// Last one wins, mirroring HeuristicsByPath.
-		results[res.FilePath] = res
+	// Indexed rather than copied: the document is assembled for a whole tree at
+	// once, and holding a second copy of every ScanResult by value (the map this
+	// used to be) doubles the peak for no gain over the index.
+	at := make(map[string]int, len(in.Results))
+	for i, res := range in.Results {
+		at[res.FilePath] = i // last one wins, mirroring HeuristicsByPath
 	}
 
 	for _, p := range in.AllPaths() {
-		res, hasResult := results[p]
+		var res scanner.ScanResult
+		var hasResult bool
+		if i, ok := at[p]; ok {
+			res, hasResult = in.Results[i], true
+		}
 		h, hasHeur := byPath[p]
 		var hp *scanner.HeuristicResult
 		if hasHeur {

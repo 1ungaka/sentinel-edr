@@ -144,14 +144,21 @@ type scriptSource struct {
 // returns a finding per distinct indicator hit. A known-bad IP/domain/URL in an
 // install script that runs as root is a strong, high-weight signal. Feed hits
 // de-duplicate across scripts by indicator value.
+//
+// MatchTextReportsTruncation examines a fixed number of URL/IP/domain
+// candidates per body. When a script overflows that cap a listed indicator
+// after the cut is not examined, so the truncation is reported here as its own
+// low-weight finding rather than the package looking cleanly matched.
 func matchIntel(feed *intel.Feed, scripts []scriptSource) []Finding {
 	if feed == nil {
 		return nil
 	}
 	seen := make(map[string]bool)
 	var out []Finding
+	truncReported := false
 	for _, s := range scripts {
-		for _, h := range feed.MatchText(s.body) {
+		hits, truncated := feed.MatchTextReportsTruncation(s.body)
+		for _, h := range hits {
 			if seen[h.Value] {
 				continue
 			}
@@ -166,6 +173,15 @@ func matchIntel(feed *intel.Feed, scripts []scriptSource) []Finding {
 				Technique: techIngressTool,
 				Detail:    "an install script references a known-bad " + string(h.Kind) + " from the abuse-intel feed (" + label + ")",
 				Evidence:  s.name + ": " + h.Value,
+			})
+		}
+		if truncated && !truncReported {
+			truncReported = true
+			out = append(out, Finding{
+				Class:    "linuxpkg.intel.truncated",
+				Score:    2,
+				Detail:   "an install script had more URL/IP/domain candidates than the feed matcher scans, so a listed indicator after the cut may have been missed",
+				Evidence: s.name + ": feed match truncated at its candidate cap",
 			})
 		}
 	}

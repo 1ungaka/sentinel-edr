@@ -52,6 +52,9 @@ type Feed struct {
 	urls    map[string]string
 	hashes  map[string]string
 	cidrs   []cidrEntry
+	// cidrSet records the canonical networks already in cidrs, so re-applying
+	// an overlapping feed cannot grow the slice with duplicates.
+	cidrSet map[string]bool
 	source  string
 	skipped int
 }
@@ -68,6 +71,7 @@ func New() *Feed {
 		domains: map[string]string{},
 		urls:    map[string]string{},
 		hashes:  map[string]string{},
+		cidrSet: map[string]bool{},
 	}
 }
 
@@ -86,15 +90,22 @@ func Load(path string) (*Feed, bool, error) {
 	return feed, err == nil, err
 }
 
-const maxFeedBytes = 128 << 20
+// maxFeedBytes caps how much of a feed is read. It is a var so a test can lower
+// it; a feed longer than the cap is refused rather than returned as a complete
+// partial feed whose tail was silently dropped.
+var maxFeedBytes = 128 << 20
 
 // Parse reads indicators from r. Lines are `value`, `value|label`, or
 // `type|value|label`; blank lines and `#` comments are skipped. A bare value is
 // auto-classified by shape. Malformed lines are counted, never fatal.
+//
+// A feed longer than maxFeedBytes is an error: the limit may have cut the
+// stream short, and every indicator after the cut would otherwise be missing
+// from a feed that still looked complete.
 func Parse(r io.Reader, source string) (*Feed, error) {
 	feed := New()
 	feed.source = source
-	sc := bufio.NewScanner(io.LimitReader(r, maxFeedBytes))
+	sc := bufio.NewScanner(io.LimitReader(r, int64(maxFeedBytes)))
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -105,7 +116,17 @@ func Parse(r io.Reader, source string) (*Feed, error) {
 			feed.skipped++
 		}
 	}
-	return feed, sc.Err()
+	if err := sc.Err(); err != nil {
+		return feed, err
+	}
+	// The limit may have stopped the scan mid-stream. One more byte from the
+	// source proves there is a tail this scan never saw, so refuse the feed
+	// instead of saving a truncation as a complete one.
+	var probe [1]byte
+	if n, _ := io.ReadFull(r, probe[:]); n > 0 {
+		return feed, fmt.Errorf("feed %s is larger than the %d byte limit, so it is refused rather than saved as a truncated feed", source, maxFeedBytes)
+	}
+	return feed, nil
 }
 
 // Add inserts one line. Returns false if it could not be classified.
@@ -139,7 +160,7 @@ func (f *Feed) Add(line string) bool {
 		if err != nil {
 			return false
 		}
-		f.cidrs = append(f.cidrs, cidrEntry{n, label})
+		f.addCIDR(n, label)
 	case KindIP:
 		f.ips[value] = label
 	case KindDomain:
@@ -148,6 +169,26 @@ func (f *Feed) Add(line string) bool {
 		return false
 	}
 	return true
+}
+
+// addCIDR records a network once. Unlike the map-backed indicator kinds, CIDRs
+// were appended without deduplication, so re-applying an overlapping feed (a
+// repeated `feed update`, or one feed that lists the same range twice) grew the
+// saved cache with duplicates, and every IP candidate scanned them all
+// linearly. Containment is deliberately not merged: a more-specific range keeps
+// its own label, and collapsing it into a broad parent would drop a distinct
+// entry. net.ParseCIDR has already masked value, so n.String() is the canonical
+// spelling two spellings of the same range collapse onto.
+func (f *Feed) addCIDR(n *net.IPNet, label string) {
+	if f.cidrSet == nil {
+		f.cidrSet = map[string]bool{}
+	}
+	key := n.String()
+	if f.cidrSet[key] {
+		return
+	}
+	f.cidrSet[key] = true
+	f.cidrs = append(f.cidrs, cidrEntry{n, label})
 }
 
 func classify(v string) Kind {
@@ -221,7 +262,13 @@ func (f *Feed) Merge(other *Feed) int {
 	for k, v := range other.hashes {
 		f.hashes[k] = v
 	}
-	f.cidrs = append(f.cidrs, other.cidrs...)
+	// CIDRs are deduplicated through addCIDR, so a range the cache already holds
+	// (by its canonical masked spelling) adds nothing. Without this a repeated
+	// `feed update`, or one feed listing a range twice, grew the saved cache
+	// with duplicates while every IP candidate scanned the whole slice.
+	for _, c := range other.cidrs {
+		f.addCIDR(c.net, c.label)
+	}
 	return f.Count() - before
 }
 
@@ -259,11 +306,45 @@ var (
 	reDomain = regexp.MustCompile(`\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b`)
 )
 
+// Candidate caps for one MatchText pass. A script or command line can carry a
+// great many ordinary URLs, IP literals and domains ahead of the one listed
+// indicator, so the caps are high enough that a real body never reaches them,
+// and never silent: MatchTextReportsTruncation reports when one was reached, so
+// an indicator sitting after the cut is a reported gap rather than a clean miss.
+const (
+	maxURLCandidates    = 4096
+	maxIPCandidates     = 4096
+	maxDomainCandidates = 16384
+)
+
+// capped returns the candidates worth examining for one kind, and whether text
+// held more of them than the cap. It reads one match past the cap so a body with
+// exactly limit candidates is not reported as truncated; that extra match is
+// sliced off and never examined.
+func capped(re *regexp.Regexp, text string, limit int) ([]string, bool) {
+	got := re.FindAllString(text, limit+1)
+	if len(got) > limit {
+		return got[:limit], true
+	}
+	return got, false
+}
+
 // MatchText extracts URLs, IPs and domains from arbitrary text and returns the
 // ones present in the feed. Membership-only: unknown indicators are ignored.
+// Truncation is not reported; use MatchTextReportsTruncation when the caller
+// must know that a candidate cap was reached.
 func (f *Feed) MatchText(text string) []Hit {
+	hits, _ := f.MatchTextReportsTruncation(text)
+	return hits
+}
+
+// MatchTextReportsTruncation is MatchText plus an honest truncation flag: it
+// reports true when text held more URL, IP-literal or domain candidates than
+// the scan examined, so a listed indicator after the cut may have been missed.
+// Callers surface it instead of treating an empty result as a complete check.
+func (f *Feed) MatchTextReportsTruncation(text string) ([]Hit, bool) {
 	if f == nil || f.Count() == 0 || text == "" {
-		return nil
+		return nil, false
 	}
 	seen := map[string]bool{}
 	var out []Hit
@@ -274,7 +355,8 @@ func (f *Feed) MatchText(text string) []Hit {
 			out = append(out, h)
 		}
 	}
-	for _, u := range reURL.FindAllString(text, 256) {
+	urls, truncURL := capped(reURL, text, maxURLCandidates)
+	for _, u := range urls {
 		uu := strings.ToLower(strings.TrimRight(u, "/.,)\""))
 		if lbl, ok := f.urls[uu]; ok {
 			emit(Hit{KindURL, uu, lbl})
@@ -285,17 +367,19 @@ func (f *Feed) MatchText(text string) []Hit {
 			}
 		}
 	}
-	for _, ip := range reIPlit.FindAllString(text, 256) {
+	ips, truncIP := capped(reIPlit, text, maxIPCandidates)
+	for _, ip := range ips {
 		if lbl, k, ok := f.matchHost(ip); ok {
 			emit(Hit{k, ip, lbl})
 		}
 	}
-	for _, d := range reDomain.FindAllString(text, 512) {
+	domains, truncDomain := capped(reDomain, text, maxDomainCandidates)
+	for _, d := range domains {
 		if lbl, ok := f.matchDomain(strings.ToLower(d)); ok {
 			emit(Hit{KindDomain, strings.ToLower(d), lbl})
 		}
 	}
-	return out
+	return out, truncURL || truncIP || truncDomain
 }
 
 // MatchHash reports whether a file hash (any supported length) is in the feed.

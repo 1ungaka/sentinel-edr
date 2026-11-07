@@ -47,8 +47,9 @@ type EFIBinary struct {
 	Subsystem string `json:"subsystem,omitempty"`
 	// EFI is whether the PE subsystem is one of the EFI ones.
 	EFI bool `json:"efi_subsystem"`
-	// Signed is whether the image carries a certificate table. Presence
-	// only: the signature is not verified.
+	// Signed is whether the image carries a certificate table: a directory
+	// entry pointing outside the file, or at bytes that are no certificate,
+	// is an unsigned image. Presence only: the signature is not verified.
 	Signed   bool   `json:"signed"`
 	Modified string `json:"modified,omitempty"`
 }
@@ -201,10 +202,12 @@ func inspectEFIBinary(path, rel string) (EFIBinary, error) {
 }
 
 // parsePEHeader reads the machine, the subsystem and whether a certificate
-// table is declared. It reads the 64-byte DOS header and then at most 1 KiB
+// table is present. It reads the 64-byte DOS header and then at most 1 KiB
 // at the offset that header names, wherever in the file that is; every offset
 // is checked, so a truncated or lying header leaves bin.PE false or the later
-// fields empty.
+// fields empty. The certificate table is the one field whose value is checked
+// against the file itself: it names a file offset and a size, so a directory
+// entry that points at nothing is not a signature.
 func parsePEHeader(r io.ReaderAt, size int64, bin *EFIBinary) {
 	dos := readAt(r, size, 0, 0x40)
 	if dos == nil || dos[0] != 'M' || dos[1] != 'Z' {
@@ -281,6 +284,21 @@ func parsePEHeader(r io.ReaderAt, size int64, bin *EFIBinary) {
 	numDirs := int(binary.LittleEndian.Uint32(b[dirs-4:]))
 	certDir := dirs + 4*8
 	if numDirs > 4 && certDir+8 <= len(b) && certDir+8 <= opt+optSize {
-		bin.Signed = binary.LittleEndian.Uint32(b[certDir:]) != 0 && binary.LittleEndian.Uint32(b[certDir+4:]) != 0
+		// The directory names a file offset and a size, and both are attacker
+		// controlled: a forged pair must not make an image look signed. The
+		// range is checked against the file, and the certificate entry the
+		// range is said to hold is read before anything is claimed.
+		const winCertHdr = 8 // WIN_CERTIFICATE: dwLength, wRevision, wCertificateType
+		certOff := int64(binary.LittleEndian.Uint32(b[certDir:]))
+		certSize := int64(binary.LittleEndian.Uint32(b[certDir+4:]))
+		if certOff > 0 && certSize >= winCertHdr && certOff+certSize <= size {
+			if wc := readAt(r, size, certOff, winCertHdr); wc != nil {
+				// dwLength covers the whole entry, header included, and lies
+				// inside the declared table.
+				if l := int64(binary.LittleEndian.Uint32(wc)); l >= winCertHdr && l <= certSize {
+					bin.Signed = true
+				}
+			}
+		}
 	}
 }

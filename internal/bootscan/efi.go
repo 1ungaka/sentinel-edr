@@ -105,7 +105,10 @@ type SignatureDB struct {
 	SHA256 string `json:"sha256,omitempty"`
 	Bytes  int    `json:"bytes,omitempty"`
 	// Unparsed is set when the data is not a well-formed sequence of
-	// signature lists; the counts are then zero and only the digest speaks.
+	// signature lists: either it could not be walked at all, in which case
+	// the counts are zero and only the digest speaks, or a list ended in a
+	// partial signature entry, in which case the counted entries are the
+	// whole ones and the trailing bytes are missing from them.
 	Unparsed bool `json:"unparsed,omitempty"`
 	// hashes holds the SHA-256 entries for comparison; not serialised.
 	hashes map[string]bool
@@ -287,6 +290,13 @@ func ScanEFIVars(dir, dbxReference string) (*EFIReport, []Finding, []string) {
 			rep.BootOrder = append(rep.BootOrder, id)
 			inOrder[id] = true
 		}
+		// The order list is bounded like the entry list: an ID past the cap
+		// may still exist, and a report that does not say so presents a
+		// shorter order as the whole of it.
+		if len(rep.BootOrder) == maxBootEntries && len(data) > 2*maxBootEntries {
+			rep.BootEntriesPartial = true
+			notes = append(notes, fmt.Sprintf("BootOrder holds more than %d entries; the rest were not read", maxBootEntries))
+		}
 	}
 
 	ids := make([]string, 0, len(bootIDs))
@@ -330,7 +340,13 @@ func ScanEFIVars(dir, dbxReference string) (*EFIReport, []Finding, []string) {
 	if data, ok := get("dbx", guidSecurity); ok {
 		rep.DBX = signatureVar(data)
 		if rep.DBX.Unparsed {
-			notes = append(notes, "the revocation list (dbx) is present but is not a well-formed signature list; its entries could not be counted")
+			note := "the revocation list (dbx) is present but is not a well-formed signature list"
+			if rep.DBX.Hashes+rep.DBX.Certificates+rep.DBX.Other == 0 {
+				note += "; its entries could not be counted"
+			} else {
+				note += "; a trailing signature entry is incomplete, so its counts are short"
+			}
+			notes = append(notes, note)
 		}
 	}
 	if data, ok := get("MokListRT", guidShim); ok {
@@ -431,7 +447,10 @@ func parseLoadOption(data []byte) BootEntry {
 }
 
 // parseSignatureLists walks a sequence of EFI_SIGNATURE_LIST structures.
-// It returns nil when the data is not a well-formed sequence.
+// It returns nil when the data is not a well-formed sequence, and a database
+// marked Unparsed when a list ends in a partial signature entry: the entries
+// that did parse are counted and the digest still speaks, but the list is not
+// the whole of what the variable holds.
 func parseSignatureLists(data []byte) *SignatureDB {
 	db := &SignatureDB{hashes: map[string]bool{}}
 	for off := 0; off < len(data); {
@@ -447,6 +466,13 @@ func parseSignatureLists(data []byte) *SignatureDB {
 		}
 		body := data[off+28+hdrSize : off+listSize]
 		count := len(body) / sigSize
+		if len(body)%sigSize != 0 {
+			// A trailing partial entry: the declared list does not divide into
+			// whole signatures. The bytes left over are not counted, and the
+			// database is marked incomplete instead of returned as if every
+			// entry in it had been read.
+			db.Unparsed = true
+		}
 		switch typ {
 		case guidCertSHA256:
 			if sigSize != 48 {

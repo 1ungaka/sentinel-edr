@@ -100,7 +100,7 @@ func writeVar(t *testing.T, dir, name string, data []byte) {
 // pe builds a minimal PE32+ image with the EFI application subsystem (from
 // internal/bootscan's host_test.go).
 func pe(signed bool) []byte {
-	b := make([]byte, 0x200)
+	b := make([]byte, 0x2000)
 	b[0], b[1] = 'M', 'Z'
 	binary.LittleEndian.PutUint32(b[0x3c:], 0x80)
 	copy(b[0x80:], "PE\x00\x00")
@@ -112,8 +112,18 @@ func pe(signed bool) []byte {
 	binary.LittleEndian.PutUint16(b[opt+68:], 10) // EFI application
 	binary.LittleEndian.PutUint32(b[dirs-4:], 16)
 	if signed {
-		binary.LittleEndian.PutUint32(b[dirs+4*8:], 0x1000)
-		binary.LittleEndian.PutUint32(b[dirs+4*8+4:], 0x600)
+		// A certificate table that really is at the declared offset: a
+		// WIN_CERTIFICATE header, dwLength covering header plus certificate.
+		const certOff, certSize = 0x1000, 0x600
+		binary.LittleEndian.PutUint32(b[dirs+4*8:], certOff)
+		binary.LittleEndian.PutUint32(b[dirs+4*8+4:], certSize)
+		const certLen = 0x40
+		binary.LittleEndian.PutUint32(b[certOff:], 8+certLen)
+		binary.LittleEndian.PutUint16(b[certOff+4:], 0x0200)
+		binary.LittleEndian.PutUint16(b[certOff+6:], 0x0002)
+		for i := 0; i < certLen; i++ {
+			b[certOff+8+i] = byte(i + 1)
+		}
 	}
 	return b
 }

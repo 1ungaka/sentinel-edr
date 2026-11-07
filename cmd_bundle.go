@@ -179,13 +179,32 @@ func bundleChecksums(args []string, stdout, stderr io.Writer) int {
 	if code != report.ExitOK {
 		return code
 	}
+	// Keyed by basename, because that is the name a downloader and
+	// `cau verify-self --name` look a release file up by. Two inputs sharing a
+	// basename would therefore overwrite each other, and the signed manifest
+	// would cover fewer files than the success line counts — so the collision
+	// is an error, not a silent drop.
 	sums := map[string]string{}
+	firstSeen := map[string]string{}
 	for _, f := range fs.Args() {
 		d, err := release.DigestFile(f)
 		if err != nil {
 			return fail(stderr, report.ExitRunFailed, "%v", err)
 		}
-		sums[filepath.Base(f)] = d
+		name := filepath.Base(f)
+		if prev, dup := firstSeen[name]; dup {
+			return fail(stderr, report.ExitRunFailed,
+				"two inputs share the name %s (%s and %s): %s holds one digest per name, so one file would be left out of the signed manifest; give them distinct names",
+				name, prev, f, release.SumsName)
+		}
+		firstSeen[name] = f
+		sums[name] = d
+	}
+	// The counts must agree before anything is written. A manifest covering
+	// fewer files than the success line claims is the bug the collision check
+	// above exists to prevent, so a run that would write one writes nothing.
+	if len(sums) != fs.NArg() {
+		return fail(stderr, report.ExitRunFailed, "internal: %d of %d input file(s) recorded", len(sums), fs.NArg())
 	}
 	sumsData := release.Format(sums)
 	sig, err := release.SignChecksums(sumsData, key)

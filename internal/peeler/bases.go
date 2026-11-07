@@ -258,19 +258,19 @@ func ascii85Layer() baseLayer {
 		},
 		decode: func(b []byte) ([]byte, bool) {
 			src := frame(b)
-			// Five digits make four bytes, which is all an Adobe body without a
-			// 'z' can ever need: 4 per complete group, plus the at-most-3 of a
-			// short final group, plus the four bytes of room the decoder asks
-			// for before it commits a group. A 'z' is the one digit that
-			// decodes to four bytes on its own, so a body holding one can still
-			// need four times its length — and Decode stops (returning a short
-			// result and no error) when dst runs out, so that bound is not
-			// optional.
-			room := len(src)/5*4 + 4
-			if bytes.IndexByte(src, 'z') >= 0 {
-				room = len(src)*4 + 4
+			// Five digits make four bytes, but a 'z' is one digit that stands
+			// for four zero bytes, so a body of nothing but 'z' expands four
+			// times over and the length alone sizes nothing. The run count is
+			// the true worst case: the decoder stops, silently and without an
+			// error, one byte before it can write, so this bound may not be
+			// short for any body.
+			z := 0
+			for _, c := range src {
+				if c == 'z' {
+					z++
+				}
 			}
-			out := make([]byte, room)
+			out := make([]byte, 4*z+4*(len(src)-z)/5+4)
 			n, _, err := ascii85.Decode(out, src, true)
 			return out[:n], err == nil
 		},
@@ -286,7 +286,7 @@ func decodeBase91(b []byte) ([]byte, bool) {
 	// Two digits carry 13 or 14 bits, so a pair yields at most 14 bits — seven
 	// eighths of a byte per digit — and a final odd digit one more byte. The
 	// old one-byte-per-digit bound was an eighth more than that.
-	out := make([]byte, 0, len(b)*7/8+2)
+	out := make([]byte, 0, len(b)/8*7+2)
 	v, acc, n := -1, 0, 0
 	for _, c := range b {
 		p := int(a[c])
@@ -331,10 +331,10 @@ func base92Value(c byte) int {
 }
 
 func decodeBase92(b []byte) ([]byte, bool) {
-	// A pair carries 13 bits and a final odd digit 6, so the output is at most
-	// thirteen sixteenths of a byte per digit, plus the byte the odd digit
-	// finishes. The old one-byte-per-digit bound was a quarter more than that.
-	out := make([]byte, 0, len(b)*13/16+2)
+	// A pair carries 13 bits — thirteen sixteenths of a byte per digit — and a
+	// final odd digit six more, so the one-byte-per-digit bound was three
+	// sixteenths more than a body could ever fill.
+	out := make([]byte, 0, len(b)/16*13+2)
 	var acc uint32
 	var have uint
 	push := func(v, bits uint32) {

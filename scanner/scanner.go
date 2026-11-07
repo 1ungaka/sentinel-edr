@@ -462,29 +462,72 @@ func hashFile(path string) (digests, error) {
 	return hashReader(f)
 }
 
+// hashReader computes the three digests in one streaming pass. The reader
+// goroutine hashes MD5 itself and hands SHA-1 and SHA-256 to a helper that
+// lives for the whole pass: a parallel.Do per chunk would start and join three
+// goroutines for every 1 MiB, which on a multi-gigabyte file is thousands of
+// short-lived batches that cost more than the hashing they save. Two buffers
+// cycle between reader and helper, so a chunk is never overwritten before both
+// sides have hashed it. Before the digests are read the reader closes the
+// ready channel and waits for the helper to finish: the last chunk handed
+// over must be hashed by SHA-1 and SHA-256 too, not only by MD5.
 func hashReader(r io.Reader) (digests, error) {
 	hMD5 := md5.New()
 	hSHA1 := sha1.New()
 	hSHA256 := sha256.New()
-	buf := make([]byte, 1<<20)
+
+	ready := make(chan []byte, 1)
+	back := make(chan []byte, 2)
+	back <- make([]byte, 1<<20)
+	back <- make([]byte, 1<<20)
+	broke := make(chan any, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for chunk := range ready {
+			if p := func() (p any) {
+				defer func() { p = recover() }()
+				_, _ = hSHA1.Write(chunk)
+				_, _ = hSHA256.Write(chunk)
+				return nil
+			}(); p != nil {
+				// Carried back the way parallel.Do carries one, and the buffer
+				// is recycled anyway: a helper that died quietly would leave
+				// the reader waiting for this buffer for ever.
+				broke <- p
+			}
+			back <- chunk
+		}
+	}()
+
+	buf := <-back
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
-			// One hash per core per chunk: three in a row is three times the wait.
-			parallel.Do(
-				func() { hMD5.Write(chunk) },
-				func() { hSHA1.Write(chunk) },
-				func() { hSHA256.Write(chunk) },
-			)
+			ready <- chunk
+			_, _ = hMD5.Write(chunk)
+			buf = <-back
+		}
+		select {
+		case p := <-broke:
+			panic(p)
+		default:
 		}
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
+			close(ready)
+			<-done
 			return digests{}, fmt.Errorf("could not hash file: %w", err)
 		}
 	}
+	// Closing ready lets the helper drain the chunks still queued, hashing
+	// the tail; waiting for it to finish makes every write to the SHA digests
+	// happen-before the sums are read below.
+	close(ready)
+	<-done
 	return digests{hashHex(hMD5), hashHex(hSHA1), hashHex(hSHA256)}, nil
 }
 

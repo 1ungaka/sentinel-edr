@@ -54,16 +54,21 @@ func cmdHash(args []string, stdout, stderr io.Writer) int {
 	failed := 0
 	for _, p := range fs.Args() {
 		rec := hashRecord{Path: p}
-		r := static.AnalyzeFile(p, static.Options{})
-		if r.Error != nil {
-			rec.Error = r.Error.Error()
-			failed++
-		} else if r.Skipped != "" {
-			rec.Error = r.Skipped
+		// One read feeds both the digest and the structural analysis, so the
+		// SHA-256 and the metadata that ships next to it always describe the
+		// same bytes. Reading the path again for the digest would let a file
+		// swapped in between report one file's anatomy under another file's
+		// hash, and a read that fails must not leave the record looking
+		// complete: the digest is the field every consumer keys on.
+		data, err := safefs.ReadFile(p, static.DefaultMaxSize)
+		if err != nil {
+			rec.Error = err.Error()
 			failed++
 		} else {
-			rec.Size = int64(r.Size)
-			rec.SHA256 = sha256File(p)
+			sum := sha256.Sum256(data)
+			r := static.Analyze(data, static.Options{})
+			rec.Size = int64(len(data))
+			rec.SHA256 = hex.EncodeToString(sum[:])
 			rec.Imphash = r.Imphash()
 			if r.ELF != nil {
 				rec.ImportHash = r.ELF.ImportHash
@@ -109,11 +114,6 @@ func cmdHash(args []string, stdout, stderr io.Writer) int {
 		return report.ExitScanFailed
 	}
 	return report.ExitOK
-}
-
-func sha256File(p string) string {
-	r, _ := hashFileSHA256(p)
-	return r
 }
 
 // ── add-fuzzy ────────────────────────────────────────────────────────────────
@@ -190,6 +190,17 @@ type clusterDoc struct {
 	MinSimilarity float64           `json:"min_similarity"`
 	Clusters      []static.Cluster  `json:"clusters"`
 	Imphashes     map[string]string `json:"imphashes,omitempty"`
+	// WalkErrors lists the paths the directory walk could not read. Anything
+	// under them is absent from Files and from the clusters below, so a
+	// complete-looking result with a non-empty list here is a partial one.
+	WalkErrors []clusterWalkError `json:"walk_errors,omitempty"`
+}
+
+// clusterWalkError is one unreadable path of a cluster walk: the path the walk
+// was asked to enter and why it could not.
+type clusterWalkError struct {
+	Path  string `json:"path"`
+	Error string `json:"error"`
 }
 
 // cmdCluster groups PE and ELF files by import-table similarity: exact
@@ -221,6 +232,7 @@ func cmdCluster(args []string, stdout, stderr io.Writer) int {
 	}
 
 	var paths []string
+	var walkErrs []clusterWalkError
 	for _, target := range fs.Args() {
 		info, err := os.Stat(target)
 		if err != nil {
@@ -230,12 +242,29 @@ func cmdCluster(args []string, stdout, stderr io.Writer) int {
 			paths = append(paths, target)
 			continue
 		}
-		filepath.Walk(safefs.WalkRoot(target), func(p string, fi os.FileInfo, err error) error {
-			if err == nil && fi.Mode().IsRegular() {
+		// An unreadable subtree is not evidence that the files under it are
+		// absent. The walk carries on through the siblings, and every path it
+		// could not read comes back out with it, so a result missing a
+		// directory's contents is reported as the partial result it is
+		// instead of passing for a complete cluster of everything present.
+		walkErr := filepath.Walk(safefs.WalkRoot(target), func(p string, fi os.FileInfo, err error) error {
+			if err != nil {
+				walkErrs = append(walkErrs, clusterWalkError{Path: p, Error: err.Error()})
+				if fi != nil && fi.IsDir() {
+					return filepath.SkipDir // nothing under it is readable either
+				}
+				return nil
+			}
+			if fi.Mode().IsRegular() {
 				paths = append(paths, p)
 			}
 			return nil
 		})
+		// The final error is the walk itself giving up on the root. A SkipDir
+		// is this callback's own, already recorded above.
+		if walkErr != nil && walkErr != filepath.SkipDir {
+			walkErrs = append(walkErrs, clusterWalkError{Path: target, Error: walkErr.Error()})
+		}
 	}
 	sort.Strings(paths)
 
@@ -266,50 +295,53 @@ func cmdCluster(args []string, stdout, stderr io.Writer) int {
 	if doc.Clusters == nil {
 		doc.Clusters = []static.Cluster{}
 	}
+	doc.WalkErrors = walkErrs
 
 	if *format == "json" {
 		if err := writeJSON(stdout, doc); err != nil {
 			return fail(stderr, report.ExitRunFailed, "%v", err)
 		}
-		return report.ExitOK
-	}
-	fmt.Fprintf(stdout, "%d file(s), %d PE, %d ELF, %d skipped (neither PE nor ELF, unreadable or over the size cap)\n", doc.Files, doc.PEFiles, doc.ELFFiles, doc.Skipped)
-	if len(doc.Clusters) == 0 {
-		fmt.Fprintf(stdout, "no clusters at similarity >= %.2f\n", *minSim)
-	}
-	for _, c := range doc.Clusters {
-		switch c.Kind {
-		case "imphash":
-			fmt.Fprintf(stdout, "\n[%s] %d files share import hash %s\n", c.ID, len(c.Members), c.Imphash)
-		default:
-			fmt.Fprintf(stdout, "\n[%s] %d files with import similarity >= %.2f\n", c.ID, len(c.Members), c.MinSimilarity)
+		// The document records each one; stderr names them as well, because a
+		// machine-format run has nothing else on stdout to read.
+		for _, we := range doc.WalkErrors {
+			fmt.Fprintf(stderr, "[ERROR] %s: %s\n", report.TermSafe(we.Path), report.TermSafe(we.Error))
 		}
-		for _, m := range c.Members {
-			fmt.Fprintf(stdout, "    %s\n", report.TermSafe(m))
+	} else {
+		fmt.Fprintf(stdout, "%d file(s), %d PE, %d ELF, %d skipped (neither PE nor ELF, unreadable or over the size cap)\n", doc.Files, doc.PEFiles, doc.ELFFiles, doc.Skipped)
+		if len(doc.WalkErrors) > 0 {
+			fmt.Fprintf(stdout, "%d path(s) unreadable, so this is a partial result and the files under them are missing:\n", len(doc.WalkErrors))
+			for _, we := range doc.WalkErrors {
+				fmt.Fprintf(stdout, "    %s: %s\n", report.TermSafe(we.Path), report.TermSafe(we.Error))
+			}
 		}
-	}
-	if doc.Imphashes != nil {
-		fmt.Fprintln(stdout)
-		for _, p := range paths {
-			if h, ok := doc.Imphashes[p]; ok {
-				fmt.Fprintf(stdout, "%s  %s\n", h, report.TermSafe(p))
+		if len(doc.Clusters) == 0 {
+			fmt.Fprintf(stdout, "no clusters at similarity >= %.2f\n", *minSim)
+		}
+		for _, c := range doc.Clusters {
+			switch c.Kind {
+			case "imphash":
+				fmt.Fprintf(stdout, "\n[%s] %d files share import hash %s\n", c.ID, len(c.Members), c.Imphash)
+			default:
+				fmt.Fprintf(stdout, "\n[%s] %d files with import similarity >= %.2f\n", c.ID, len(c.Members), c.MinSimilarity)
+			}
+			for _, m := range c.Members {
+				fmt.Fprintf(stdout, "    %s\n", report.TermSafe(m))
+			}
+		}
+		if doc.Imphashes != nil {
+			fmt.Fprintln(stdout)
+			for _, p := range paths {
+				if h, ok := doc.Imphashes[p]; ok {
+					fmt.Fprintf(stdout, "%s  %s\n", h, report.TermSafe(p))
+				}
 			}
 		}
 	}
+	// Files the walk could not reach were never clustered, so the result above
+	// is whatever the readable part held: say so and exit as an incomplete scan
+	// rather than as a clean one.
+	if len(doc.WalkErrors) > 0 {
+		return fail(stderr, report.ExitScanFailed, "%d path(s) could not be read; the clustering result is incomplete", len(doc.WalkErrors))
+	}
 	return report.ExitOK
-}
-
-// hashFileSHA256 is a small local helper so `cau hash` does not need the
-// signature database.
-func hashFileSHA256(p string) (string, error) {
-	f, _, err := safefs.Open(p)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }

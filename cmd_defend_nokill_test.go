@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/s-b-repo/cau/internal/canary"
 	"github.com/s-b-repo/cau/internal/report"
 	"github.com/s-b-repo/cau/internal/selftest"
 	"github.com/s-b-repo/cau/internal/trust"
@@ -323,9 +324,27 @@ func TestUnreadableCanaryManifestIsRaisedAndClears(t *testing.T) {
 		t.Fatal("the fault was not remembered")
 	}
 	os.Remove(path)
-	put(t, path, `{"version":1}`)
+	// A manifest Plant could have written: ReadManifest refuses a baseline it
+	// can tell was not recorded (an empty canaries list, no CreatedAt), so the
+	// hand-written stub that used to sit here is exactly what it rejects — the
+	// fault it keeps raised is the correct one, and the readable manifest this
+	// test needs is one written through the production path.
+	m, err := canary.Plant(filepath.Join(t.TempDir(), "decoys"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := canary.WriteManifest(path, m); err != nil {
+		t.Fatal(err)
+	}
 	f.d.canaryLayer()
 	if _, still := f.d.tamperMemo[tamperCanary]; still {
 		t.Error("a readable manifest should clear the fault, so a later one alerts again")
+	}
+	// And the clear is not a latch: once the manifest goes unreadable again the
+	// fault is raised again, which is the whole point of clearing it.
+	plantFIFO(t, path)
+	f.d.canaryLayer()
+	if !hasClass(f.d.cycle(), tamperCanary) {
+		t.Error("the fault was not raised again once the manifest went unreadable")
 	}
 }

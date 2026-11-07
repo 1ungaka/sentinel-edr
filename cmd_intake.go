@@ -133,7 +133,7 @@ func cmdIntake(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stderr, "[*] TAXII: %d object(s) in %d page(s), %s\n", len(res.Objects), res.Pages, since)
 		if res.Truncated {
-			fmt.Fprintln(stderr, "[WARN] TAXII: the poll hit its page or object bound with more on the server; run again to continue")
+			fmt.Fprintln(stderr, "[WARN] TAXII: the poll hit its page or object bound with more on the server; run again to continue (the cursor was not advanced, so the objects left behind are asked for again)")
 		}
 		if *taxiiState != "" && res.LastAdded != "" {
 			cursor.AddedAfter, saveCursor = res.LastAdded, true
@@ -162,19 +162,28 @@ func cmdIntake(args []string, stdout, stderr io.Writer) int {
 	intake.Stamp(iocs, origin, retrieved)
 	fmt.Fprintf(stderr, "[*] parsed %d indicator(s) from the %s feed\n", len(iocs), *format)
 
-	// recordWrite runs after the new signatures have been written somewhere
-	// durable: it appends their provenance and advances the TAXII cursor. A
-	// dry run does neither, so it can be repeated and shows the same thing.
-	recordWrite := func(res intake.ApplyResult) int {
-		if *provenance != "" && len(res.Accepted) > 0 {
-			rec, perr := intake.Provenance(res.Accepted)
-			if perr == nil {
-				perr = appendFile(*provenance, rec)
-			}
-			if perr != nil {
-				return fail(stderr, report.ExitRunFailed, "signatures written, but the provenance record was not: %v", perr)
-			}
+	// writeProvenance appends the provenance records of the newly accepted
+	// indicators. It runs BEFORE the signatures are committed: an intake run
+	// that wrote them first and then lost the provenance append could never
+	// repair it, because the next run sees those hashes as already present and
+	// Apply returns nothing to write records for. Failure here leaves nothing
+	// committed — the database and the provenance log both stay as they were,
+	// so the run can simply be repeated.
+	writeProvenance := func(res intake.ApplyResult) error {
+		if *provenance == "" || len(res.Accepted) == 0 {
+			return nil
 		}
+		rec, err := intake.Provenance(res.Accepted)
+		if err != nil {
+			return err
+		}
+		return appendFile(*provenance, rec)
+	}
+
+	// recordWrite runs after the new signatures have been written somewhere
+	// durable: it advances the TAXII cursor. A dry run does neither, so it can
+	// be repeated and shows the same thing.
+	recordWrite := func() int {
 		if saveCursor {
 			if serr := intake.SaveTAXIIState(*taxiiState, cursor, time.Now()); serr != nil {
 				return fail(stderr, report.ExitRunFailed, "signatures written, but the TAXII cursor was not saved (the next run will re-read them and skip them as present): %v", serr)
@@ -204,21 +213,29 @@ func cmdIntake(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "[*] dry-run: %d new, %d already present\n", res.Added, res.Skipped)
 		return report.ExitOK
 	case *output != "":
+		// Provenance first, commit second: a failed provenance append leaves
+		// nothing written, so the run can be repeated and nothing is lost.
+		if err := writeProvenance(res); err != nil {
+			return fail(stderr, report.ExitRunFailed, "nothing written, the provenance record was not either: %v", err)
+		}
 		if err := os.WriteFile(*output, rendered, 0o644); err != nil {
 			return fail(stderr, report.ExitRunFailed, "writing %s: %v", *output, err)
 		}
 		fmt.Fprintf(stdout, "[+] wrote %d new signature(s) to %s (%d already present)\n", res.Added, *output, res.Skipped)
-		return recordWrite(res)
+		return recordWrite()
 	default:
 		if res.Added == 0 {
 			fmt.Fprintf(stdout, "[*] nothing new: all %d indicator(s) already in %s\n", res.Skipped, dbPath)
-			return recordWrite(res)
+			return recordWrite()
+		}
+		if err := writeProvenance(res); err != nil {
+			return fail(stderr, report.ExitRunFailed, "nothing appended, the provenance record was not either: %v", err)
 		}
 		if err := appendSignatures(dbPath, rendered); err != nil {
 			return fail(stderr, report.ExitRunFailed, "%v", err)
 		}
 		fmt.Fprintf(stdout, "[+] appended %d new signature(s) to %s (%d already present)\n", res.Added, dbPath, res.Skipped)
-		return recordWrite(res)
+		return recordWrite()
 	}
 }
 

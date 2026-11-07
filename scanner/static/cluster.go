@@ -167,6 +167,19 @@ func (c *Clusterer) Clusters(minSimilarity float64) []Cluster {
 		}
 	}
 
+	// A file already united by a shared non-empty imphash carries the same
+	// signature as its group, so its mutual LSH pairs would only repeat what
+	// the exact pass settled. One representative per imphash group enters the
+	// pair enumeration — without this, one large set of identical binaries
+	// costs every pair inside every shared bucket. A file with no imphash
+	// has no exact group and speaks for itself.
+	lshSkip := make([]bool, n)
+	for _, idx := range byImp {
+		for _, i := range idx[1:] {
+			lshSkip[i] = true
+		}
+	}
+
 	// LSH candidates.
 	buckets := map[string][]int{}
 	for i, it := range c.items {
@@ -189,14 +202,22 @@ func (c *Clusterer) Clusters(minSimilarity float64) []Cluster {
 	checked := map[[2]int]bool{}
 	for _, idx := range buckets {
 		for a := 0; a < len(idx); a++ {
+			ia := idx[a]
+			if lshSkip[ia] {
+				continue
+			}
 			for b := a + 1; b < len(idx); b++ {
-				pair := [2]int{idx[a], idx[b]}
+				ib := idx[b]
+				if lshSkip[ib] {
+					continue
+				}
+				pair := [2]int{ia, ib}
 				if checked[pair] {
 					continue
 				}
 				checked[pair] = true
-				if sim := c.items[idx[a]].Sig.Similarity(c.items[idx[b]].Sig); sim >= minSimilarity {
-					union(idx[a], idx[b], sim)
+				if sim := c.items[ia].Sig.Similarity(c.items[ib].Sig); sim >= minSimilarity {
+					union(ia, ib, sim)
 				}
 			}
 		}

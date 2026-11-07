@@ -1,10 +1,12 @@
 package scanner
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 const repoSignatures = "../signatures/hashes.txt"
@@ -247,5 +249,38 @@ func TestHashBytesMatchesHashReader(t *testing.T) {
 	}
 	if a != b {
 		t.Errorf("hashBytes %+v != hashReader %+v", a, b)
+	}
+}
+
+// The streaming path hands SHA-1 and SHA-256 to a helper for the whole pass,
+// so many chunks must give the same digests as one. A reader that returns one
+// byte at a time goes through the chunk machinery with an empty tail.
+func TestHashReaderManyChunksMatchInMemory(t *testing.T) {
+	data := bytes.Repeat([]byte("0123456789abcdef"), 40000) // ~640 KiB, over one chunk
+	whole := hashBytes(data)
+	streamed, err := hashReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if whole != streamed {
+		t.Fatalf("one pass %+v != streamed %+v", whole, streamed)
+	}
+	drip, err := hashReader(iotest.OneByteReader(bytes.NewReader(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if whole != drip {
+		t.Fatalf("one pass %+v != one-byte reads %+v", whole, drip)
+	}
+}
+
+func BenchmarkHashReader(b *testing.B) {
+	data := bytes.Repeat([]byte("0123456789abcdef"), 1<<19) // 8 MiB, several chunks
+	b.SetBytes(int64(len(data)))
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := hashReader(bytes.NewReader(data)); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

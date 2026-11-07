@@ -55,6 +55,7 @@ const (
 	selftestResConfig     = "config"
 	selftestResBinary     = "binary"
 	selftestResSIEMCA     = "siem-ca"
+	selftestResCanary     = "canary-manifest"
 )
 
 // siemCAPath is the CA bundle the configuration points the forwarder at, or ""
@@ -135,6 +136,9 @@ settings pinned into it. Gutting signatures or neutering a rule is the classic
   config      the agent's configuration file
   binary      the agent binary itself
   siem-ca     the CA bundle that decides whose certificate is accepted
+  canary-manifest  the baseline of the planted decoys: replacing it with one
+                   that records nothing silences every canary, so its digest is
+                   signed with the rest
   pin siem    where incidents are forwarded, signed, so editing the config on
               disk can neither silence the stream nor redirect it elsewhere
   pin siem-cert  which public key may answer at that address, signed for the
@@ -142,8 +146,9 @@ settings pinned into it. Gutting signatures or neutering a rule is the classic
               own collector's pin
 
 Detection content is the obvious target; it is not the cheapest one. Emptying
-the feed, or repointing the SIEM address at a collector of the attacker's own,
-needs no change to a single rule, so both are baselined here too.
+the feed, repointing the SIEM address at a collector of the attacker's own, or
+emptying the canary manifest needs no change to a single rule, so those are
+baselined here too.
 
 First, record a baseline from a known-good install:
   cau selftest --record                 # writes integrity.json next to the DB
@@ -166,8 +171,10 @@ Flags:
                      read or parsed is an error, never a quiet fall back to a
                      digest-only check: that downgrade is what an attacker who
                      deleted the key would be hoping for
-  --db / --rules / --fuzzy-db / --feed / --config <path>   override resource
-                     locations; a resource that is absent is skipped, not failed
+  --db / --rules / --fuzzy-db / --feed / --config / --canary-manifest <path>
+                      override resource locations; an overridden resource is
+                      verified where it now lives. An override the baseline does
+                      not cover is an error: re-record to cover it
 
 Exit codes: 0 intact, 1 drift or a bad/missing signature, 3 the run failed,
 4 usage.
@@ -186,9 +193,31 @@ func cmdSelftest(args []string, stdout, stderr io.Writer) int {
 	fuzzyDB := fs.String("fuzzy-db", "", "fuzzy signature database (default: auto-discovered)")
 	feedFlag := fs.String("feed", "", "threat-intel feed (default: auto-discovered)")
 	configFlag := fs.String("config", "", "agent configuration file (default "+trust.DefaultConfigPath+")")
+	canaryManifest := fs.String("canary-manifest", "", "canary manifest from `cau canary plant` (default: auto-discovered)")
 	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return report.ExitUsage
 	}
+
+	// Which override flags the operator actually set, by resource name. Only
+	// those are passed on as overrides: a flag that was not set leaves the
+	// baseline's own recorded path in place. See selftestVerify.
+	setFlag := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "db":
+			setFlag[selftestResSignatures] = true
+		case "rules":
+			setFlag[selftestResRules] = true
+		case "fuzzy-db":
+			setFlag[selftestResFuzzy] = true
+		case "feed":
+			setFlag[selftestResFeed] = true
+		case "config":
+			setFlag[selftestResConfig] = true
+		case "canary-manifest":
+			setFlag[selftestResCanary] = true
+		}
+	})
 
 	// Resolve the resources to baseline. The signature DB is required; rules and
 	// fuzzy DB are optional (absent → skipped, not an error).
@@ -199,11 +228,28 @@ func cmdSelftest(args []string, stdout, stderr io.Writer) int {
 	rulesPath, _ := findResource(*rules, envRules, relRules)
 	fuzzyPath, _ := findResource(*fuzzyDB, envFuzzy, relFuzzy)
 
+	// The canary manifest is the baseline of the planted decoys, and it sits on
+	// the same disk under the same UID as the decoys it describes. Swapping it
+	// for one that baselines nothing — it still parses — silences every canary
+	// on the host with no alert anywhere, so its digest belongs in this baseline
+	// too. It is optional: a host with no decoys has no manifest to record, and
+	// Compute skips a resource with no path. It is resolved the way `cau defend`
+	// resolves it, so what is recorded is the manifest the daemon actually reads;
+	// an explicit path is taken verbatim, so a typo is reported rather than
+	// quietly baselining some other file.
+	canaryPath := *canaryManifest
+	if canaryPath == "" {
+		canaryPath = discoverCanaryManifest(func(format string, args ...interface{}) {
+			fmt.Fprintf(stderr, format+"\n", args...)
+		})
+	}
+
 	// Everything the running agent reads and would act differently without.
 	// Detection content is the obvious part, but a baseline that stopped there
 	// would leave the cheapest attacks untouched: emptying the threat feed,
-	// or repointing the agent's configuration at an attacker's collector,
-	// needs no change to a single rule.
+	// repointing the agent's configuration at an attacker's collector, or
+	// emptying the canary manifest so no decoy can trip, needs no change to a
+	// single rule.
 	resources := []selftest.Resource{
 		{Name: selftestResSignatures, Path: dbPath},
 		{Name: selftestResRules, Path: rulesPath},
@@ -216,6 +262,7 @@ func cmdSelftest(args []string, stdout, stderr io.Writer) int {
 		// of the same redirect open: swap the bundle for one you control and
 		// the stream goes to you with TLS verification still "on".
 		{Name: selftestResSIEMCA, Path: existingPath(siemCAPath(*configFlag))},
+		{Name: selftestResCanary, Path: canaryPath},
 	}
 
 	mpath := *manifestPath
@@ -230,7 +277,7 @@ func cmdSelftest(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, report.ExitRunFailed, "%v", err)
 	}
-	return selftestVerify(resources, mpath, pub, stdout, stderr)
+	return selftestVerify(resources, mpath, pub, setFlag, stdout, stderr)
 }
 
 func selftestRecord(resources []selftest.Resource, mpath, signKeyFile string, pins map[string]string, stdout, stderr io.Writer) int {
@@ -267,7 +314,7 @@ func selftestRecord(resources []selftest.Resource, mpath, signKeyFile string, pi
 	return report.ExitOK
 }
 
-func selftestVerify(resources []selftest.Resource, mpath string, pubKey selftestKey, stdout, stderr io.Writer) int {
+func selftestVerify(resources []selftest.Resource, mpath string, pubKey selftestKey, setFlag map[string]bool, stdout, stderr io.Writer) int {
 	baseline, err := selftest.ReadManifest(mpath)
 	if err != nil {
 		return fail(stderr, report.ExitRunFailed, "%v (run `cau selftest --record` on a known-good install first)", err)
@@ -284,7 +331,19 @@ func selftestVerify(resources []selftest.Resource, mpath string, pubKey selftest
 		fmt.Fprintln(stderr, "[WARN] manifest is signed but no --pubkey/$"+envSelftestKey+" was given; signature not checked")
 	}
 
-	drift, err := selftest.Verify(baseline)
+	// Only a flag the operator actually set is an override. Deriving them from
+	// every resolved resource instead would silently redirect a baseline entry
+	// to a discovered path the manifest never named — and error out on a
+	// baseline that legitimately does not cover a resource this host happens to
+	// have. The verifier is told where the override flags point, so an
+	// overridden resource is checked where the operator says it now lives.
+	overrides := map[string]string{}
+	for _, r := range resources {
+		if setFlag[r.Name] && r.Path != "" {
+			overrides[r.Name] = r.Path
+		}
+	}
+	drift, err := selftest.VerifyWithOverrides(baseline, overrides)
 	if err != nil {
 		return fail(stderr, report.ExitRunFailed, "%v", err)
 	}

@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -39,6 +40,15 @@ const (
 	codeInvalidParams  = -32602
 	codeInternalError  = -32603
 )
+
+// maxRequestLine caps one stdio request line. The HTTP transport caps a
+// request body at the same size (maxHTTPBody): MCP messages are small, so an
+// over-cap line is rejected rather than buffered without bound.
+const maxRequestLine = maxHTTPBody
+
+// errLineTooLong reports a stdio request line over maxRequestLine. Serve
+// answers it as a JSON-RPC protocol error and skips the rest of the line.
+var errLineTooLong = errors.New("request line too long")
 
 // ServerInfo identifies the server to the client.
 type ServerInfo struct {
@@ -132,9 +142,10 @@ func (r *rpcRequest) isNotification() bool { return len(r.ID) == 0 }
 // ── serve loop ───────────────────────────────────────────────────────────────
 
 // Serve reads line-delimited JSON-RPC requests from in and writes responses to
-// out until in reaches EOF. It returns the first I/O error, or nil on a clean
-// EOF. Protocol-level problems (bad JSON, unknown method) are reported back to
-// the client as JSON-RPC errors, not returned from Serve.
+// out until in reaches EOF. It returns the first I/O error from either stream,
+// or nil on a clean EOF. Protocol-level problems (bad JSON, unknown method, an
+// over-long request line) are reported back to the client as JSON-RPC errors,
+// not returned from Serve.
 func (s *Server) Serve(in io.Reader, out io.Writer) error {
 	s.enc = json.NewEncoder(out)
 	s.enc.SetEscapeHTML(false)
@@ -147,6 +158,18 @@ func (s *Server) Serve(in io.Reader, out io.Writer) error {
 				return nil
 			}
 			// trailing line without newline: process then stop
+		} else if err == errLineTooLong {
+			// An over-long request is a protocol violation, not an I/O
+			// failure. Drop the rest of the line so the next request stays
+			// framed, answer the client, and keep serving — the same way the
+			// HTTP transport answers an over-cap body.
+			if derr := discardLine(br); derr != nil && derr != io.EOF {
+				return derr
+			}
+			if werr := s.write(rpcResponse{JSONRPC: "2.0", Error: errf(codeInvalidRequest, "request line exceeds the %d-byte limit", maxRequestLine)}); werr != nil {
+				return werr
+			}
+			continue
 		} else if err != nil {
 			return err
 		}
@@ -159,14 +182,18 @@ func (s *Server) Serve(in io.Reader, out io.Writer) error {
 
 		var req rpcRequest
 		if jerr := json.Unmarshal(line, &req); jerr != nil {
-			s.write(rpcResponse{JSONRPC: "2.0", Error: errf(codeParseError, "parse error: %v", jerr)})
+			if werr := s.write(rpcResponse{JSONRPC: "2.0", Error: errf(codeParseError, "parse error: %v", jerr)}); werr != nil {
+				return werr
+			}
 			if err == io.EOF {
 				return nil
 			}
 			continue
 		}
 
-		s.handle(&req)
+		if werr := s.handle(&req); werr != nil {
+			return werr
+		}
 		if err == io.EOF {
 			return nil
 		}
@@ -174,11 +201,12 @@ func (s *Server) Serve(in io.Reader, out io.Writer) error {
 }
 
 // handle dispatches one request and writes its response (unless it is a
-// notification).
-func (s *Server) handle(req *rpcRequest) {
+// notification). A write failure is returned so a broken output stream stops
+// dispatch rather than silently swallowing a response the client never sees.
+func (s *Server) handle(req *rpcRequest) error {
 	result, rerr := s.dispatch(req)
 	if req.isNotification() {
-		return // notifications never get a response, even on error
+		return nil // notifications never get a response, even on error
 	}
 	resp := rpcResponse{JSONRPC: "2.0", ID: req.ID}
 	if rerr != nil {
@@ -186,7 +214,7 @@ func (s *Server) handle(req *rpcRequest) {
 	} else {
 		resp.Result = result
 	}
-	s.write(resp)
+	return s.write(resp)
 }
 
 // dispatch routes a method to its handler. It returns either a result or a
@@ -219,13 +247,17 @@ func (s *Server) dispatch(req *rpcRequest) (interface{}, *rpcError) {
 	}
 }
 
-func (s *Server) write(resp rpcResponse) {
+// write encodes one response onto the output stream. The Encode error (a
+// broken pipe on the client side, most commonly) is returned so Serve can stop
+// dispatching requests whose responses can no longer reach the client.
+func (s *Server) write(resp rpcResponse) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.enc == nil {
-		return
+		return nil
 	}
-	_ = s.enc.Encode(resp) // Encode appends a newline, giving us the framing
+	// Encode appends a newline, giving us the framing
+	return s.enc.Encode(resp)
 }
 
 // ── lifecycle ────────────────────────────────────────────────────────────────
@@ -268,9 +300,34 @@ func (s *Server) onInitialize(json.RawMessage) (interface{}, *rpcError) {
 
 // ── small helpers ────────────────────────────────────────────────────────────
 
+// readLine returns the next line, including its newline delimiter. A line is
+// capped at maxRequestLine, so a newline-free stream can never grow the
+// accumulated line in proportion to the input: the loop bails out with
+// errLineTooLong once the cap would be exceeded.
 func readLine(br *bufio.Reader) ([]byte, error) {
-	line, err := br.ReadBytes('\n')
-	return line, err
+	var line []byte
+	for {
+		frag, err := br.ReadSlice('\n')
+		if len(line)+len(frag) > maxRequestLine {
+			return nil, errLineTooLong
+		}
+		line = append(line, frag...)
+		if err != bufio.ErrBufferFull {
+			return line, err
+		}
+	}
+}
+
+// discardLine drops the remainder of an over-long request line so the next
+// readLine starts at the following request's delimiter. It never accumulates
+// the dropped bytes.
+func discardLine(br *bufio.Reader) error {
+	for {
+		_, err := br.ReadSlice('\n')
+		if err != bufio.ErrBufferFull {
+			return err
+		}
+	}
 }
 
 func trimSpace(b []byte) []byte {

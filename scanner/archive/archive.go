@@ -17,6 +17,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -451,6 +452,11 @@ func (c *collector) result(r *Result) {
 			fmt.Sprintf("%d nested archive member(s): a layer that must be unwrapped to inspect", len(c.nested)), firstOf(c.nested))
 	}
 	r.Findings = append(r.Findings, c.ooxml...)
+	if c.truncated {
+		// Members past the cap are not inspected, so the summary says so
+		// rather than reading as a complete walk.
+		c.addNotInspected("member cap reached: entries past it were not inspected")
+	}
 	r.Parsed = &Summary{
 		Format: c.format, Members: c.members, Compressed: c.compressed, Uncompressed: c.uncompressed,
 		Encrypted: c.encrypted, Executables: c.execMembers, NotInspected: c.notInspected,
@@ -473,6 +479,15 @@ func firstOf(s []string) string {
 func (r *Result) analyzeZip(data []byte, opts Options) {
 	c := &collector{format: "zip"}
 	defer c.result(r)
+	// The member limit is applied to the central directory's records before
+	// zip.NewReader materialises one entry per record: that reader appends a
+	// *zip.File for every record it reads, so a directory with millions of
+	// records would allocate them all before the walk's own cap was consulted.
+	if n, located := countZipMembers(data); located && n > maxMembers {
+		c.truncated = true
+		c.addNotInspected(fmt.Sprintf("zip central directory holds %d entries, over the %d-member limit", n, maxMembers))
+		return
+	}
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		c.notInspected = "zip central directory unreadable: " + err.Error()
@@ -505,6 +520,155 @@ func (r *Result) analyzeZip(data []byte, opts Options) {
 		c.format = format
 		office.inspect(r, c, opts.OLEThreshold)
 	}
+}
+
+// ── zip central directory ───────────────────────────────────────────────────
+//
+// The walk above counts members by checking c.members inside its loop, but by
+// then zip.NewReader has already appended a *zip.File for every
+// central-directory record, so a directory holding millions of records
+// allocates millions of entries before the cap takes effect. These helpers
+// read the same records that reader does — signature, name/extra/comment
+// lengths, next record — but allocate nothing but a counter, so the member
+// limit is decided before the entry list exists.
+
+const (
+	zipCDHeaderLen  = 46         // fixed part of a central-directory record
+	zipCDNameLen    = 28         // name-length field
+	zipCDExtraLen   = 30         // extra-field length field
+	zipCDCommentLen = 32         // comment-length field
+	zipCDSignature  = 0x02014b50 // "PK\x01\x02"
+)
+
+const (
+	zipEOCDSignature = 0x06054b50 // "PK\x05\x06"
+	zipEOCDLen       = 22         // fixed part of the end-of-central-directory record
+	zipEOCDEntries   = 10         // entries on this disk (uint16)
+	zipEOCDSize      = 12         // central-directory size (uint32)
+	zipEOCDOffset    = 16         // central-directory offset (uint32)
+	zipEOCDTailScan  = 65 * 1024  // the record plus the longest comment it may carry
+)
+
+const (
+	zip64EOCDSignature    = 0x06064b50 // "PK\x06\x06"
+	zip64EOCDLen          = 56         // fixed part of the Zip64 end record
+	zip64EOCDSize         = 40         // central-directory size (uint64) field
+	zip64EOCDOffset       = 48         // central-directory offset (uint64) field
+	zip64LocatorSignature = 0x07064b50 // "PK\x06\x07"
+	zip64LocatorLen       = 20         // fixed part of the Zip64 locator
+	zip64Saturated16      = 0xffff     // a 16-bit entry count holding this means "see Zip64"
+	zip64Saturated32      = 0xffffffff // likewise for a 32-bit size or offset field
+)
+
+// countZipMembers counts the central directory's records without building
+// them. It stops one past maxMembers, which is all the cap needs to know.
+// ok is false when no usable end-of-central-directory record exists — the
+// same failure zip.NewReader reports — and the caller then falls back to it.
+func countZipMembers(data []byte) (n int, ok bool) {
+	start, size, located := findZipDirectoryEnd(data)
+	if !located {
+		return 0, false
+	}
+	end := start + size
+	if end < start || end > len(data) {
+		end = len(data)
+	}
+	for p := start; p+zipCDHeaderLen <= end; {
+		if le32(data, p) != zipCDSignature {
+			break // a malformed record ends the directory, as it does for zip.NewReader
+		}
+		nameLen := int(le16(data, p+zipCDNameLen))
+		extraLen := int(le16(data, p+zipCDExtraLen))
+		commentLen := int(le16(data, p+zipCDCommentLen))
+		step := zipCDHeaderLen + nameLen + extraLen + commentLen
+		if step <= 0 || p+step > end {
+			break
+		}
+		p += step
+		n++
+		if n > maxMembers {
+			break
+		}
+	}
+	return n, true
+}
+
+// findZipDirectoryEnd locates the end-of-central-directory record in the tail
+// and derives where the central directory starts. A Zip64 record is consulted
+// when the 16/32-bit end-record fields are saturated.
+func findZipDirectoryEnd(data []byte) (cdStart, cdSize int, ok bool) {
+	scan := zipEOCDTailScan
+	if scan > len(data) {
+		scan = len(data)
+	}
+	tail := data[len(data)-scan:]
+	for p := len(tail) - zipEOCDLen; p >= 0; p-- {
+		if le32(tail, p) != zipEOCDSignature {
+			continue
+		}
+		if int(le16(tail, p+zipEOCDLen-2))+zipEOCDLen+p > len(tail) {
+			continue // the comment is truncated: this is not a directory end
+		}
+		eocd := len(data) - scan + p
+		off, size := le32(tail, p+zipEOCDOffset), le32(tail, p+zipEOCDSize)
+		if off == zip64Saturated32 || size == zip64Saturated32 ||
+			le16(tail, p+zipEOCDEntries) == zip64Saturated16 {
+			if o, s, found := findZip64DirectoryEnd(data, eocd); found {
+				off, size = o, s
+			}
+		}
+		start, n := int(off), int(size)
+		if start < 0 || n < 0 || start > len(data) {
+			continue
+		}
+		// The declared offset is relative to the start of the archive, so a
+		// self-extracting stub shifts it; the directory length then fixes
+		// where it really begins.
+		if le32(data, start) != zipCDSignature {
+			alt := eocd - n - zipTrailerLen(data, eocd)
+			if alt < 0 || alt+zipCDHeaderLen > len(data) || le32(data, alt) != zipCDSignature {
+				continue
+			}
+			start = alt
+		}
+		return start, n, true
+	}
+	return 0, 0, false
+}
+
+// zipTrailerLen reports the length of the Zip64 end-of-central-directory
+// records that may sit between the central directory and the end record.
+func zipTrailerLen(data []byte, eocd int) int {
+	if eocd-zip64EOCDLen >= 0 && le32(data, eocd-zip64LocatorLen) == zip64LocatorSignature &&
+		le32(data, eocd-zip64EOCDLen) == zip64EOCDSignature {
+		return zip64EOCDLen + zip64LocatorLen
+	}
+	return 0
+}
+
+// findZip64DirectoryEnd reads the Zip64 locator just before an end record and
+// the Zip64 end record it points at.
+func findZip64DirectoryEnd(data []byte, eocd int) (off, size uint32, ok bool) {
+	loc := eocd - zip64LocatorLen
+	if loc < 0 || le32(data, loc) != zip64LocatorSignature {
+		return 0, 0, false
+	}
+	if le32(data, loc+4) != 0 || le32(data, loc+16) != 1 {
+		return 0, 0, false // a multiple-disk archive is not walked
+	}
+	p := le64(data, loc+8)
+	if p > uint64(len(data)) || p+zip64EOCDLen > uint64(len(data)) {
+		return 0, 0, false
+	}
+	start := int(p)
+	if le32(data, start) != zip64EOCDSignature {
+		return 0, 0, false
+	}
+	o, s := le64(data, start+zip64EOCDOffset), le64(data, start+zip64EOCDSize)
+	if o > uint64(len(data)) || s > uint64(len(data)) {
+		return 0, 0, false
+	}
+	return uint32(o), uint32(s), true
 }
 
 func peekZip(f *zip.File) []byte {
@@ -603,4 +767,30 @@ func gzipName(data []byte) string {
 		return "gzip-member"
 	}
 	return string(data[10 : 10+end])
+}
+
+// ── little-endian field readers ──────────────────────────────────────────────
+//
+// Every record field is read through these, so a hostile length field can never
+// index past the buffer: an out-of-range read returns 0.
+
+func le16(b []byte, off int) uint16 {
+	if off < 0 || off+2 > len(b) {
+		return 0
+	}
+	return binary.LittleEndian.Uint16(b[off:])
+}
+
+func le32(b []byte, off int) uint32 {
+	if off < 0 || off+4 > len(b) {
+		return 0
+	}
+	return binary.LittleEndian.Uint32(b[off:])
+}
+
+func le64(b []byte, off int) uint64 {
+	if off < 0 || off+8 > len(b) {
+		return 0
+	}
+	return binary.LittleEndian.Uint64(b[off:])
 }

@@ -824,7 +824,19 @@ func (d *defender) kernelRefusals(events []procscan.KernelEvent) []correlate.Sig
 // name agreeing, last week's refusal would stop whatever holds that number today.
 // A refusal with no PID is still reported and can still confirm. It just can't
 // direct a signal at anything.
+//
+// An event that records the process start time settles the question outright:
+// the refusal is only about the process that is there when those ticks agree.
+// A refusal from before the guard recorded it is never pointed at a PID, since
+// nothing about it says today's process is the one it refused.
 func (d *defender) refusedPID(e procscan.KernelEvent) int {
+	if e.Identity() {
+		p, ok := procscan.Lookup(d.procRoot, e.TGID)
+		if !ok || p.StartTicks != e.StartTicks {
+			return 0
+		}
+		return e.TGID
+	}
 	raw, err := safefs.ReadFile(filepath.Join(d.procRoot, fmt.Sprint(e.TGID), "comm"), 256)
 	if err != nil {
 		return 0
@@ -1065,6 +1077,18 @@ func (d *defender) canarySignals() []correlate.Signal {
 			"the canary manifest cannot be read, so no canary on this host can raise an alert: "+err.Error())
 		return nil
 	}
+	// A manifest that parses is not evidence that anything can still trip. The
+	// file lives on the same disk, owned by the same UID, as the decoys it
+	// describes, so one that validates while recording nothing planted is the
+	// cheap way to silence every canary here: clearing the alert on it would
+	// turn the tamper state off exactly when the baseline was gutted.
+	if len(m.Canaries) == 0 {
+		reason := "canary manifest records no planted decoy"
+		d.warn("[WARN] %s: %s", reason, d.canaryManifest)
+		d.tamper(tamperCanary, reason,
+			"the canary manifest at "+d.canaryManifest+" records no canary, so no canary on this host can raise an alert: the baseline was emptied rather than read")
+		return nil
+	}
 	d.clearTamper(tamperCanary)
 	var out []correlate.Signal
 	for _, r := range canary.Tripped(canary.Check(m)) {
@@ -1111,6 +1135,14 @@ func (d *defender) processLayer() {
 		}
 	}
 	ps := procscan.Scan(procscan.Options{ProcRoot: d.procRoot, Intel: d.feed.Load(), KernelEvents: events})
+	// A scan that stopped at a read cap saw part of a process and none of what
+	// was past the cap. The daemon says so every pass, because a quiet run that
+	// read half a command line is not a run that found nothing.
+	for _, w := range ps.Warnings {
+		if strings.HasPrefix(w, "partial scan:") {
+			d.warn("[WARN] %s", report.TermSafe(w))
+		}
+	}
 	signals := d.processSignals(ps)
 	refused := d.kernelRefusals(events)
 
@@ -1156,6 +1188,13 @@ func (d *defender) selftestLayer() {
 		return
 	}
 	var out []correlate.Signal
+	// A schema-2 baseline is still verified, but its signature does not cover
+	// the resource paths: an editor without the key could redirect an entry to a
+	// clean copy while the digest and the signature still match. Say so, because
+	// the guarantee the operator believes they have is the smaller one.
+	if baseline.Schema < selftest.ManifestSchema {
+		d.warn("[WARN] selftest baseline %s is schema %d: resource paths are not signed (re-record with this build to cover them)", d.selftestManifest, baseline.Schema)
+	}
 	if d.selftestPubKey.set {
 		if err := baseline.VerifySignature(d.selftestPubKey.key); err != nil {
 			out = append(out, correlate.Signal{
@@ -2316,7 +2355,7 @@ func cmdDefend(args []string, stdout, stderr io.Writer) int {
 			defer w.Close()
 			status("[*] watching %d directories", w.Dirs())
 			if w.Truncated() {
-				status("[WARN] the directory limit was reached: some of the tree is not watched")
+				status("[WARN] real-time coverage is incomplete: the directory limit was reached, or a directory could not be read or watched, so the %s interval is what covers those gaps", *interval)
 			}
 			d.sweepDue.Store(true)
 		}

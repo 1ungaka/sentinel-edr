@@ -156,14 +156,21 @@ func (h *History) prune(now time.Time) {
 }
 
 // beaconKey identifies a process-to-peer pair across reconnections. The
-// executable, not the PID, is the identity: an implant that re-executes keeps
-// its schedule and would otherwise look like a new conversation each time.
+// executable, not the PID, is what a re-executing implant keeps; the PID and the
+// namespace are what separate two different processes that happen to run the
+// same executable to the same peer. Without them, observations from separate
+// processes pool into one cadence, and the finding lands on whichever process
+// was sampled last.
 func (s Socket) beaconKey() string {
 	who := TrimDeleted(s.Exe)
 	if who == "" {
 		who = s.Comm
 	}
-	return who + "|" + s.Remote.String()
+	proc := "u" // unattributed: the holder could not be read
+	if s.PID > 0 {
+		proc = "p:" + strconv.Itoa(s.PID)
+	}
+	return s.NetNS + "|" + proc + "|" + who + "|" + s.Remote.String()
 }
 
 // beacon decides whether a record shows a schedule.

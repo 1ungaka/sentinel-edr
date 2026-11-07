@@ -213,7 +213,7 @@ func bootTestSigList(hashes ...byte) []byte {
 // bootTestPE builds a minimal signed PE32+ EFI application; tail makes two
 // of them differ.
 func bootTestPE(tail string) []byte {
-	b := make([]byte, 0x200)
+	b := make([]byte, 0x2000)
 	b[0], b[1] = 'M', 'Z'
 	binary.LittleEndian.PutUint32(b[0x3c:], 0x80)
 	copy(b[0x80:], "PE\x00\x00")
@@ -224,8 +224,18 @@ func bootTestPE(tail string) []byte {
 	binary.LittleEndian.PutUint16(b[opt:], 0x20b)
 	binary.LittleEndian.PutUint16(b[opt+68:], 10)
 	binary.LittleEndian.PutUint32(b[dirs-4:], 16)
-	binary.LittleEndian.PutUint32(b[dirs+4*8:], 0x1000)
-	binary.LittleEndian.PutUint32(b[dirs+4*8+4:], 0x600)
+	// A certificate table that really is at the declared offset: a
+	// WIN_CERTIFICATE header, dwLength covering header plus certificate.
+	const certOff, certSize = 0x1000, 0x600
+	binary.LittleEndian.PutUint32(b[dirs+4*8:], certOff)
+	binary.LittleEndian.PutUint32(b[dirs+4*8+4:], certSize)
+	const certLen = 0x40
+	binary.LittleEndian.PutUint32(b[certOff:], 8+certLen)
+	binary.LittleEndian.PutUint16(b[certOff+4:], 0x0200)
+	binary.LittleEndian.PutUint16(b[certOff+6:], 0x0002)
+	for i := 0; i < certLen; i++ {
+		b[certOff+8+i] = byte(i + 1)
+	}
 	return append(b, tail...)
 }
 

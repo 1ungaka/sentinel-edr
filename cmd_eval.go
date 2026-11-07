@@ -130,6 +130,7 @@ func evalRun(args []string, stdout, stderr io.Writer) int {
 	staticThreshold := fs.Int("static-threshold", static.Threshold, "static detection threshold")
 	fuzzyFlag := fs.String("fuzzy-db", "", "fuzzy signature database for the static detector (default: <manifest dir>/fuzzy.txt, else auto-discovered, else none)")
 	noStego := fs.Bool("no-stego", false, "disable the invisible-codepoint (stego) detector")
+	noEncChain := fs.Bool("no-encchain", false, "disable the encoded-executable detector")
 	stegoThreshold := fs.Int("stego-threshold", stego.Threshold, "stego detection threshold")
 	encChainThreshold := fs.Int("encchain-threshold", encchain.Threshold, "encoded-executable detection threshold")
 	noFormats := fs.Bool("no-format-passes", false, "disable the format passes (.lnk, OLE, PDF, ISO, Linux package, peeler, archive, CHM, tradecraft)")
@@ -243,6 +244,8 @@ func evalRun(args []string, stdout, stderr io.Writer) int {
 	}
 	if !*noStego {
 		detectors = append(detectors, scannerbridge.StegoDetector(*stegoThreshold))
+	}
+	if !*noEncChain {
 		detectors = append(detectors, scannerbridge.EncChainDetector(*encChainThreshold))
 	}
 	if !*noFormats {
@@ -261,6 +264,8 @@ func evalRun(args []string, stdout, stderr io.Writer) int {
 			FuzzyDB:            fuzzy,
 			Stego:              !*noStego,
 			StegoThreshold:     *stegoThreshold,
+			EncChain:           !*noEncChain,
+			EncChainThreshold:  *encChainThreshold,
 		}
 		if !*noFormats {
 			scannerbridge.EnableFormatPasses(fe)
@@ -347,6 +352,9 @@ func evalReport(args []string, stdout, stderr io.Writer) int {
 			return fail(stderr, report.ExitUsage, "--report is required")
 		}
 	}
+	if *format != "text" && *format != "json" {
+		return fail(stderr, report.ExitUsage, "--format must be text or json")
+	}
 	rep, err := eval.LoadReport(*path)
 	if err != nil {
 		return fail(stderr, report.ExitRunFailed, "%v", err)
@@ -377,6 +385,9 @@ func evalDiff(args []string, stdout, stderr io.Writer) int {
 	if *base == "" || *cand == "" {
 		fs.Usage()
 		return fail(stderr, report.ExitUsage, "--baseline and --candidate are required")
+	}
+	if *format != "text" && *format != "json" {
+		return fail(stderr, report.ExitUsage, "--format must be text or json")
 	}
 	b, err := eval.LoadReport(*base)
 	if err != nil {
@@ -411,6 +422,9 @@ func evalGate(args []string, stdout, stderr io.Writer) int {
 	if *cand == "" {
 		fs.Usage()
 		return fail(stderr, report.ExitUsage, "--candidate is required")
+	}
+	if *format != "text" && *format != "json" {
+		return fail(stderr, report.ExitUsage, "--format must be text or json")
 	}
 	c, err := eval.LoadReport(*cand)
 	if err != nil {

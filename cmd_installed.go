@@ -199,7 +199,16 @@ func auditDpkg(infoDir string, threshold int, feed *intel.Feed, res *installedRe
 			}
 		}
 	}
-	parallel.For(len(scripts), 0, func(i int) { scripts[i].body = readScript(scripts[i].path) })
+	notes := make([]string, len(scripts))
+	parallel.For(len(scripts), 0, func(i int) { scripts[i].body, notes[i] = readScript(scripts[i].path) })
+	// A script that could not be read, or only in part, is not a clean audit:
+	// the package is still scored on what was read, and the gap goes into the
+	// warnings rather than passing for a complete audit of the script.
+	for _, n := range notes {
+		if n != "" {
+			res.Warnings = append(res.Warnings, n)
+		}
+	}
 
 	// Group scripts by package name (the file stem before the script suffix).
 	byPkg := map[string]map[string]string{}
@@ -234,7 +243,15 @@ func auditPacman(localDir string, threshold int, feed *intel.Feed, res *installe
 		}
 	}
 	bodies := make([]string, len(names))
-	parallel.For(len(names), 0, func(i int) { bodies[i] = readScript(filepath.Join(localDir, names[i], "install")) })
+	notes := make([]string, len(names))
+	parallel.For(len(names), 0, func(i int) {
+		bodies[i], notes[i] = readScript(filepath.Join(localDir, names[i], "install"))
+	})
+	for _, n := range notes {
+		if n != "" {
+			res.Warnings = append(res.Warnings, n)
+		}
+	}
 	var pkgs []int
 	for i := range bodies {
 		if bodies[i] != "" {
@@ -267,12 +284,29 @@ func scorePackages(n, threshold int, res *installedResult, pkg func(int) (string
 
 const maxInstalledScriptBytes = 1 << 20
 
-func readScript(path string) string {
+// readScript reads the head of a package's maintainer script for auditing, and
+// returns with it a note whenever what was read is not the whole script. An
+// unreadable script is an unaudited package, and one that runs past the read
+// limit was audited only up to the limit: tradecraft after the boundary must
+// not pass for a clean package. A script that is simply not there is not a
+// note — most packages ship no maintainer script at all.
+func readScript(path string) (body, note string) {
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		if os.IsNotExist(err) {
+			return "", ""
+		}
+		return "", "script " + path + " could not be read: " + err.Error()
 	}
 	defer f.Close()
-	data, _ := io.ReadAll(io.LimitReader(f, maxInstalledScriptBytes))
-	return string(data)
+	// One byte past the limit tells a truncated script from a whole one.
+	data, err := io.ReadAll(io.LimitReader(f, maxInstalledScriptBytes+1))
+	if err != nil {
+		return "", "script " + path + " could not be read: " + err.Error()
+	}
+	if int64(len(data)) > maxInstalledScriptBytes {
+		return string(data[:maxInstalledScriptBytes]),
+			fmt.Sprintf("script %s was truncated at the %d-byte read limit; only its head was audited", path, maxInstalledScriptBytes)
+	}
+	return string(data), ""
 }

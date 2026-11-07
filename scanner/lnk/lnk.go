@@ -477,8 +477,12 @@ func (p *parsed) readString(c *cursor) (string, bool) {
 // parseExtraData walks the trailing ExtraData blocks. The list ends at a block
 // whose size is below 4 (the TerminalBlock). The loop is capped so a stream of
 // malformed blocks cannot spin, and every block is bounded against the file.
+// Reaching the cap with a further block header still present is recorded as a
+// parse warning: the blocks after the 64th are not inspected, so the result
+// must not read as a complete parse.
 func (p *parsed) parseExtraData(c *cursor) {
-	for i := 0; i < maxExtraBlocks; i++ {
+	walked := 0
+	for {
 		if c.remaining() < 4 {
 			// No room for even a block size: a clean end for a shortcut that
 			// omits the explicit terminal block.
@@ -492,6 +496,15 @@ func (p *parsed) parseExtraData(c *cursor) {
 			// TerminalBlock: structures end here.
 			p.cleanEnd = true
 			p.structEnd = c.pos
+			break
+		}
+		if walked >= maxExtraBlocks {
+			// A further real block header follows the 64th: it is not
+			// inspected (it may carry a path-bearing environment or icon
+			// block), so the parse is recorded as incomplete rather than
+			// silently complete.
+			p.warn("ExtraData block cap reached: blocks after the 64th were not inspected")
+			c.pos = start
 			break
 		}
 		sig, ok := c.u32()
@@ -529,6 +542,7 @@ func (p *parsed) parseExtraData(c *cursor) {
 		}
 		c.pos = end
 		p.structEnd = c.pos
+		walked++
 	}
 	if p.structEnd == 0 {
 		p.structEnd = c.pos

@@ -270,36 +270,128 @@ func parseVersion(data []byte) string {
 }
 
 // scanNames walks the buffer once, decoding every /Name token (resolving #xx hex
-// escapes to their canonical form) and recording which names are present and
-// which sensitive names used hex obfuscation. The work is bounded by the token
-// cap so a buffer dense in '/' cannot amplify into unbounded work.
+// escapes to its canonical form) and recording which names are present and
+// which sensitive names used hex obfuscation. The walk is context-aware: a
+// name inside a literal or hex string, a comment, or stream data is not an
+// object name — "(/OpenAction /JavaScript)" is prose, not an automatic action
+// — so those tokens are skipped and only names in object position count. The
+// work is bounded by the token cap so a buffer dense in '/' cannot amplify
+// into unbounded work.
 func (d *doc) scanNames() {
 	data := d.data
 	tokens := 0
-	for i := 0; i < len(data); {
-		if data[i] != '/' {
+	i := 0
+scan:
+	for i < len(data) {
+		switch {
+		case data[i] == '%':
+			// Comment: runs to the end of the line.
+			for i < len(data) && data[i] != '\n' && data[i] != '\r' {
+				i++
+			}
+		case data[i] == '(':
+			// Literal string: balanced parens, '\' escapes the next byte.
+			i = skipLiteralString(data, i)
+		case data[i] == '<' && i+1 < len(data) && data[i+1] == '<':
+			// Dictionary opening: the names inside are real objects.
+			i += 2
+		case data[i] == '<':
+			// Hex string.
+			i = skipHexString(data, i)
+		case atStreamKeyword(data, i):
+			// Raw stream data: everything up to "endstream" is payload.
+			i = skipStreamBody(data, i)
+		case data[i] == '/':
+			name, usedHex, next := decodeName(data, i)
+			i = next
+			if name == "" {
+				continue
+			}
+			tokens++
+			if tokens > maxNameTokens {
+				d.warn("name-scan work cap reached")
+				break scan
+			}
+			// Always remember signal names; cap only the generic ones so a flood of
+			// unique junk names cannot grow the map without bound.
+			if signalNames[name] || len(d.names) < maxNames {
+				d.names[name] = true
+			}
+			if usedHex && sensitiveObfNames[name] {
+				d.hexObf[name] = true
+			}
+		default:
 			i++
-			continue
-		}
-		name, usedHex, next := decodeName(data, i)
-		i = next
-		if name == "" {
-			continue
-		}
-		tokens++
-		if tokens > maxNameTokens {
-			d.warn("name-scan work cap reached")
-			break
-		}
-		// Always remember signal names; cap only the generic ones so a flood of
-		// unique junk names cannot grow the map without bound.
-		if signalNames[name] || len(d.names) < maxNames {
-			d.names[name] = true
-		}
-		if usedHex && sensitiveObfNames[name] {
-			d.hexObf[name] = true
 		}
 	}
+}
+
+// atStreamKeyword reports whether the "stream" keyword starts at i: the
+// keyword is bounded before it by whitespace or a delimiter and followed by an
+// end-of-line, the only shape the spec allows before raw stream data.
+func atStreamKeyword(data []byte, i int) bool {
+	if i+6 > len(data) || string(data[i:i+6]) != "stream" {
+		return false
+	}
+	if i > 0 && !isWhitespace(data[i-1]) && !isDelim(data[i-1]) {
+		return false
+	}
+	j := i + 6
+	if j < len(data) && data[j] == '\r' {
+		j++
+	}
+	return j >= len(data) || data[j] == '\n'
+}
+
+// skipLiteralString returns the index just past the literal string starting at
+// data[i] == '('. Parens nest and a backslash escapes the next byte; an
+// unterminated string swallows the rest of the buffer.
+func skipLiteralString(data []byte, i int) int {
+	depth := 0
+	for i < len(data) {
+		switch data[i] {
+		case '\\':
+			i += 2
+			continue
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		}
+		i++
+	}
+	return len(data)
+}
+
+// skipHexString returns the index just past the hex string starting at
+// data[i] == '<'. An unterminated string swallows the rest of the buffer.
+func skipHexString(data []byte, i int) int {
+	for i < len(data) {
+		if data[i] == '>' {
+			return i + 1
+		}
+		i++
+	}
+	return len(data)
+}
+
+// skipStreamBody returns the index just past "endstream" for the stream whose
+// keyword starts at i. An unterminated stream swallows the rest of the buffer.
+func skipStreamBody(data []byte, i int) int {
+	j := i + 6
+	if j < len(data) && data[j] == '\r' {
+		j++
+	}
+	if j < len(data) && data[j] == '\n' {
+		j++
+	}
+	if k := bytes.Index(data[j:], []byte("endstream")); k >= 0 {
+		return j + k + len("endstream")
+	}
+	return len(data)
 }
 
 // decodeName reads one /Name token starting at data[start] == '/'. It resolves

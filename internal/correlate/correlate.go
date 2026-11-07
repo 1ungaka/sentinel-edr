@@ -17,6 +17,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -270,11 +271,16 @@ func incident(sigs []Signal) Incident {
 	}
 	sort.Slice(inc.Layers, func(i, j int) bool { return inc.Layers[i] < inc.Layers[j] })
 
+	// inc.Layers names every layer in the incident, for the report. The count
+	// that confirms it is the agreeing one, below: a sensor somewhere else
+	// reporting an informational or unknown severity is not a second opinion
+	// about this host.
+	agreeing := agreeingLayers(sigs)
 	switch {
 	case live != "":
 		inc.Confirmed, inc.Why = true, "live attack state: "+live
-	case len(inc.Layers) >= 2:
-		inc.Confirmed, inc.Why = true, fmt.Sprintf("%d independent layers agree", len(inc.Layers))
+	case len(agreeing) >= 2:
+		inc.Confirmed, inc.Why = true, fmt.Sprintf("%d independent layers agree", len(agreeing))
 	case definitive != "":
 		inc.Confirmed, inc.Why = true, "known-bad content: "+definitive
 	default:
@@ -307,6 +313,23 @@ func keys(m map[string]bool) []string {
 	return out
 }
 
+// agreeingLayers is the set of layers whose evidence can stand on its own. A
+// signal observed somewhere else joins an incident about the same artefact, and
+// with a real score behind it that is a second opinion worth confirming on; at
+// informational or unknown severity it says only that a sensor was running, so
+// it never counts as the extra layer that turns an alert into a confirmed
+// incident. Local layers are their own host's evidence and always count.
+func agreeingLayers(sigs []Signal) map[Layer]bool {
+	layers := map[Layer]bool{}
+	for _, s := range sigs {
+		if s.Host != "" && s.Score < minCorroboratingScore {
+			continue
+		}
+		layers[s.Layer] = true
+	}
+	return layers
+}
+
 // Fingerprint changes when an incident gains evidence, so an incident already
 // reported is raised again only when something new is known about it.
 func (i Incident) Fingerprint() string {
@@ -327,8 +350,22 @@ func actsOnProcess(l Layer) bool {
 // under /etc may: a PAM stack, a sudoers fragment or a cron table is exactly what
 // locks an operator out when it vanishes, and the file is the evidence. Those stay
 // an alert for a human, however they were flagged.
+//
+// The path is judged after cleaning, because the store resolves it with
+// filepath.Abs before it acts: "/tmp/../etc/cron.d/job" is a cron table, and
+// rejecting only the spelled-out form would let that spelling keep the policy
+// bypass. A relative path cannot be judged here at all — it names whatever
+// directory the responder happens to be running in — so it is not quarantinable
+// either.
 func Quarantinable(path string) bool {
-	return Linkable(path) && !strings.HasPrefix(path, "/etc/")
+	if !strings.HasPrefix(path, "/") {
+		return false
+	}
+	clean := filepath.Clean(path)
+	if clean == "/etc" || strings.HasPrefix(clean, "/etc/") {
+		return false
+	}
+	return Linkable(clean)
 }
 
 // Plan is what a confirmed incident permits. It is empty for an unconfirmed one.
@@ -340,6 +377,13 @@ type Plan struct {
 	// a peer the kernel reports is a connection that exists.
 	Block []string `json:"block,omitempty"`
 }
+
+// minCorroboratingScore is what a signal from elsewhere must score before it may
+// corroborate a local one and so license a response on this host. The ingest
+// scale maps OCSF's informational and unknown severities to 1: a peer host saying
+// "something happened" is not evidence about this one, and it must never be what
+// stops a process or blocks a peer. A medium finding (4) and above is.
+const minCorroboratingScore = 4
 
 // PlanFor decides what may be done. Only a file the content scanner itself
 // flagged is quarantined: a persistence signal names a file too, but that file
@@ -371,6 +415,12 @@ func PlanFor(inc Incident) Plan {
 			for _, f := range s.Files {
 				named["f:"+f] = true
 			}
+		} else if s.Score < minCorroboratingScore {
+			// Telemetry from elsewhere corroborates only when it carries a real
+			// score. An informational or unknown severity is a sensor saying
+			// "something happened", which is not evidence about this host: it
+			// joins the incident and is never what licenses acting on it.
+			continue
 		}
 		for _, peer := range s.Peers {
 			named["p:"+peer] = true

@@ -124,6 +124,13 @@ type Summary struct {
 	exec      []ExecSection
 	execBytes int
 	execCut   bool
+	// volumesCut, ffsCut and sectionsCut record that a structural cap
+	// stopped the corresponding walk, so the structures past the cap are
+	// missing from the inventory. They are reported through NotInspected,
+	// never skipped silently.
+	volumesCut  bool
+	ffsCut      bool
+	sectionsCut bool
 }
 
 // Result is the analysis of one firmware image.
@@ -204,6 +211,15 @@ func Analyze(data []byte, opts Options) *Result {
 	s.NotInspected = "module bodies (PE/TE drivers) are inventoried, not disassembled; LZMA-compressed sections are opened, sections in the EFI/Tiano compression or another GUID-defined encoding are not"
 	if s.DecompressFailed > 0 {
 		s.NotInspected += fmt.Sprintf("; %d LZMA section(s) could not be opened (corrupt, over the %d MiB budget, or nested deeper than %d), so their contents are not in the inventory", s.DecompressFailed, maxDecompressTotal>>20, maxNestDepth)
+	}
+	if s.volumesCut {
+		s.NotInspected += fmt.Sprintf("; the volume search stopped at the %d-volume cap, so firmware volumes past it are not in the inventory", maxFVs)
+	}
+	if s.ffsCut {
+		s.NotInspected += fmt.Sprintf("; a file walk stopped at the %d-module cap, so modules past it are not in the inventory", maxFFSFiles)
+	}
+	if s.sectionsCut {
+		s.NotInspected += fmt.Sprintf("; at least one file's section walk stopped at the %d-section cap, so its later sections (and any executable or nested volume in them) were not inspected", maxSections)
 	}
 	r.Parsed = s
 
@@ -314,6 +330,9 @@ func (w *walker) parseFV(data []byte, off int) (uint64, bool) {
 		}
 		_ = state
 		secs := walkSections(data, p+24, p+size)
+		if secs.cut {
+			s.sectionsCut = true
+		}
 		m.Name, m.HasPE, m.Depth = secs.name, secs.hasPE, w.depth
 		if typ != 0xF0 { // skip pad files in the inventory
 			s.Inventory = append(s.Inventory, m)
@@ -327,6 +346,9 @@ func (w *walker) parseFV(data []byte, off int) (uint64, bool) {
 		}
 		p = align8(p + size)
 	}
+	if len(s.Inventory) >= maxFFSFiles && p+24 <= fvEnd {
+		s.ffsCut = true
+	}
 	return fvLen, true
 }
 
@@ -337,6 +359,9 @@ type sectionInfo struct {
 	exec    []execRef // PE32 / TE bodies
 	volumes [][]byte  // bodies of FIRMWARE_VOLUME_IMAGE sections
 	lzma    [][]byte  // payloads of LZMA GUID-defined sections
+	// cut records that the walk stopped at maxSections with sections still
+	// in range, so later sections of this file were not inspected.
+	cut bool
 }
 
 type execRef struct {
@@ -355,7 +380,8 @@ const lzmaSectionGUID = "ee4e5898-3914-4259-9d6e-dc7bd79403cf"
 func walkSections(data []byte, start, end int) sectionInfo {
 	var info sectionInfo
 	p := start
-	for n := 0; n < maxSections && p+4 <= end; n++ {
+	n := 0
+	for ; n < maxSections && p+4 <= end; n++ {
 		size := int(data[p]) | int(data[p+1])<<8 | int(data[p+2])<<16
 		typ := data[p+3]
 		hdr := 4
@@ -393,6 +419,9 @@ func walkSections(data []byte, start, end int) sectionInfo {
 			}
 		}
 		p = align4(p + size)
+	}
+	if n >= maxSections && p+4 <= end {
+		info.cut = true
 	}
 	return info
 }
@@ -433,6 +462,9 @@ func (w *walker) volumes(data []byte, from int) {
 		}
 		off = findFV(data, next)
 	}
+	if w.s.Volumes >= maxFVs && off >= 0 {
+		w.s.volumesCut = true
+	}
 }
 
 // descend walks a buffer that holds nested volumes, one level deeper.
@@ -468,6 +500,9 @@ func (w *walker) expand(stream []byte) {
 	// sections, so a volume is found where its section says it is rather
 	// than by scanning for a signature at an assumed alignment.
 	secs := walkSections(plain, 0, len(plain))
+	if secs.cut {
+		w.s.sectionsCut = true
+	}
 	if len(secs.volumes) == 0 && len(secs.lzma) == 0 {
 		w.descend(plain) // not a section stream: a bare volume, or nothing
 		return

@@ -258,10 +258,10 @@ func FuzzFirmwareStructures(f *testing.F) {
 // ── synthetic ESP ────────────────────────────────────────────────────────────
 
 // pe builds a minimal PE image: a DOS header, a PE header and an optional
-// header with the given subsystem, optionally PE32+ and optionally declaring
-// a certificate table.
+// header with the given subsystem, optionally PE32+ and optionally carrying a
+// certificate table that really is there.
 func pe(subsystem uint16, plus, signed bool) []byte {
-	b := make([]byte, 0x200)
+	b := make([]byte, 0x2000)
 	b[0], b[1] = 'M', 'Z'
 	binary.LittleEndian.PutUint32(b[0x3c:], 0x80)
 	copy(b[0x80:], "PE\x00\x00")
@@ -279,8 +279,23 @@ func pe(subsystem uint16, plus, signed bool) []byte {
 	if signed {
 		binary.LittleEndian.PutUint32(b[dirs+4*8:], 0x1000)
 		binary.LittleEndian.PutUint32(b[dirs+4*8+4:], 0x600)
+		certTableAt(b, 0x1000)
 	}
 	return b
+}
+
+// certTableAt writes a WIN_CERTIFICATE entry at off, the way a real
+// Authenticode table is laid out: dwLength covers the header too, the
+// revision is 0x0200 and the type 0x0002 (X.509). The bytes after the header
+// stand in for the certificate itself; only the header is read back.
+func certTableAt(b []byte, off int) {
+	const certLen = 0x40
+	binary.LittleEndian.PutUint32(b[off:], 8+certLen)
+	binary.LittleEndian.PutUint16(b[off+4:], 0x0200)
+	binary.LittleEndian.PutUint16(b[off+6:], 0x0002)
+	for i := 0; i < certLen; i++ {
+		b[off+8+i] = byte(i + 1)
+	}
 }
 
 func writeESP(t *testing.T, files map[string][]byte) string {
@@ -406,6 +421,9 @@ func TestPEHeaderFarFromStart(t *testing.T) {
 	img[0], img[1] = 'M', 'Z'
 	binary.LittleEndian.PutUint32(img[0x3c:], uint32(len(img)))
 	img = append(img, pe(10, true, true)[0x80:]...)
+	// The appended PE names its certificate table at file offset 0x1000, which
+	// is inside the prefix, so the table has to really be there.
+	certTableAt(img, 0x1000)
 	var bin EFIBinary
 	parsePEHeader(bytes.NewReader(img), int64(len(img)), &bin)
 	if !bin.PE || !bin.EFI || !bin.Signed {

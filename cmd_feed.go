@@ -204,8 +204,14 @@ func cmdFeedUpdate(args []string, stdout, stderr io.Writer) int {
 	// Start from the existing cache unless --replace.
 	cache := intel.New()
 	if !*replace {
-		if existing, ok, _ := intel.Load(dest); ok {
+		if existing, ok, err := intel.Load(dest); ok {
 			cache = existing
+		} else if err != nil {
+			// intel.Parse refuses an oversized feed rather than returning it
+			// truncated, so the old cache is dropped here instead of being
+			// merged into. Say so: the update still lands, but the previous
+			// indicators are gone with it.
+			fmt.Fprintf(stderr, "[WARN] the existing feed %s was refused, so this update replaces it: %v\n", dest, err)
 		}
 	}
 
@@ -324,10 +330,10 @@ func rebaselineFeed(dest, manifestPath, signKeyFile string, stdout, stderr io.Wr
 	fmt.Fprintf(stdout, "  baseline  : %s updated for the new feed%s\n", mpath, signed)
 }
 
-const maxFeedFetchBytes = 128 << 20
-
 // fetchFeed downloads a feed over http(s). This is the one networked path in the
-// feed subsystem and runs only on an explicit `--url`.
+// feed subsystem and runs only on an explicit `--url`. intel.Parse bounds the
+// read to its cap and fails on anything longer, so an oversized feed is refused
+// here rather than saved as a complete partial feed.
 func fetchFeed(url string) (*intel.Feed, error) {
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		return nil, fmt.Errorf("feed url must be http:// or https://")
@@ -341,7 +347,7 @@ func fetchFeed(url string) (*intel.Feed, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch failed: HTTP %d", resp.StatusCode)
 	}
-	return intel.Parse(io.LimitReader(resp.Body, maxFeedFetchBytes), url)
+	return intel.Parse(resp.Body, url)
 }
 
 func loadLocalFeed(path string) (*intel.Feed, error) {
@@ -350,7 +356,7 @@ func loadLocalFeed(path string) (*intel.Feed, error) {
 		return nil, err
 	}
 	defer f.Close()
-	return intel.Parse(io.LimitReader(f, maxFeedFetchBytes), path)
+	return intel.Parse(f, path)
 }
 
 func ensureDir(path string) error {

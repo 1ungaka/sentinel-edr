@@ -269,7 +269,7 @@ func buildXZ(t *testing.T, check byte, blocks ...[]byte) []byte {
 		for len(hdr)%4 != 0 {
 			hdr = append(hdr, 0)
 		}
-		hdr[0] = byte(len(hdr)/4) - 1
+		hdr[0] = byte((len(hdr)+4)/4) - 1 // header size counts the CRC too
 		hdr = append(hdr, crc32Bytes(hdr)...)
 		out = append(out, hdr...)
 		out = append(out, data...)
@@ -318,7 +318,13 @@ func TestXZDecodesReferenceStreams(t *testing.T) {
 		if !bytes.Equal(got, w) {
 			t.Errorf("%s: decoded %d bytes, want %d; first difference at %d", path, len(got), len(w), firstDiff(got, w))
 		}
-		if rep.Unverified != 0 || rep.Streams < 1 || rep.Blocks < 1 {
+		// An empty payload is a valid stream with no block at all; a
+		// non-empty one must have produced at least one.
+		blocksOK := rep.Blocks >= 1
+		if len(w) == 0 {
+			blocksOK = rep.Blocks == 0
+		}
+		if rep.Unverified != 0 || rep.Streams < 1 || !blocksOK {
 			t.Errorf("%s: report %+v", path, rep)
 		}
 		if !IsXZ(stream) {
@@ -458,7 +464,7 @@ func rebuildBlockHeader(t *testing.T, stream []byte, flags byte, body []byte) []
 	for len(hdr)%4 != 0 {
 		hdr = append(hdr, 0)
 	}
-	hdr[0] = byte(len(hdr)/4) - 1 // header size counts the CRC too
+	hdr[0] = byte((len(hdr)+4)/4) - 1 // header size counts the CRC too
 	hdr = append(hdr, crc32Bytes(hdr)...)
 	out := append(append([]byte(nil), stream[:12]...), hdr...)
 	// The index's unpadded size counts the header, so the index and the

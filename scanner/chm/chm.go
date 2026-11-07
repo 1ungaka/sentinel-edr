@@ -283,10 +283,16 @@ func enumerate(data []byte) (names []string, truncated bool) {
 		for p < end {
 			nameLen, n, ok := encint(chunk, p, end)
 			if !ok || nameLen == 0 || nameLen > maxCHMNameLen {
+				// A malformed name length ends this chunk's listing: the names
+				// after it are left uninspected, so the walk is marked partial
+				// rather than reported as a complete enumeration.
+				truncated = true
 				break
 			}
 			p += n
 			if p+int(nameLen) > end {
+				// The declared name runs past the chunk: same partial result.
+				truncated = true
 				break
 			}
 			name := string(chunk[p : p+int(nameLen)])
@@ -295,6 +301,9 @@ func enumerate(data []byte) (names []string, truncated bool) {
 			for k := 0; k < 3; k++ {
 				_, n, ok := encint(chunk, p, end)
 				if !ok {
+					// Malformed trailing integer: the entry is still recorded
+					// but the rest of the chunk is not walked.
+					truncated = true
 					p = end
 					break
 				}

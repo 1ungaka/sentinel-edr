@@ -63,7 +63,9 @@ func New(roots []string, maxDirs int) (*Watcher, error) {
 	return w, nil
 }
 
-// Truncated reports that the directory limit was reached.
+// Truncated reports that coverage is incomplete: the directory limit was
+// reached, a watch could not be placed, or a subtree could not be read. In
+// every case part of the tree will not produce events.
 func (w *Watcher) Truncated() bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -77,6 +79,14 @@ func (w *Watcher) Dirs() int {
 	return len(w.dirs)
 }
 
+// markIncomplete records that part of the tree is not covered. A consumer
+// cannot otherwise tell a file nobody watches from a file nothing happened to.
+func (w *Watcher) markIncomplete() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.truncated = true
+}
+
 // addTree watches root and everything below it. A directory created under a
 // watch can be filled before the watch on it exists, so found, when set,
 // receives the files already inside. full, when set, hears that the limit stopped
@@ -88,8 +98,16 @@ func (w *Watcher) addTree(root string, found func(string), full func()) {
 			full()
 		}
 	}()
-	_ = filepath.WalkDir(safefs.WalkRoot(root), func(p string, d fs.DirEntry, err error) error {
+	walked := safefs.WalkRoot(root)
+	_ = filepath.WalkDir(walked, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
+			// A root that is not there is the documented skip, so one default
+			// list works across hosts. Anything else — an unreadable subtree, a
+			// directory that went away mid-walk — is a coverage gap, and the
+			// files under it would never be reported without it.
+			if !(p == walked && errors.Is(err, fs.ErrNotExist)) {
+				w.markIncomplete()
+			}
 			return nil
 		}
 		if d.Type()&fs.ModeSymlink != 0 {
@@ -109,6 +127,9 @@ func (w *Watcher) addTree(root string, found func(string), full func()) {
 		}
 		wd, err := syscall.InotifyAddWatch(int(w.f.Fd()), p, mask)
 		if err != nil {
+			// ENOSPC is the per-user watch limit and it lands here rather than
+			// at the count above: this subtree is unwatched, and silently so.
+			w.truncated = true
 			return nil
 		}
 		w.dirs[int32(wd)] = p

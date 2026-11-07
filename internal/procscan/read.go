@@ -13,6 +13,9 @@ import (
 // root) is simply left empty. It returns ok=false only when the process has
 // vanished entirely (its directory is gone), so a live-but-restricted process is
 // still scored on whatever is readable (comm, cmdline are world-readable).
+//
+// A field longer than its cap is read up to the cap and recorded as truncated
+// in rp.partial, so the scan can say which processes were only partly read.
 func readProc(root string, pid int) (rawProc, bool) {
 	base := filepath.Join(root, strconv.Itoa(pid))
 	if _, err := os.Stat(base); err != nil {
@@ -28,7 +31,13 @@ func readProc(root string, pid int) (rawProc, bool) {
 		rp.exeErr = true
 	}
 
-	if raw := readSmall(filepath.Join(base, "cmdline"), maxCmdlineByte); raw != "" {
+	raw, hit := readSmall2(filepath.Join(base, "cmdline"), maxCmdlineByte)
+	if hit {
+		// The command line was cut, whether or not the bytes kept parsed: the
+		// argv past the cap was never read.
+		rp.truncated("cmdline")
+	}
+	if raw != "" {
 		args := splitNUL(raw)
 		if len(args) > 0 {
 			rp.argv0 = args[0]
@@ -36,9 +45,19 @@ func readProc(root string, pid int) (rawProc, bool) {
 		rp.cmdline = strings.Join(args, " ")
 	}
 
-	rp.libs, rp.anonRWX = mappedFiles(filepath.Join(base, "maps"))
+	var mapsTruncated bool
+	rp.libs, rp.anonRWX, mapsTruncated = mappedFiles(filepath.Join(base, "maps"))
+	if mapsTruncated {
+		rp.truncated("maps")
+	}
 	if isInterpreter(rp.comm) {
-		rp.stdioPeer = stdioPeer(base)
+		// One peer on both descriptors is a shell; two different ones is
+		// reported as the split it is and never as the shell it is not.
+		if peer, in, out := stdioWiring(base); peer != "" {
+			rp.stdioPeer = peer
+		} else if in != "" && out != "" {
+			rp.stdioSplit = in + " -> " + out
+		}
 	}
 	if isInterpreter(rp.comm) || isRelayTool(rp.comm) {
 		rp.stdin, _ = readlink(filepath.Join(base, "fd", "0"))
@@ -48,12 +67,16 @@ func readProc(root string, pid int) (rawProc, bool) {
 		}
 	}
 
-	for _, kv := range splitNUL(readSmall(filepath.Join(base, "environ"), maxEnvironByte)) {
+	envRaw, envHit := readSmall2(filepath.Join(base, "environ"), maxEnvironByte)
+	for _, kv := range splitNUL(envRaw) {
 		if v, ok := strings.CutPrefix(kv, "LD_PRELOAD="); ok {
 			rp.preload = v
 		} else if v, ok := strings.CutPrefix(kv, "LD_LIBRARY_PATH="); ok {
 			rp.libpath = v
 		}
+	}
+	if envHit {
+		rp.truncated("environ")
 	}
 
 	parseStatus(filepath.Join(base, "status"), &rp)
@@ -87,13 +110,31 @@ func parseStartTicks(stat string) uint64 {
 // read: one read saw 27 of 40 sockets on the development host. A process exiting
 // partway through keeps what was already read.
 func readSmall(path string, max int) string {
+	b, _ := readSmall2(path, max)
+	return b
+}
+
+// readSmall2 is readSmall plus whether the byte limit was reached. A /proc file
+// longer than max is cut there, so exactly max bytes read means the rest is
+// still unread: argv past the command-line cap, an LD_PRELOAD past the
+// environment cap, or a mapping past the maps cap are all in that rest.
+func readSmall2(path string, max int) (string, bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	defer f.Close()
 	b, _ := io.ReadAll(io.LimitReader(f, int64(max)))
-	return string(b)
+	return string(b), len(b) == max
+}
+
+// truncated records one field of one process that was cut at a cap, so the
+// scan can say what it did not see instead of reporting the process whole.
+func (rp *rawProc) truncated(field string) {
+	if rp.partial == nil {
+		rp.partial = map[string]bool{}
+	}
+	rp.partial[field] = true
 }
 
 func splitNUL(s string) []string {
@@ -104,13 +145,15 @@ func splitNUL(s string) []string {
 	return strings.Split(s, "\x00")
 }
 
-// mappedFiles returns the distinct file-backed pathnames from a maps file and
-// the number of anonymous writable-and-executable mappings, bounded by
-// maxMapsBytes.
-func mappedFiles(path string) (libs []string, anonRWX int) {
-	raw := readSmall(path, maxMapsBytes)
+// mappedFiles returns the distinct file-backed pathnames from a maps file, the
+// number of anonymous writable-and-executable mappings, and whether the caps
+// (maxMapsBytes of read, maxMappedEntries of pathnames) were reached. A mapping
+// past either cap is not inspected, and a caller that does not say so reports a
+// process as fully mapped that was not.
+func mappedFiles(path string) (libs []string, anonRWX int, truncated bool) {
+	raw, hit := readSmall2(path, maxMapsBytes)
 	if raw == "" {
-		return nil, 0
+		return nil, 0, false
 	}
 	seen := make(map[string]bool)
 	var out []string
@@ -136,11 +179,12 @@ func mappedFiles(path string) (libs []string, anonRWX int) {
 			seen[rest] = true
 			out = append(out, rest)
 		}
-		if len(out) >= 4096 {
+		if len(out) >= maxMappedEntries {
+			truncated = true
 			break
 		}
 	}
-	return out, anonRWX
+	return out, anonRWX, truncated || hit
 }
 
 func readlink(path string) (string, error) { return os.Readlink(path) }

@@ -84,28 +84,40 @@ func isInterpreter(comm string) bool {
 	return interpreters[comm] || interpreters[strings.TrimRight(comm, "0123456789.")]
 }
 
-// stdioPeer reports the TCP peer an interpreter's stdin and stdout are both
-// wired to, or "" when they are not. That wiring is what a reverse or bind
-// shell is, whatever its argv claims, so it survives a renamed or empty command
-// line. It reads /proc/<pid>/fd/{0,1}, which needs the same uid or root.
+// stdioWiring resolves an interpreter's stdin and stdout against its own
+// network namespace. It reads /proc/<pid>/fd/{0,1}, which needs the same uid or
+// root, and reports the TCP peer both are wired to, or "" when they are not.
+// That wiring is what a reverse or bind shell is, whatever its argv claims, so
+// it survives a renamed or empty command line.
 //
 // Only a real TCP connection counts. Harnesses and IDEs routinely run shells
 // over AF_UNIX socketpairs, which also read back as "socket:[n]" (measured on
 // the development host), so the inode is resolved against the process's own
 // network namespace rather than trusted from the link text.
-func stdioPeer(base string) string {
-	in := socketInode(filepath.Join(base, "fd", "0"))
-	out := socketInode(filepath.Join(base, "fd", "1"))
-	if in == "" || out == "" {
-		return ""
+//
+// Both descriptors must name the SAME peer. A shell whose input comes from one
+// connection and whose output goes to another is not the wiring above: it is a
+// harness, a multiplexer, or a shell driven from one place and answered to
+// another, and reporting one peer as if it were both is how an innocent process
+// gets stopped. That case returns no peer plus the two endpoints, for a caller
+// that reports the split as the context it is and never as a shell.
+func stdioWiring(base string) (peer, in, out string) {
+	inInode := socketInode(filepath.Join(base, "fd", "0"))
+	outInode := socketInode(filepath.Join(base, "fd", "1"))
+	if inInode == "" || outInode == "" {
+		return "", "", ""
 	}
 	conns := tcpConnections(base)
-	if peer, ok := conns[in]; ok {
-		if _, ok := conns[out]; ok {
-			return peer
-		}
+	inPeer, inOK := conns[inInode]
+	outPeer, outOK := conns[outInode]
+	switch {
+	case !inOK || !outOK:
+		return "", "", ""
+	case inPeer == outPeer:
+		return inPeer, inPeer, outPeer
+	default:
+		return "", inPeer, outPeer
 	}
-	return ""
 }
 
 func socketInode(link string) string {

@@ -151,6 +151,8 @@ type FuzzyMatch struct {
 type FuzzyDB struct {
 	entries  []FuzzyEntry
 	byImp    map[string]int
+	byTLSH   map[byte][]int
+	bySSDeep map[int][]int
 	warnings []string
 	source   string
 	skipped  int
@@ -161,7 +163,13 @@ type FuzzyDB struct {
 }
 
 // NewFuzzyDB returns an empty database.
-func NewFuzzyDB() *FuzzyDB { return &FuzzyDB{byImp: map[string]int{}} }
+func NewFuzzyDB() *FuzzyDB {
+	return &FuzzyDB{
+		byImp:    map[string]int{},
+		byTLSH:   map[byte][]int{},
+		bySSDeep: map[int][]int{},
+	}
+}
 
 // LoadFuzzyDB reads a database file. Malformed lines are skipped and recorded
 // as warnings; an unreadable file is an error.
@@ -251,6 +259,12 @@ func (db *FuzzyDB) Add(e FuzzyEntry) error {
 	if db.byImp == nil {
 		db.byImp = map[string]int{}
 	}
+	if db.byTLSH == nil {
+		db.byTLSH = map[byte][]int{}
+	}
+	if db.bySSDeep == nil {
+		db.bySSDeep = map[int][]int{}
+	}
 	t, h, err := ValidateFuzzy(e.Type, e.Hash)
 	if err != nil {
 		return err
@@ -280,6 +294,12 @@ func (db *FuzzyDB) Add(e FuzzyEntry) error {
 	}
 	if t == FuzzyImphash {
 		db.byImp[h] = len(db.entries)
+	} else if t == FuzzyTLSH {
+		key := tlshLength(h)
+		db.byTLSH[key] = append(db.byTLSH[key], len(db.entries))
+	} else if t == FuzzySSDeep {
+		key := ssdeepBlockSize(h)
+		db.bySSDeep[key] = append(db.bySSDeep[key], len(db.entries))
 	}
 	db.entries = append(db.entries, entry)
 	return nil
@@ -336,39 +356,73 @@ func (db *FuzzyDB) ssdeepMin() int {
 }
 
 // Lookup returns every entry within threshold of the given digests, closest
-// first. An empty digest of a given type simply skips that type. TLSH and
-// ssdeep lookups are linear over the database; at the sizes a hand-curated
-// fuzzy database reaches that is microseconds, and the design note in PLAN.md
-// records that an indexed structure replaces it before the feed-driven
-// databases of Phase 4 arrive.
+// first. An empty digest of a given type simply skips that type. The database
+// is indexed by the one bound that decides whether a distance is scoreable at
+// all — the TLSH length quantile and the ssdeep block size — so a lookup
+// touches only the buckets a digest can match instead of every entry.
 func (db *FuzzyDB) Lookup(h FuzzyHashes, imphash string) []FuzzyMatch {
 	if db == nil || len(db.entries) == 0 {
 		return nil
 	}
 	var out []FuzzyMatch
-	var query *tlsh.TLSH
-	if h.TLSH != "" {
-		query, _ = parseTLSH(h.TLSH)
+	// Imphash is an exact match, so one map hit settles it.
+	if imphash != "" {
+		if i, ok := db.byImp[strings.ToLower(imphash)]; ok {
+			e := db.entries[i]
+			out = append(out, FuzzyMatch{Type: e.Type, Hash: e.Hash, ThreatName: e.ThreatName, Line: e.Line})
+		}
 	}
-	for _, e := range db.entries {
-		switch e.Type {
-		case FuzzyTLSH:
-			if query == nil || e.parsed == nil {
-				continue
+	// TLSH: the length difference alone is scored 12 per step, so only the
+	// length buckets within threshold/12 of the query can reach the
+	// threshold. The length is measured on a circular scale, so the
+	// neighbours are taken modulo 256.
+	if h.TLSH != "" {
+		if query, err := parseTLSH(h.TLSH); err == nil && query != nil {
+			radius := db.tlshMax() / 12
+			if radius < 1 {
+				radius = 1
 			}
-			if d := query.Diff(e.parsed); d <= db.tlshMax() {
-				out = append(out, FuzzyMatch{Type: e.Type, Hash: e.Hash, ThreatName: e.ThreatName, Distance: d, Line: e.Line})
+			if radius > 128 {
+				radius = 128
 			}
-		case FuzzySSDeep:
-			if h.SSDeep == "" {
-				continue
+			length := tlshLength(h.TLSH)
+			var seen [256]bool
+			for d := -radius; d <= radius; d++ {
+				key := byte(int(length) + d)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				for _, i := range db.byTLSH[key] {
+					e := &db.entries[i]
+					if e.parsed == nil {
+						continue
+					}
+					if dist := query.Diff(e.parsed); dist <= db.tlshMax() {
+						out = append(out, FuzzyMatch{Type: e.Type, Hash: e.Hash, ThreatName: e.ThreatName, Distance: dist, Line: e.Line})
+					}
+				}
 			}
-			if s, err := ssdeep.Distance(h.SSDeep, e.Hash); err == nil && s >= db.ssdeepMin() {
-				out = append(out, FuzzyMatch{Type: e.Type, Hash: e.Hash, ThreatName: e.ThreatName, Score: s, Line: e.Line})
-			}
-		case FuzzyImphash:
-			if imphash != "" && strings.EqualFold(imphash, e.Hash) {
-				out = append(out, FuzzyMatch{Type: e.Type, Hash: e.Hash, ThreatName: e.ThreatName, Line: e.Line})
+		}
+	}
+	// ssdeep: only digests whose block sizes are equal or exactly double are
+	// scored at all, so those buckets hold every candidate.
+	if h.SSDeep != "" {
+		bs := ssdeepBlockSize(h.SSDeep)
+		keys := [3]int{bs, bs * 2, bs / 2}
+		nkeys := 3
+		switch {
+		case bs == 0:
+			nkeys = 1 // every candidate key is 0
+		case bs%2 != 0:
+			nkeys = 2 // a halved block size is not the entry's double
+		}
+		for _, key := range keys[:nkeys] {
+			for _, i := range db.bySSDeep[key] {
+				e := &db.entries[i]
+				if s, err := ssdeep.Distance(h.SSDeep, e.Hash); err == nil && s >= db.ssdeepMin() {
+					out = append(out, FuzzyMatch{Type: e.Type, Hash: e.Hash, ThreatName: e.ThreatName, Score: s, Line: e.Line})
+				}
 			}
 		}
 	}
@@ -381,6 +435,53 @@ func (db *FuzzyDB) Lookup(h FuzzyHashes, imphash string) []FuzzyMatch {
 		return out[i].Line < out[j].Line
 	})
 	return out
+}
+
+// tlshLength returns the length quantile (the "L value") of a normalised
+// 70-hex TLSH digest: the second header byte, whose nibbles the digest swaps.
+// The library scores a length difference of n as 12n, so digests within a
+// match threshold sit in the same or a neighbouring length bucket.
+func tlshLength(digest string) byte {
+	if len(digest) < 4 {
+		return 0
+	}
+	hi, okHi := hexNibble(digest[2])
+	lo, okLo := hexNibble(digest[3])
+	if !okHi || !okLo {
+		return 0
+	}
+	return hi | lo<<4 // swap the nibbles back
+}
+
+func hexNibble(c byte) (byte, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	}
+	return 0, false
+}
+
+// ssdeepBlockSize returns the block size of a "blocksize:hash1:hash2"
+// digest. The library scores only equal or exactly double block sizes, so
+// the block size is the index key.
+func ssdeepBlockSize(digest string) int {
+	i := strings.IndexByte(digest, ':')
+	if i <= 0 {
+		return 0
+	}
+	n := 0
+	for j := 0; j < i; j++ {
+		c := digest[j]
+		if c < '0' || c > '9' {
+			return 0
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
 }
 
 // rank orders matches by closeness on a common scale (lower is closer).

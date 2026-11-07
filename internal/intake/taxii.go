@@ -80,11 +80,15 @@ type TAXIIResult struct {
 	// Pages is the number of envelopes read.
 	Pages int
 	// LastAdded is the newest X-TAXII-Date-Added-Last the server reported:
-	// the AddedAfter value for the next poll. Empty when the server sent none.
+	// the AddedAfter value for the next poll. Empty when the server sent none,
+	// and empty too when Truncated is set: a bound that stopped the poll
+	// part-way through left objects unread, and advancing past them would lose
+	// them, so the next poll asks from the same cursor again and skips what it
+	// already holds.
 	LastAdded string
 	// Truncated reports that a bound (pages or objects) ended the poll while
-	// the server still had more. The objects read are valid; LastAdded lets
-	// the next poll resume after them.
+	// the server still had more. The objects read are valid; when the poll was
+	// not truncated, LastAdded lets the next poll resume after them.
 	Truncated bool
 }
 
@@ -231,7 +235,13 @@ func FetchTAXII(ctx context.Context, opts TAXIIOptions) (TAXIIResult, error) {
 		}
 		for _, o := range env.Objects {
 			if len(res.Objects) >= maxObjects {
+				// The object cap ended the poll part-way through the page.
+				// The response header dates the response's last object, which
+				// was never ingested, so saving it would skip the rest of this
+				// page for ever. The cursor stays where it was and the next
+				// poll re-reads from there, skipping what is already held.
 				res.Truncated = true
+				res.LastAdded = ""
 				return res, nil
 			}
 			res.Objects = append(res.Objects, o)
@@ -248,7 +258,10 @@ func FetchTAXII(ctx context.Context, opts TAXIIOptions) (TAXIIResult, error) {
 		seen[env.Next] = true
 		next = env.Next
 		if res.Pages >= maxPages {
+			// Same bargain as the object cap: the pages after this one were
+			// not read, so their objects must be asked for again.
 			res.Truncated = true
+			res.LastAdded = ""
 			return res, nil
 		}
 	}

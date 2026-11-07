@@ -119,6 +119,8 @@ type Engine struct {
 	Jobs int
 	// FollowSymlinks makes ScanDirectory scan the targets of symbolic links to
 	// regular files. Symlinks to directories are never followed (loop risk).
+	// A link that is followed is resolved to the file it names, so the result
+	// and any prevention acting on it reach the target rather than the link.
 	FollowSymlinks bool
 
 	// Static enables the structural analysis layer (entropy, fuzzy hashes, PE
@@ -334,7 +336,10 @@ func (e *Engine) tradecraftThreshold() int {
 }
 
 // ScanFile runs every configured detector over one file. The heuristic result
-// is nil when heuristics are disabled or the file could not be read.
+// is nil when heuristics are disabled or the file could not be read. With
+// FollowSymlinks a path that is itself a symbolic link is resolved to the file
+// it names, so ScanResult.FilePath is the file that was scanned rather than the
+// link that named it.
 func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 	start := time.Now()
 	res = ScanResult{FilePath: path, Verdict: VerdictClean}
@@ -377,6 +382,23 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 		return fail(fmt.Errorf("%s is not a regular file (%s)", path, fi.Mode().Type()))
 	}
 	res.Size = fi.Size()
+
+	// ── a link is followed to the file it names ─────────
+	// The stat above followed any link, so every read below lands on the target
+	// while the result keeps the link's spelling. Prevention that acts on the
+	// verdict opens the reported path without following a link, so a file
+	// reached through one could never be moved: the run warned and carried on
+	// with the detected target still in place. With --follow-symlinks the link
+	// is resolved once here, so the result names the file that was actually
+	// scanned and the move reaches it. Without the flag the caller's spelling
+	// is kept, and nothing is followed that the walk did not already follow.
+	if e.FollowSymlinks {
+		if li, lerr := os.Lstat(path); lerr == nil && li.Mode()&os.ModeSymlink != 0 {
+			if real, rerr := filepath.EvalSymlinks(path); rerr == nil {
+				path, res.FilePath = real, real
+			}
+		}
+	}
 
 	// ── one read ────────────────────────────────────────
 	// The stat above only routes the file. An attacker writing to the scanned
@@ -464,19 +486,21 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 	}
 
 	// ── YARA ───────────────────────────────────────────
+	// yaraErr is a pass that could not finish (error, timeout). It is written
+	// by the detector and read after wg.Wait below, which orders the access.
+	var yaraErr error
 	if e.Yara != nil {
 		run("yara", func() {
 			var matches []YaraMatch
-			var yerr error
 			if data != nil {
-				matches, yerr = e.Yara.ScanMemYaraStrict(data)
+				matches, yaraErr = e.Yara.ScanMemYaraStrict(data)
 			} else {
-				matches, yerr = e.Yara.ScanFileYaraStrict(path)
+				matches, yaraErr = e.Yara.ScanFileYaraStrict(path)
 			}
-			if yerr != nil {
+			if yaraErr != nil {
 				// Matches collected before the failure are kept: dropping them
 				// would turn a malicious sample into a clean one.
-				note(fmt.Sprintf("YARA: %v", yerr))
+				note(fmt.Sprintf("YARA: %v", yaraErr))
 			}
 			if len(matches) > 0 {
 				res.YaraMatches = matches
@@ -742,6 +766,58 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 		}
 	}
 
+	// ── a pass that could not finish is not a clean verdict ──
+	// A YARA scan that errored or timed out judged only part of the file, and
+	// the report would keep its warning while still labelling the file clean
+	// and exiting 0. Something found keeps its verdict, because the matches are
+	// evidence; nothing found means the file was not scanned, which is what
+	// ERROR already means everywhere else in this result.
+	if yaraErr != nil && res.Verdict == VerdictClean {
+		res.Verdict = VerdictError
+		if res.Error == nil {
+			res.Error = fmt.Errorf("YARA scan of %s did not complete, so the file is only partly scanned: %w", path, yaraErr)
+		}
+	}
+
+	// ── the file changed while it was being scanned ──
+	// Over the in-memory limit the digests come from one open of the path and
+	// YARA's matches from a later one, so a writer that replaced the file in
+	// between would leave the report with one version's hashes and another's
+	// matches. Below it every detector shared the same bytes and there is
+	// nothing to mix. Whatever the change was, the result describes two files,
+	// so it is reported as an incomplete scan rather than as evidence.
+	if data == nil && e.Yara != nil {
+		after, serr := os.Stat(path)
+		why := ""
+		switch {
+		case serr != nil || !os.SameFile(fi, after) ||
+			after.Size() != fi.Size() || !after.ModTime().Equal(fi.ModTime()):
+			now := "unreadable"
+			if serr == nil {
+				now = fmt.Sprint(after.Size())
+			}
+			why = fmt.Sprintf("was %d bytes, now %s", fi.Size(), now)
+		default:
+			// A size and a timestamp are both things a writer can restore, so
+			// they prove nothing on their own: the digests are checked against
+			// a second read, which is the only thing that ties them to the bytes
+			// YARA saw. The path was streamed a moment ago, so the re-read is
+			// the page cache rather than the disk.
+			if again, herr := hashFile(path); herr != nil {
+				why = "it could not be read again to verify its digests"
+			} else if again != d {
+				why = "the bytes no longer match the digests this report carries"
+			}
+		}
+		if why != "" {
+			note(fmt.Sprintf("file changed while it was scanned (%s): the hashes and the YARA matches may describe different versions", why))
+			if res.Error == nil {
+				res.Error = fmt.Errorf("%s changed while it was scanned, so its hashes and its YARA matches may describe different versions", path)
+			}
+			res.Verdict = VerdictError
+		}
+	}
+
 	// ── fusion ─────────────────────────────────────────
 	if !e.NoFusion {
 		res.Fusion = e.fuse(&res, h)
@@ -758,45 +834,57 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 // dropped. progress, if non-nil, is called after each file completes, with the
 // number found so far: scanning starts as the walk does, so a large tree has its
 // first results at once, and the total only settles when the walk ends.
+//
+// A file's result is written straight into its walk position, so the walk holds
+// one entry per file and nothing beside it. The work in flight stays bounded by
+// the workers, and a tree of any size no longer costs a second complete copy of
+// every result before it can be returned.
 func (e *Engine) ScanDirectory(root string, progress func(done, total int, path string)) ([]ScanResult, []HeuristicResult) {
-	type entry struct {
+	type job struct {
+		idx  int
 		path string
 		err  error
-		res  ScanResult
-		heur *HeuristicResult
 	}
+	results := make([]ScanResult, 0, 64)
+	heur := make([]*HeuristicResult, 0, 64)
 	var (
-		entries []*entry
-		found   atomic.Int64
-		wg      sync.WaitGroup
-		mu      sync.Mutex
-		done    int
-		next    = make(chan *entry)
+		found atomic.Int64
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		done  int
+		next  = make(chan job)
 	)
 	for range e.jobs() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for en := range next {
-				if en.err != nil {
-					en.res = ScanResult{FilePath: en.path, Verdict: VerdictError, Error: en.err}
-				} else {
-					en.res, en.heur = e.ScanFile(en.path)
+			for j := range next {
+				if j.err == nil {
+					res, h := e.ScanFile(j.path)
+					mu.Lock()
+					results[j.idx], heur[j.idx] = res, h
+					mu.Unlock()
 				}
 				if progress != nil {
 					mu.Lock()
 					done++
-					progress(done, int(found.Load()), en.path)
+					progress(done, int(found.Load()), j.path)
 					mu.Unlock()
 				}
 			}
 		}()
 	}
 	add := func(path string, err error) {
-		en := &entry{path: path, err: err}
-		entries = append(entries, en)
+		mu.Lock()
+		// The slot is reserved before the file is handed out, so a worker fills
+		// the array in place instead of a per-file box that would live until the
+		// walk ends. An unreadable entry is filed as its error result here.
+		results = append(results, ScanResult{FilePath: path, Verdict: VerdictError, Error: err})
+		heur = append(heur, nil)
+		idx := len(results) - 1
+		mu.Unlock()
 		found.Add(1)
-		next <- en
+		next <- job{idx: idx, path: path, err: err}
 	}
 
 	walkErr := filepath.WalkDir(safefs.WalkRoot(root), func(path string, d fs.DirEntry, err error) error {
@@ -831,13 +919,7 @@ func (e *Engine) ScanDirectory(root string, progress func(done, total int, path 
 	close(next)
 	wg.Wait()
 
-	results := make([]ScanResult, len(entries))
-	heur := make([]*HeuristicResult, len(entries))
-	for i, en := range entries {
-		results[i], heur[i] = en.res, en.heur
-	}
-
-	hs := make([]HeuristicResult, 0, len(entries))
+	hs := make([]HeuristicResult, 0, len(heur))
 	for _, h := range heur {
 		if h != nil {
 			hs = append(hs, *h)

@@ -38,7 +38,8 @@ Flags:
   --threshold <n>    score that counts as a detection (default 8)
   --all              also list observations below the threshold
 
-Exit codes: 0 nothing flagged, 1 one or more detections, 4 usage.
+Exit codes: 0 nothing flagged, 1 one or more detections, 2 the audit could not
+read every path (coverage incomplete), 4 usage.
 `)
 }
 
@@ -86,9 +87,21 @@ func cmdPersist(args []string, stdout, stderr io.Writer) int {
 		if len(flagged) == 0 {
 			fmt.Fprintln(stdout, "\n No persistence detections.")
 		}
+		// What is listed here was found but never read, so no finding from it
+		// says nothing either way: an absent path is the documented skip, an
+		// unread one is not.
+		if len(res.Incomplete) > 0 {
+			fmt.Fprintf(stdout, "\n Incomplete    : %d path(s) could not be read, so those locations are unverified, not clean.\n", len(res.Incomplete))
+			for _, p := range res.Incomplete {
+				fmt.Fprintf(stdout, "     ? %s\n", report.TermSafe(p))
+			}
+		}
 	}
 	if len(flagged) > 0 {
 		return report.ExitThreat
+	}
+	if len(res.Incomplete) > 0 {
+		return report.ExitScanFailed
 	}
 	return report.ExitOK
 }

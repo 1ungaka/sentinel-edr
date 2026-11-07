@@ -69,8 +69,14 @@ TESTFLAGS ?= -timeout 25m
 test:
 	go test $(GOFLAGS) $(TESTFLAGS) $(PKG)
 
+# The race lane skips the TestMeasure* families (scanner/static,
+# internal/peeler, scanner/ole, scanner/encchain). They walk real filesystem
+# trees and are benchmarks in all but name: under -race TestMeasureRealELF
+# alone consumed the suite's whole 25-minute budget and the job timed out with
+# no assertion failed and no race reported. The race detector is for the
+# concurrent code those trees never touch. `make test` still runs them.
 test-race:
-	go test $(GOFLAGS) $(TESTFLAGS) -race -count=1 $(PKG)
+	go test $(GOFLAGS) $(TESTFLAGS) -race -count=1 -skip 'TestMeasure' $(PKG)
 
 vet:
 	go vet $(PKG)

@@ -149,7 +149,7 @@ jobs:
           # cross-compiled). Ask dpkg instead of assuming amd64: an arm64 leg
           # that globbed the amd64 name installed nothing and smoke-tested air.
           arch=$(dpkg --print-architecture)
-          apt-get install -y --no-install-recommends "./dist/cau_*_${arch}.deb"
+          apt-get install -y --no-install-recommends ./dist/cau_*_"${arch}".deb
 
       - name: Smoke test the installed package
         run: scripts/package-smoke.sh
@@ -222,7 +222,7 @@ jobs:
           # Same derivation as the Debian leg: the arch in the .deb filename is
           # the runner's, so read it from dpkg rather than assuming amd64.
           arch=$(dpkg --print-architecture)
-          apt-get install -y --no-install-recommends "./dist/cau_*_${arch}.deb"
+          apt-get install -y --no-install-recommends ./dist/cau_*_"${arch}".deb
 
       - name: Smoke test the installed package
         run: scripts/package-smoke.sh

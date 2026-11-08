@@ -1,6 +1,6 @@
 # Maintainer: Stephan Botes <stephanbotes0@gmail.com>
 pkgname=cau
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='transparent open-source malware detection engine: explained verdicts, labeled classes, ATT&CK techniques'
 arch=('x86_64' 'aarch64')
@@ -10,6 +10,9 @@ depends=('glibc' 'yara')
 makedepends=('go' 'pkgconf')
 optdepends=('systemd: scheduled and resident scanning units'
             'logrotate: rotate what the resident defend daemon appends to /var/log/cau'
+            'nftables: block confirmed malicious network peers with cau defend'
+            'iptables: alternative network blocking backend for cau defend'
+            'iproute2: sever established connections with cau defend --sever'
             'bash-completion: bash completion for cau'
             'zsh: zsh completion for cau'
             'fish: fish completion for cau')
@@ -37,13 +40,14 @@ build() {
 
     # The vendored Go module tree is committed, so the build needs no network
     # and no module cache; -mod=vendor makes a missing vendor/ fail loudly
-    # instead of falling back to a fetch.
+    # instead of falling back to a fetch. Do not let Go download a toolchain
+    # when the installed compiler is older than go.mod requires.
     export CGO_ENABLED=1
-    export GOFLAGS='-mod=vendor'
     export GOPROXY=off
-    # -trimpath keeps the build reproducible, as in the Debian package.
-    go build -trimpath -ldflags "-X main.version=${pkgver}" -o cau .
-    go build -trimpath -ldflags "-X main.version=${pkgver}" -o cau-mcp ./cmd/cau-mcp
+    export GOTOOLCHAIN=local
+    # Use the shared PIE/trimpath build flags for both binaries, including the
+    # build that make install performs in package().
+    make build build-mcp GOFLAGS='-mod=vendor' VERSION="${pkgver}"
 }
 
 package() {
@@ -57,7 +61,13 @@ package() {
     # VERSION is passed explicitly because a release tarball carries no .git:
     # without it, `make install` re-stamps the binary as "dev" and overwrites
     # the one built above with an unversioned build.
-    make install install-systemd install-logrotate install-config PREFIX=/usr DESTDIR="${pkgdir}" VERSION="${pkgver}"
+    # makepkg runs build() and package() in separate environments. Repeat the
+    # offline settings here because install builds both binaries as well.
+    export CGO_ENABLED=1
+    export GOPROXY=off
+    export GOTOOLCHAIN=local
+    make install install-systemd install-logrotate install-config \
+        PREFIX=/usr DESTDIR="${pkgdir}" VERSION="${pkgver}" GOFLAGS='-mod=vendor'
 
     # The unprivileged system user the units run as. The Debian postinst and the
     # RPM %pre create it; on Arch the equivalent is a sysusers.d snippet, which

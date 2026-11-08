@@ -3,7 +3,19 @@
 All notable changes to CAU EDR. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## [0.2.0] - 2026-11-08
+
+### Pipeline, Arch packaging and worker reliability
+
+- Build Arch packages from the checkout being tested, with native x86_64 and
+  ARM container images, synchronized AUR metadata and offline Go builds.
+- Preserve Debian and Kali packages separately in signed release assets and
+  require all six distribution/architecture outputs before signing.
+- Keep pending file changes across defend worker passes and prevent old
+  cooldown timers from releasing files under a new scan.
+- Serialize evaluation progress callbacks, respect the process CPU allocation,
+  and stop evaluation recipes immediately when validation or scanning fails.
+- Install the systemd service account definition with the shared unit target.
 
 ### Network plane: NDR, cross-domain correlation and blocking
 

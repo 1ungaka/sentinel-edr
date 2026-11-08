@@ -49,7 +49,8 @@ type fileQueue struct {
 	limit   int
 	recheck time.Duration
 	closed  bool
-	discard bool // closed for good: what is left is not worth scanning
+	discard bool   // closed for good: what is left is not worth scanning
+	epoch   uint64 // cooldowns belong to the pass that scheduled them
 }
 
 func newFileQueue(limit int, recheck time.Duration) *fileQueue {
@@ -169,9 +170,16 @@ func (q *fileQueue) done(p string) {
 		delete(q.busy, p) // again stays, for reopen
 		return
 	}
+	epoch := q.epoch
 	time.AfterFunc(q.recheck, func() {
 		q.mu.Lock()
 		defer q.mu.Unlock()
+		// finish leaves pending changes for reopen, just as done above does.
+		// A timer from that pass must also leave the next pass's busy state
+		// alone: the same path may already be under a new scan by then.
+		if q.closed || q.epoch != epoch {
+			return
+		}
 		changed := q.again[p]
 		delete(q.busy, p)
 		delete(q.again, p)
@@ -207,6 +215,7 @@ func (q *fileQueue) reopen() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.closed = false
+	q.epoch++
 	again := q.again
 	q.busy, q.again = map[string]bool{}, map[string]bool{}
 	for p := range again {

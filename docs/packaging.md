@@ -10,15 +10,15 @@ guide; the user-facing instructions live in [installation.md](installation.md).
 `make ci` is the engine gate (lint, tests, race, rules lint, coverage gate, eval
 baseline). `.github/workflows/package.yml` is the packaging gate, on every push,
 every pull request and every tag. The `pull_request` trigger is a
-`paths-ignore` list, so a change confined to Markdown, wiki, docs, completions,
-packaging, scripts or `debian/` gets no runner time, and each job carries a
+`paths-ignore` list, so a change confined to Markdown, wiki or docs gets no
+runner time; packaging, scripts and `debian/` changes run the gate. Each job carries a
 bounded runtime:
 
 | Job | Container | Builds | Then |
 |---|---|---|---|
 | `Debian (.deb, x86_64)` / `Debian (.deb, arm64)` | `debian:trixie` | source + binary `.deb` (the source package is built from the tag tarball) | `dpkg -i`, then `scripts/package-smoke.sh` |
 | `Kali Linux (.deb, x86_64)` / `Kali Linux (.deb, arm64)` | `kalilinux/kali-rolling:latest` | binary `.deb` | `apt install ./*.deb`, then smoke test |
-| `Arch Linux (.pkg.tar.zst, x86_64)` / `Arch Linux (.pkg.tar.zst, arm64)` | `archlinux:latest` | `.pkg.tar.zst` from the `PKGBUILD` | `pacman -U`, then smoke test |
+| `Arch Linux (.pkg.tar.zst, x86_64)` / `Arch Linux (.pkg.tar.zst, arm64)` | `archlinux:latest` / `menci/archlinuxarm:latest` | `.pkg.tar.zst` from the `PKGBUILD`, with the current checkout staged as source | `pacman -U`, then smoke test |
 
 Both architectures are built natively, not cross-compiled: the arm64 jobs run
 on an arm64 runner (`ubuntu-24.04-arm`), so the cgo binding to libyara is
@@ -111,9 +111,11 @@ sudo pacman -U ./cau-*.pkg.tar.zst
 Notes:
 
 - The build uses the committed `vendor/` tree with `GOFLAGS=-mod=vendor` and
-  `GOPROXY=off`, so an AUR build never reaches the module proxy.
-- `-trimpath` is passed by the PKGBUILD (and by the Makefile itself), matching
-  the Debian build, so the two packages produce equivalent binaries.
+  `GOPROXY=off` in both build and install phases, so an AUR build never reaches
+  the module proxy. `GOTOOLCHAIN=local` requires a sufficiently new installed Go
+  compiler rather than allowing an automatic toolchain download.
+- Both binaries use the Makefile's `-trimpath -buildmode=pie` flags, matching
+  the Debian build's reproducibility and executable hardening settings.
 - `VERSION=${pkgver}` is passed to `make install` because a release tarball has
   no `.git` directory: without it the binary is re-stamped `dev`.
 - `packaging/cau.sysusers` must be tracked in git: the `package()` step installs
@@ -138,8 +140,11 @@ git commit -m "cau 0.1.0-1: initial release"
 git push
 ```
 
-The `.SRCINFO` must stay in sync with the `PKGBUILD`; CI does not check that, so
-`makepkg --printsrcinfo` is mandatory before every push.
+The `.SRCINFO` must stay in sync with the `PKGBUILD`; CI compares it with
+`makepkg --printsrcinfo` before building, so regenerate it before every push.
+CI uses a staged copy of the recipe with a locally generated, checksummed
+archive of the current checkout. The committed release source URL and checksum
+remain the ones used by AUR users.
 
 ## The signed apt repository
 

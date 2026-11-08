@@ -105,11 +105,16 @@ chown -R cau:cau /usr/share/cau/signatures
 systemctl edit cau-update.service
 #   [Service]
 #   Environment=CAU_UPDATE_URL=https://github.com/s-b-repo/cau/releases/latest/download
+#   Environment=CAU_UPDATE_NAME=cau-v<installed-version>-linux-amd64
 systemctl enable --now cau-update.timer
 ```
 
 The unit will not start without `/etc/cau/release-pubkey.hex`, and fails with a
-clear message if `CAU_UPDATE_URL` is empty. It runs as the unprivileged `cau`
+clear message if `CAU_UPDATE_URL` or `CAU_UPDATE_NAME` is empty. Set the name to
+the exact binary asset listed in that release's signed `SHA256SUMS` (use
+`linux-arm64` on aarch64). The installed binary must match that asset: a distro
+package built with different flags or stripped by its packager needs a checksum
+manifest signed by the operator for those exact bytes. It runs as the unprivileged `cau`
 user with no capabilities and may write only the signature database directory.
 Air-gapped hosts do not use it: deliver the signed bundle on media and run
 `cau update --from <dir>`.

@@ -37,7 +37,7 @@ func ParseOnErrorMode(s string) (OnErrorMode, error) {
 // RunOptions tunes a Runner. The zero value is usable.
 type RunOptions struct {
 	// Concurrency is the number of samples scanned in parallel. Defaults to
-	// runtime.NumCPU() and is clamped to at least 1.
+	// runtime.GOMAXPROCS(0), respecting the process's CPU allocation.
 	Concurrency int
 	// OnError defaults to OnErrorExclude.
 	OnError OnErrorMode
@@ -47,13 +47,14 @@ type RunOptions struct {
 	Tool string
 	// Now supplies the run timestamp (default time.Now).
 	Now func() time.Time
-	// Progress, when set, is called after every sample completes.
+	// Progress, when set, is called after every sample completes. Calls are
+	// serialized and done increases monotonically, so callbacks need no lock.
 	Progress func(done, total int)
 }
 
 func (o RunOptions) normalized() RunOptions {
 	if o.Concurrency < 1 {
-		o.Concurrency = runtime.NumCPU()
+		o.Concurrency = runtime.GOMAXPROCS(0)
 	}
 	if o.Concurrency < 1 {
 		o.Concurrency = 1
@@ -152,19 +153,19 @@ func (r *Runner) Run(m *Manifest) (*Run, error) {
 			results[j.idx] = res
 			mu.Lock()
 			done++
-			d := done
 			if res.Error != "" && firstErr == nil {
 				firstErr = errors.New(res.Error)
 			}
-			mu.Unlock()
 			if opts.Progress != nil {
-				opts.Progress(d, total)
+				opts.Progress(done, total)
 			}
+			mu.Unlock()
 		}
 	}
 
-	wg.Add(opts.Concurrency)
-	for i := 0; i < opts.Concurrency; i++ {
+	workers := min(opts.Concurrency, total)
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
 		go worker()
 	}
 	for i, s := range m.Samples {

@@ -8,7 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -204,6 +207,71 @@ func TestRunnerProgress(t *testing.T) {
 	}
 	if calls != 5 || last != 5 {
 		t.Errorf("progress calls=%d last=%d", calls, last)
+	}
+}
+
+func TestRunnerConcurrentProgressIsSerializedAndOrdered(t *testing.T) {
+	m := writeCorpus(t, 40)
+	var active atomic.Int32
+	var mu sync.Mutex
+	var updates []int
+	_, err := NewRunner([]Detector{nameDetector("a", false)}, RunOptions{Concurrency: 8, Progress: func(done, total int) {
+		if active.Add(1) != 1 {
+			t.Error("progress callbacks overlap")
+		}
+		defer active.Add(-1)
+		// Let other workers finish while this callback is still running.
+		time.Sleep(time.Millisecond)
+		mu.Lock()
+		updates = append(updates, done)
+		mu.Unlock()
+		if total != len(m.Samples) {
+			t.Errorf("total = %d, want %d", total, len(m.Samples))
+		}
+	}}).Run(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updates) != len(m.Samples) {
+		t.Fatalf("got %d callbacks for %d samples", len(updates), len(m.Samples))
+	}
+	for i, done := range updates {
+		if done != i+1 {
+			t.Fatalf("callback %d reported %d completed samples", i+1, done)
+		}
+	}
+}
+
+func TestRunnerDefaultConcurrencyRespectsCPUAllocation(t *testing.T) {
+	previous := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(previous) })
+	run, err := NewRunner([]Detector{nameDetector("a", false)}, RunOptions{}).Run(writeCorpus(t, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Info.Concurrency != 1 {
+		t.Fatalf("concurrency = %d with GOMAXPROCS=1", run.Info.Concurrency)
+	}
+}
+
+func TestRunnerDoesNotStartIdleWorkers(t *testing.T) {
+	// Hold one sample in its detector while inspecting the worker population.
+	// Requested concurrency belongs in the report, but a tiny corpus should
+	// never allocate hundreds of goroutines that can only wait for shutdown.
+	m := writeCorpus(t, 1)
+	before := runtime.NumGoroutine()
+	d := DetectorFunc{DetectorName: "bounded", Fn: func(path string) (Finding, error) {
+		if added := runtime.NumGoroutine() - before; added > 16 {
+			t.Errorf("started %d goroutines for one sample", added)
+		}
+		return Finding{Path: path}, nil
+	}}
+	run, err := NewRunner([]Detector{d}, RunOptions{Concurrency: 256}).Run(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Info.Concurrency != 256 || len(run.Samples) != 1 {
+		t.Fatalf("requested concurrency and sample must survive: %+v", run)
 	}
 }
 

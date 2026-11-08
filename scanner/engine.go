@@ -115,7 +115,7 @@ type Engine struct {
 	// MaxInMemory overrides DefaultMaxInMemory (0 = default).
 	MaxInMemory int64
 	// Jobs is the number of files scanned concurrently by ScanDirectory
-	// (0 = runtime.NumCPU()).
+	// (0 = runtime.GOMAXPROCS(0)).
 	Jobs int
 	// FollowSymlinks makes ScanDirectory scan the targets of symbolic links to
 	// regular files. Symlinks to directories are never followed (loop risk).

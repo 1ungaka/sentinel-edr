@@ -16,14 +16,14 @@ on:
     paths-ignore:
       - "**.md"
       - "wiki/**"
-      - "docs/**"
       - ".github/dependabot.yml"
       - ".github/workflows/wiki.yml"
-      - ".github/workflows/ci.yml"
   # Re-run the packaging proof by hand after a container image or a toolchain
   # change: the three legs pin nothing but `latest`, so an upstream image move
   # has to be provable without waiting for the next tag.
   workflow_dispatch:
+  schedule:
+    - cron: "47 4 * * *"
 
 # Only read the repository: nothing here publishes to a release. The release
 # job in ci.yml downloads these artifacts and publishes the packages itself,
@@ -197,24 +197,29 @@ jobs:
           # job rather than one download. apt's own retry option plus an outer
           # retry of the index covers both the transient and the persistent case.
           set -eu
-          apt_opts="-o Acquire::Retries=5"
+          installed=0
           for attempt in 1 2 3 4 5; do
-            if apt-get $apt_opts update -qq &&
-               apt-get $apt_opts install -y --no-install-recommends \
+            if apt-get -o Acquire::Retries=5 update -qq &&
+               apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
                  build-essential debhelper pkg-config golang-go libyara-dev; then
+              installed=1
               break
             fi
             echo "apt attempt $attempt failed, retrying" >&2
             sleep 15
           done
+          [ "$installed" -eq 1 ] || exit 1
           go version
           pkg-config --modversion yara
 
       - name: Build the binary package
         run: |
+          set -eu
           dpkg-buildpackage -us -uc -b
           mkdir -p dist
-          mv ../cau_*.deb ../cau_*.build ../cau_*.changes dist/ || true
+          for f in ../cau_*.deb ../cau_*.build ../cau_*.buildinfo ../cau_*.changes; do
+            if [ -e "$f" ]; then mv "$f" dist/; fi
+          done
           ls -l dist/
 
       - name: Install the package
@@ -247,10 +252,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {arch: amd64, runner: ubuntu-latest}
-          - {arch: arm64, runner: ubuntu-24.04-arm}
+          - {arch: amd64, runner: ubuntu-latest, image: 'archlinux:latest'}
+          # The official Arch image is x86_64-only. Arch Linux ARM needs its
+          # native rootfs as well as a native runner; emulation masks this bug.
+          - {arch: arm64, runner: ubuntu-24.04-arm, image: 'menci/archlinuxarm:latest'}
     timeout-minutes: 30
-    container: archlinux:latest
+    container: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         # The Makefile derives the version from `git describe`, so a shallow checkout
@@ -262,19 +269,42 @@ jobs:
 
       - name: Install the build toolchain
         run: |
-          pacman -Sy --noconfirm --needed base-devel go pkgconf yara sudo git
+          set -eu
+          # Refresh and upgrade together: a partial upgrade can leave the Go
+          # toolchain or libyara linked against libraries absent in the image.
+          pacman -Syu --noconfirm --needed base-devel go pkgconf yara sudo git
+          go version
+          pkg-config --modversion yara
+
+      - name: Check the AUR metadata
+        run: |
+          set -eu
+          cd packaging/arch
+          makepkg --printsrcinfo > "$RUNNER_TEMP/cau.SRCINFO"
+          diff -u .SRCINFO "$RUNNER_TEMP/cau.SRCINFO"
 
       - name: Build the package as the unprivileged builder
         run: |
-          # makepkg refuses to run as root, and the package is built from the
-          # committed tree: the vendor/ directory is what makes the build work
-          # without network access to the module proxy.
-          useradd -m -G wheel builder || true
-          chown -R builder "$GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE/packaging/arch"
-          sudo -u builder makepkg -s --noconfirm
+          set -eu
+          # Build the commit under review, rather than downloading the last
+          # release. This also breaks the tag-release dependency cycle: release
+          # publishing waits for these packages before the source asset exists.
+          builddir="$RUNNER_TEMP/cau-arch-build"
+          mkdir -p "$builddir"
+          cp packaging/arch/PKGBUILD "$builddir/"
+          pkgver=$(bash -c '. "$1"; printf "%s" "$pkgver"' -- packaging/arch/PKGBUILD)
+          archive="cau-${pkgver}.tar.gz"
+          scripts/source-archive.sh "$pkgver" "$builddir/$archive"
+          checksum=$(sha256sum "$builddir/$archive" | cut -d ' ' -f 1)
+          # Only this disposable recipe changes. The AUR recipe retains its
+          # published release URL and pinned checksum.
+          printf '\nsource=("%s")\nsha256sums=("%s")\n' "$archive" "$checksum" >> "$builddir/PKGBUILD"
+          useradd -m builder
+          chown -R builder "$builddir"
+          cd "$builddir"
+          sudo -u builder makepkg --noconfirm
           mkdir -p "$GITHUB_WORKSPACE/dist"
-          cp *.pkg.tar.zst "$GITHUB_WORKSPACE/dist/"
+          cp ./*.pkg.tar.zst "$GITHUB_WORKSPACE/dist/"
           ls -l "$GITHUB_WORKSPACE/dist/"
 
       - name: Install the package

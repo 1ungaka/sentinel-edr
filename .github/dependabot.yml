@@ -1,7 +1,7 @@
 version: 2
 
 # The workflows and the composite action they share pin their actions to
-# floating major tags (checkout, setup-go in .github/actions/cau-env,
+# immutable commit SHAs (checkout, setup-go in .github/actions/cau-env,
 # upload-artifact, upload-sarif, action-gh-release), and nothing in the
 # repository watches those pins, so a new major can land silently. Grouping them
 # into one pull request keeps a week of patch bumps from arriving as five. The

@@ -46,9 +46,9 @@ EVAL_OUT ?= eval-out
 
 export CGO_ENABLED=1
 
-.PHONY: regex-audit vm-respond eval-lab all build test test-race vet fmt fmt-check lint bench clean install \
+.PHONY: regex-audit vm-respond all build test test-race vet fmt fmt-check lint bench clean install \
          install-systemd install-logrotate install-config \
-         eval eval-validate eval-run eval-gate baseline lint-rules coverage \
+         eval eval-validate eval-run eval-gate eval-recall eval-specificity eval-lab baseline lint-rules coverage \
          coverage-gate coverage-record fuzz ci build-mcp
 
 all: build build-mcp
@@ -88,7 +88,11 @@ fmt-check:
 	@out=$$(gofmt -l $$(find . -name '*.go' -not -path './vendor/*' -not -path './cau-kernel/*')); \
 	if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
-lint: fmt-check vet
+.PHONY: pipeline-check
+pipeline-check:
+	scripts/test-pipeline.sh
+
+lint: fmt-check vet pipeline-check
 
 # Regex sweep for bug shapes: swallowed errors, memory handling, broken logic and
 # more, over all the code in the tree. Hits are candidates and need reading.
@@ -171,7 +175,7 @@ HELDOUT_MANIFEST ?= corpus/heldout/manifest.json
 # fetched, so CI (which never downloads malware) is unaffected. Build it with
 # 'cau heldout pull' + scripts/fetch-heldout.sh.
 eval-recall: build
-	@if [ -f "$(HELDOUT_MANIFEST)" ]; then \
+	@set -eu; if [ -f "$(HELDOUT_MANIFEST)" ]; then \
 		mkdir -p $(EVAL_OUT); \
 		./$(BINARY) eval validate --corpus $(HELDOUT_MANIFEST) --verify-hashes --require-provenance; \
 		./$(BINARY) eval run --corpus $(HELDOUT_MANIFEST) --rules $(RULES) --out $(EVAL_OUT)/recall.json; \
@@ -184,7 +188,7 @@ eval-recall: build
 # Point CLEAN_ROOT at a tree known to be benign (e.g. a Kali install's /usr).
 CLEAN_ROOT ?=
 eval-specificity: build
-	@if [ -z "$(CLEAN_ROOT)" ]; then \
+	@set -eu; if [ -z "$(CLEAN_ROOT)" ]; then \
 		echo "eval-specificity: set CLEAN_ROOT=<benign dir> (e.g. CLEAN_ROOT=/usr) (skipping)"; \
 	else \
 		mkdir -p $(EVAL_OUT); \
@@ -200,7 +204,7 @@ eval-specificity: build
 # the aggregate from `heldout`. Build it once with scripts/build-lab-corpus.py.
 LAB ?= corpus/lab
 eval-lab: build
-	@if [ -f "$(LAB)/manifest-dev.json" ]; then \
+	@set -eu; if [ -f "$(LAB)/manifest-dev.json" ]; then \
 		mkdir -p $(EVAL_OUT)/lab; \
 		reports=""; \
 		for split in dev heldout revshell-dev revshell-heldout catalog; do \
@@ -282,6 +286,8 @@ install-systemd:
 	install -m 0644 packaging/systemd/cau-scan.timer $(DESTDIR)$(PREFIX)/lib/systemd/system/
 	install -m 0644 packaging/systemd/cau-update.service $(DESTDIR)$(PREFIX)/lib/systemd/system/
 	install -m 0644 packaging/systemd/cau-update.timer $(DESTDIR)$(PREFIX)/lib/systemd/system/
+	install -d $(DESTDIR)$(PREFIX)/lib/sysusers.d
+	install -m 0644 packaging/cau.sysusers $(DESTDIR)$(PREFIX)/lib/sysusers.d/cau.conf
 
 # Rotation for what the resident daemon writes. This is not optional polish for
 # a service designed to be left running: cau-defend.service appends to

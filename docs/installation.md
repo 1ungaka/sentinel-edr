@@ -18,7 +18,7 @@ sudo apt install golang-go libyara-dev pkg-config build-essential
 # Fedora
 sudo dnf install golang yara-devel pkgconf-pkg-config gcc
 # Arch Linux
-sudo pacman -S go yara pkgconf
+sudo pacman -S --needed base-devel go yara pkgconf
 # macOS
 brew install go yara pkg-config
 ```
@@ -86,6 +86,7 @@ The optional scheduled-scan units are not installed by default:
 
 ```sh
 sudo make install-systemd PREFIX=/usr
+sudo systemd-sysusers /usr/lib/sysusers.d/cau.conf  # create the service account
 sudo make install-config                # /etc/cau/cau.conf, the agent's configuration
 sudo make install-logrotate             # /etc/logrotate.d/cau, for cau-defend's log
 ```
@@ -145,8 +146,11 @@ cd packaging/arch && makepkg -si
 yay -S cau
 ```
 
-The `PKGBUILD` builds from the committed vendored module tree, so it never
-touches the Go module proxy, and stamps the version from the tag. The packaged
+The `PKGBUILD` downloads the checksummed source asset for its `pkgver`; running
+it from a checkout still builds that release. It builds from the vendored module
+tree without contacting the Go module proxy or downloading a toolchain, and
+stamps `pkgver` into both binaries. CI separately stages the current checkout
+as a source archive so every change is packaged and tested before release. The packaged
 systemd units run as the unprivileged `cau` user, so the package ships a
 `sysusers.d` snippet that creates that system account (no home, no login shell)
 at install time; on a host without systemd-sysusers, create it yourself with
@@ -165,7 +169,7 @@ release is the one `cau selftest` verifies against.
 The first tag, `v0.1.0`, was cut on 2026-11-02. Every `v*` tag triggers the CI
 release job, which builds `cau-<tag>-linux-amd64.tar.gz` with the rules and
 signatures and attaches it to the GitHub release together with `SHA256SUMS`,
-the `cau_<version>-1_amd64.deb`, the Kali `.deb` and the
+the `cau_<version>-1_amd64.deb`, the `cau-kali_<version>-1_amd64.deb` and the
 `cau-<version>-1-x86_64.pkg.tar.zst` — the packaging workflow builds those
 packages, the release job downloads their artifacts and publishes them itself,
 so a release carries them next to the source tarball and the signed update

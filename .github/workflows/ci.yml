@@ -1,6 +1,6 @@
 name: ci
 
-# One workflow, six lanes. Every gate in this repository is already a make target
+# One workflow, six validation lanes. Every gate in this repository is already a make target
 # in the Makefile; the workflow only decides which lane runs what, how long it
 # may take and what gets published. The lanes share a checkout and a composite
 # action, not a job: a red `test` can never mask a green `detection gates`, and
@@ -9,21 +9,18 @@ name: ci
 
 on:
   pull_request:
-    # Documentation, wiki, packaging and completion-only changes cannot move any
-    # gate in this workflow, so they get no runner time. main pushes and tags are
-    # never path-filtered: they are the integration gate and the release trigger,
+    # Prose and completion-only changes cannot move the engine gates. Scripts
+    # and packaging do affect the release and run its wiring regression checks.
+    # Main pushes and tags are never path-filtered: they are the integration gate and release trigger,
     # and a tag whose head commit is a docs change must still cut a release.
     paths-ignore:
       - "**.md"
       - "wiki/**"
       - "docs/**"
       - "completions/**"
-      - "packaging/**"
-      - "scripts/**"
       - "debian/**"
       - ".github/dependabot.yml"
       - ".github/workflows/wiki.yml"
-      - ".github/workflows/package.yml"
   push:
     branches: [main]
     tags: ["v*"]
@@ -52,8 +49,13 @@ jobs:
 
       - uses: ./.github/actions/cau-env
 
-      - name: gofmt and go vet
+      - name: gofmt, go vet and pipeline regressions
         run: make lint
+
+      - name: Validate GitHub workflows and shell commands
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" --workdir /repo \
+            rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 -color
 
       # Debian and Arch build offline out of the committed vendor/ tree
       # (debian/rules: GOPROXY=off), so a stale vendor/ breaks packaging rather
@@ -145,7 +147,7 @@ jobs:
       - name: Upload the SARIF to code scanning
         # The guard matters: if the scan step died there is no SARIF to upload,
         # and code scanning keeps the last good set rather than being wiped.
-        if: always() && hashFiles('cau.sarif') != ''
+        if: always() && hashFiles('cau.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: github/codeql-action/upload-sarif@9418214df1f2c4b8128c770156c409013b07d6b9 # v3
         with:
           sarif_file: cau.sarif
@@ -278,47 +280,9 @@ jobs:
             # signed, so the SBOM is covered by the release signature.
             ./cau bundle sbom --binary "$art" --output "dist/${art}-${tag}-linux-amd64.cdx.json"
           done
-          # The source tarball, and why it is built here rather than linked.
-          # GitHub's /archive/ tarballs are generated per request and are not
-          # byte-stable, so a sha256 recorded from one fetch does not match the
-          # bytes a packager downloads next (this is what broke the Arch build:
-          # makepkg's source validation failed on a URL the tree had not
-          # changed). This asset is fixed bytes, so the PKGBUILD, the Debian
-          # orig tarball and `uscan` can all pin it.
-          #
-          # Determinism is built in three steps, and all three are load-bearing:
-          #   1. What is excluded is chosen by pathspec, not by
-          #      .gitattributes export-ignore. export-ignore looks right and is
-          #      the wrong tool: GitHub's codeload archive — which
-          #      actions/checkout downloads instead of cloning — applies it, so
-          #      marking debian/ export-ignore silently deleted debian/,
-          #      packaging/ and .github/ from every CI checkout and three jobs
-          #      died on a missing debian/changelog.
-          #      What comes out: packaging/arch/ (the PKGBUILD that hashes this
-          #      tarball, so it cannot be inside it), debian/ and .github/.
-          #      What stays: packaging/systemd/, because the PKGBUILD installs
-          #      the units out of the source tree, and excluding the whole
-          #      tree breaks `make install-systemd` for Arch users.
-          #   2. tar restamps every member to a FIXED epoch. Using the tag's
-          #      commit date here would look natural and would be wrong: it
-          #      makes the bytes change on every new commit, and the recorded
-          #      checksum would only match the tree at the instant it was
-          #      taken. A constant makes the checksum a function of content
-          #      alone, which is what a packager needs to pin.
-          #   3. --sort=name, owner/group 0 and gzip -n remove the remaining
-          #      per-run variation (name order, usernames, gzip timestamp).
-          # Verified locally: two runs produce one checksum, and the checksum is
-          # unchanged by a commit that only touches packaging/.
-          SOURCE_DATE_EPOCH=1735689600
-          v=${tag#v}
-          stage=$(mktemp -d)
-          git archive --format=tar --prefix="cau-${v}/" "$tag" -- . \
-            ':(exclude)packaging/arch' ':(exclude)debian' ':(exclude).github' |
-            tar -x -C "$stage"
-          tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 \
-            --numeric-owner --format=gnu -C "$stage" -cf - "cau-${v}" |
-            gzip -9n > "dist/cau-${v}.tar.gz"
-          rm -rf "$stage"
+          # Both packaging and release use one deterministic archive recipe.
+          # The fixed-byte asset is what the AUR checksum pins.
+          scripts/source-archive.sh "${tag#v}" "dist/cau-${tag#v}.tar.gz" "$tag"
           ls -l dist
 
       - name: Stage the distro packages before signing
@@ -345,6 +309,7 @@ jobs:
           run_id=""
           for _ in 1 2 3 4 5; do
             run_id=$(gh run list -w package.yml -e push -c "$GITHUB_SHA" \
+              --branch "$GITHUB_REF_NAME" --limit 100 \
               --json databaseId,createdAt \
               --jq 'sort_by(.createdAt) | last | .databaseId // empty')
             [ -n "$run_id" ] && break
@@ -365,31 +330,10 @@ jobs:
           # not collide on the way in.
           gh run download "$run_id" --dir "$stage"
           mkdir -p dist
-          # Sorted, so the move order is deterministic: the Debian and Kali legs
-          # build the same filename for the same architecture, and the release
-          # publishes exactly the bytes that land in dist/ (and so sign them).
-          # Only the packages the installation guide names move; the source
-          # package and its build metadata stay in the workflow artifact.
-          find "$stage" -type f \( -name '*.deb' -o -name '*.pkg.tar.zst' \) \
-            | sort | while IFS= read -r f; do
-                mv "$f" "dist/$(basename "$f")"
-              done
-          # Every leg of the matrix delivered, or nothing ships: a manifest
-          # with a package-sized hole in it is the bug this staging replaces.
-          shopt -s nullglob
-          missing=0
-          for pat in 'cau_*_amd64.deb' 'cau_*_arm64.deb' \
-                     'cau-*-x86_64.pkg.tar.zst' 'cau-*-aarch64.pkg.tar.zst'; do
-            hits=(dist/$pat)
-            if [ "${#hits[@]}" -eq 0 ]; then
-              echo "::error::the release has no staged package matching dist/$pat"
-              missing=1
-            fi
-          done
-          if [ "$missing" -ne 0 ]; then
-            echo "::error::not every distro package reached dist/: refusing to sign a manifest that does not cover them"
-            exit 1
-          fi
+          # Assert each distro/architecture artifact individually. Debian and
+          # Kali use equal package filenames; staging renames the Kali assets
+          # so neither silently overwrites the other before signing.
+          scripts/stage-release-packages.sh "$stage" dist
           ls -l dist/
 
       - name: Sign the update bundle, the integrity baseline and the checksums
@@ -397,7 +341,8 @@ jobs:
           set -euo pipefail
           if [ -z "$CAU_RELEASE_SIGNING_KEY" ]; then
             echo "::warning::CAU_RELEASE_SIGNING_KEY is not set; publishing an UNSIGNED release"
-            (cd dist && sha256sum * > SHA256SUMS)
+            (cd dist && find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' -print0 |
+              sort -z | xargs -0 sha256sum > SHA256SUMS)
             exit 0
           fi
           # Write the key to a private temp file, sign, then shred it.
@@ -429,8 +374,8 @@ jobs:
           #    the public key used to ship.
           #    The binary thereby references itself: its own hash is in a file it
           #    can fetch and verify against the pinned key.
-          ./cau bundle checksums --sign-key "$KEYFILE" --out dist \
-            $(find dist -maxdepth 1 -type f ! -name 'SHA256SUMS*')
+          mapfile -d '' release_files < <(find dist -maxdepth 1 -type f ! -name 'SHA256SUMS*' -print0 | sort -z)
+          ./cau bundle checksums --sign-key "$KEYFILE" --out dist "${release_files[@]}"
 
       - name: Verify the signed artifacts before publishing
         if: env.CAU_RELEASE_SIGNING_KEY != '' && env.CAU_RELEASE_PUBLIC_KEY != ''

@@ -262,6 +262,49 @@ func TestReopenDeliversPendingChanges(t *testing.T) {
 	}
 }
 
+// Another worker can keep a finished pass alive longer than this file's
+// cooldown. Its pending change must still be there when the next pass starts.
+func TestCooldownAfterFinishPreservesPendingChanges(t *testing.T) {
+	q := newFileQueue(10, 5*time.Millisecond)
+	defer q.close()
+	q.push("/a")
+	p, _ := q.pop(false)
+	q.done(p)
+	q.push("/a")
+	q.finish()
+	time.Sleep(50 * time.Millisecond)
+	q.reopen()
+	if !popWithin(q, time.Second) {
+		t.Fatal("a cooldown during finish lost the pending change")
+	}
+}
+
+// A cooldown from the previous pass must not make a current scan appear idle,
+// which would allow two workers to scan the same path and lose its recheck.
+func TestPreviousPassCooldownCannotReleaseCurrentScan(t *testing.T) {
+	q := newFileQueue(10, 5*time.Millisecond)
+	defer q.close()
+	q.push("/a")
+	p, _ := q.pop(false)
+	q.done(p)
+	q.push("/a")
+	q.finish()
+	q.reopen()
+	if p, ok := q.pop(false); !ok || p != "/a" {
+		t.Fatalf("next pass got %q, %v", p, ok)
+	}
+	// Hold the new scan open until the old cooldown has expired.
+	time.Sleep(50 * time.Millisecond)
+	q.push("/a")
+	if n := q.size(); n != 0 {
+		t.Fatalf("%d paths queued while the current scan is still busy", n)
+	}
+	q.done("/a")
+	if !popWithin(q, time.Second) {
+		t.Fatal("the current scan's pending change was lost")
+	}
+}
+
 func TestStripesAreStablePerKey(t *testing.T) {
 	var s stripes
 	if s.of("/a") != s.of("/a") {

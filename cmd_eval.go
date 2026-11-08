@@ -135,7 +135,7 @@ func evalRun(args []string, stdout, stderr io.Writer) int {
 	encChainThreshold := fs.Int("encchain-threshold", encchain.Threshold, "encoded-executable detection threshold")
 	noFormats := fs.Bool("no-format-passes", false, "disable the format passes (.lnk, OLE, PDF, ISO, Linux package, peeler, archive, CHM, tradecraft)")
 	noFusion := fs.Bool("no-fusion", false, "disable the fusion detector (corroboration of sub-threshold detectors)")
-	jobs := fs.Int("jobs", 0, "samples scanned concurrently (default: number of CPUs)")
+	jobs := fs.Int("jobs", 0, "samples scanned concurrently (default: GOMAXPROCS)")
 	onError := fs.String("on-error", string(eval.OnErrorExclude), "unscannable samples: exclude, miss (count as FN) or fail")
 	maxSize := fs.Int64("max-file-size", 0, "skip samples larger than this many bytes")
 	out := fs.String("out", "", "write the JSON report here (this is what you commit as a baseline)")

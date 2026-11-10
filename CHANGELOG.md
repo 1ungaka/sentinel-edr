@@ -5,6 +5,28 @@ All notable changes to CAU EDR. The format follows
 
 ## [Unreleased]
 
+### The temporal gate: does the content still catch what it caught?
+
+- **New `cau eval temporal`** (`internal/eval/temporal.go`): the shipped content
+  is scored on both sides of a time boundary in the corpus, and a recall drop
+  across that boundary fails the gate. Temporal snooping is the field's most
+  widespread evaluation flaw — content tuned on everything at once looks best
+  in distribution and is often the worst across a time boundary — and a gate
+  is the only way to notice.
+  - A corpus declares the period each sample belongs to (`"period":
+    "2026-10-24"`), or the manifest declares a default. The corpus is cut at
+    the median period, or at the one `--split` names.
+  - The rule is the policy's `max_recall_drop`, applied across the boundary.
+    An undefined metric — a period with no malware in it — is skipped with a
+    note, never a failure.
+  - The per-detector table is the diagnostic: it shows which detector caught
+    what in which period, so a rule that stopped carrying a period shows up
+    even when another rule covers for it.
+  - `make temporal-gate` runs it, `make eval` includes it, and the CI gates
+    lane names it as its own step.
+  - The committed smoke corpus now carries the days its samples entered it, so
+    the gate has a real (if small) time dimension to measure.
+
 ### The evasion report: how fragile the shipped detections are
 
 - **New `cau evasion report` and `cau evasion bench`** (`internal/evasion`): for

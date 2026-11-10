@@ -1237,6 +1237,8 @@ cau eval run       scan a corpus and write a measured report (optionally gate it
 cau eval report    render a saved report as text or JSON
 cau eval diff      compare two reports
 cau eval gate      fail (exit 1) when a candidate report regresses against a baseline
+cau eval temporal  score the content across a time boundary in the corpus: the recall
+                   drop across the boundary fails the gate
 cau eval policy    print the default regression policy as JSON
 ```
 
@@ -1285,6 +1287,23 @@ cau eval gate   --candidate b.json [--baseline a.json] [--policy p.json] [--form
 ```
 
 `gate` without `--baseline` applies only the policy's absolute rules.
+
+### cau eval temporal
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--corpus PATH` | | corpus manifest (required) |
+| `--split PERIOD` | the median period | the period that opens the later half |
+| `--policy PATH` | built-in | the policy whose `max_recall_drop` applies |
+| `--max-drop POINTS` | the policy's | the recall drop across the boundary that fails the gate |
+| `--db PATH`, `--rules PATH`, `--fuzzy-db PATH` | | as in `cau eval run` |
+| `--format text\|json` | text | stdout rendering |
+| `--out PATH` | | write the JSON measurement here |
+| `--quiet` | | no progress |
+
+The corpus is cut at the period boundary and both sides are scored by the same
+scan. The gate fails when the content loses more recall across the boundary
+than the policy allows. See [Evaluation](evaluation.md#the-temporal-gate).
 
 ## cau rules
 

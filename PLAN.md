@@ -562,11 +562,18 @@ Static engines lose to packing. Each tier earns its place only where the previou
 
 - [ ] ONNX Runtime sidecar over gRPC from the Go core. Do not do inference in Go.
 - [ ] Adversarial training mandatory — reduces evasion, does not remove it.
-- [ ] **Temporal generalization as a hard CI gate.** Train on period A, score on period B,
+- [x] **Temporal generalization as a hard CI gate.** Train on period A, score on period B,
       fail on AUC drop. TESSERACT / Arp et al.: temporal snooping is the field's most
       widespread evaluation flaw. Flat-feature models look best in-distribution and are
       among the worst across a time boundary — a conventional benchmark would reject
-      message passing entirely. Making this a gate is a differentiator.
+      message passing entirely. Making this a gate is a differentiator. Shipped in the
+      engine's form (`cau eval temporal`, `make temporal-gate`, its own CI lane): a
+      corpus declares the period each sample belongs to, the corpus is cut at the
+      boundary, and the shipped content must not lose more recall across it than the
+      policy allows. There is no model here — what has to generalise across the
+      boundary is the detection content, and the gate says how much of it did not.
+      The per-detector table is the diagnostic: a rule that stopped carrying a period
+      shows up even when another rule covers for it.
 - [ ] Model registry with signed artifacts, SBOM, model cards, promote/rollback.
 
 ---

@@ -66,6 +66,9 @@ type Defaults struct {
 	Family  string `json:"family,omitempty"`
 	Source  string `json:"source,omitempty"`
 	License string `json:"license,omitempty"`
+	// Period is the default time period for samples that declare none. The
+	// temporal gate splits the corpus on it.
+	Period string `json:"period,omitempty"`
 }
 
 // Provenance records where a sample came from. It is mandatory (as a warning at
@@ -89,6 +92,11 @@ type Sample struct {
 	Notes      string     `json:"notes,omitempty"`
 	Tags       []string   `json:"tags,omitempty"`
 	Provenance Provenance `json:"provenance,omitempty"`
+	// Period is the time period the sample belongs to ("2026-10"). The
+	// temporal gate splits the corpus on it, so a corpus that grew over time
+	// can say whether the content still catches what it caught earlier. It is
+	// a string that sorts chronologically.
+	Period string `json:"period,omitempty"`
 
 	// resolved is the absolute (or manifest-relative) filesystem path derived
 	// from Path and the manifest directory. Computed by Resolve, never
@@ -219,6 +227,9 @@ func (m *Manifest) Resolve() error {
 	for i := range m.Samples {
 		s := &m.Samples[i]
 		s.Label = NormalizeLabel(firstNonEmpty(s.Label, m.Defaults.Label))
+		if s.Period == "" {
+			s.Period = strings.TrimSpace(m.Defaults.Period)
+		}
 		if s.Provenance.Source == "" {
 			s.Provenance.Source = firstNonEmpty(s.Source, m.Defaults.Source)
 		}

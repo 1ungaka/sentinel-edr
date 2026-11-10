@@ -49,7 +49,7 @@ export CGO_ENABLED=1
 .PHONY: regex-audit vm-respond all build test test-race vet fmt fmt-check lint bench clean install \
          install-systemd install-logrotate install-config \
          eval eval-validate eval-run eval-gate eval-recall eval-specificity eval-lab baseline lint-rules coverage \
-         coverage-gate coverage-record fuzz ci build-mcp
+         coverage-gate coverage-record fuzz ci build-mcp temporal-gate
 
 all: build build-mcp
 
@@ -164,7 +164,14 @@ eval-run: build
 eval-gate: eval-run
 	./$(BINARY) eval gate --baseline $(BASELINE) --candidate $(EVAL_OUT)/report.json --policy $(POLICY)
 
-eval: eval-validate eval-gate
+# The temporal gate: the shipped content must not lose recall across a time
+# boundary in the corpus. It measures a different thing from the eval gate —
+# not "did this change regress" but "does the content still catch what it
+# caught in an earlier period" — so it is its own target and its own lane.
+temporal-gate: build
+	./$(BINARY) eval temporal --corpus $(CORPUS) --db $(CORPUS_DB) --rules $(RULES) --quiet
+
+eval: eval-validate eval-gate temporal-gate
 
 # Re-record the baseline (review the diff before committing it).
 baseline: build

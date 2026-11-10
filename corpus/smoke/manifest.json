@@ -13,7 +13,8 @@
       "label": "wannacry",
       "family": "wannacry",
       "sha256": "67752ad7dbcabbf644510590b078e9649104756f19c0222443641f74cadbca51",
-      "notes": "trips rules/rule_list.yar: wannacry_ransomware"
+      "notes": "trips rules/rule_list.yar: wannacry_ransomware",
+      "period": "2026-10-24"
     },
     {
       "id": "mal-mimikatz_strings",
@@ -21,7 +22,8 @@
       "label": "mimikatz",
       "family": "mimikatz",
       "sha256": "1bd750ba45cd726c869b19984529bfb50c36b18feee2265faa41d7205505158d",
-      "notes": "trips rules/rule_list.yar: mimikatz_strings"
+      "notes": "trips rules/rule_list.yar: mimikatz_strings",
+      "period": "2026-10-24"
     },
     {
       "id": "mal-lokibot_strings",
@@ -29,7 +31,8 @@
       "label": "lokibot",
       "family": "lokibot",
       "sha256": "29f1e4857b3dcada5f74a9434c0327262ff08b9d165d7b3090a699de9582825c",
-      "notes": "trips rules/rule_list.yar: lokibot_stealer"
+      "notes": "trips rules/rule_list.yar: lokibot_stealer",
+      "period": "2026-10-24"
     },
     {
       "id": "mal-ransom_extensions",
@@ -37,7 +40,8 @@
       "label": "generic_ransomware",
       "family": "generic_ransomware",
       "sha256": "9505348ca1d38c5b44cc521f826cefbe94679ea33ae409b2c3112a786d25e4c7",
-      "notes": "trips rules/rule_list.yar: generic_ransomware_extensions"
+      "notes": "trips rules/rule_list.yar: generic_ransomware_extensions",
+      "period": "2026-10-24"
     },
     {
       "id": "mal-hash_only",
@@ -45,31 +49,36 @@
       "label": "smoke_hash",
       "family": "smoke_hash",
       "sha256": "0e05a72c8edfeb9ed20174dee7160b3dd4c91d3c27dc70ff14a951ce31dd8d48",
-      "notes": "no YARA strings; detected only via corpus/smoke/hashes.txt"
+      "notes": "no YARA strings; detected only via corpus/smoke/hashes.txt",
+      "period": "2026-10-24"
     },
     {
       "id": "benign-README.txt",
       "path": "benign/README.txt",
       "label": "clean",
-      "sha256": "322e21955ba8f51c009dbae55d62c076d911d54d211c108da109eccc33526d18"
+      "sha256": "322e21955ba8f51c009dbae55d62c076d911d54d211c108da109eccc33526d18",
+      "period": "2026-10-24"
     },
     {
       "id": "benign-config.ini",
       "path": "benign/config.ini",
       "label": "clean",
-      "sha256": "2ed8a5397fd465a5e8c300a630e2f5101bad13877a37816d5118b998790f4191"
+      "sha256": "2ed8a5397fd465a5e8c300a630e2f5101bad13877a37816d5118b998790f4191",
+      "period": "2026-10-24"
     },
     {
       "id": "benign-empty.bin",
       "path": "benign/empty.bin",
       "label": "clean",
-      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "period": "2026-10-24"
     },
     {
       "id": "benign-fetch.sh",
       "path": "benign/fetch.sh",
       "label": "clean",
-      "sha256": "e451f7f37005a9d582f01ca7cd24f096b6e6839e8294048e7715688e7a73672c"
+      "sha256": "e451f7f37005a9d582f01ca7cd24f096b6e6839e8294048e7715688e7a73672c",
+      "period": "2026-10-24"
     },
     {
       "id": "mal-zero_width_prose",
@@ -77,49 +86,56 @@
       "label": "zero_width_stego",
       "sha256": "b5453be272aec0c46c02670f62e0125ff8fa9f50017b78ab75739a3773e57029",
       "family": "zero_width_stego",
-      "notes": "NOVEL-001 synthetic fixture: prose with stray zero-width codepoints between words; trips scanner/stego stego.zero-width + stego.ascii-carrier (presence-based, nothing encoded)"
+      "notes": "NOVEL-001 synthetic fixture: prose with stray zero-width codepoints between words; trips scanner/stego stego.zero-width + stego.ascii-carrier (presence-based, nothing encoded)",
+      "period": "2026-10-25"
     },
     {
       "id": "benign-emoji_notes",
       "path": "benign/emoji_notes.md",
       "label": "clean",
       "sha256": "d1e23591fd76d35f58527246e9de8fac0a874ec840e68bdc0c69fa1837250e67",
-      "notes": "ZWJ emoji sequences and VS16 presentation selectors: excused by the stego context rules"
+      "notes": "ZWJ emoji sequences and VS16 presentation selectors: excused by the stego context rules",
+      "period": "2026-10-25"
     },
     {
       "id": "benign-persian_readme",
       "path": "benign/persian_readme.md",
       "label": "clean",
       "sha256": "703abd9fb3bbdfa85cc0e86c2606f07128414c13daa70571ece45a9775a43904",
-      "notes": "Persian ZWNJ: excused as joining-script typography"
+      "notes": "Persian ZWNJ: excused as joining-script typography",
+      "period": "2026-10-25"
     },
     {
       "id": "benign-hindi_notes",
       "path": "benign/hindi_notes.txt",
       "label": "clean",
       "sha256": "a2f219ef0e690b74597e9dcf30b49c06f81ccd806c1501f0782615378a7e6536",
-      "notes": "Devanagari ZWJ/ZWNJ conjunct control: excused as joining-script typography"
+      "notes": "Devanagari ZWJ/ZWNJ conjunct control: excused as joining-script typography",
+      "period": "2026-10-25"
     },
     {
       "id": "benign-bom_script",
       "path": "benign/bom_script.ps1",
       "label": "clean",
       "sha256": "6725dba5da049f10907e7f12533d95a81d27a1af1f2bb10e82170194303bc754",
-      "notes": "UTF-8 byte-order mark at offset 0: excused"
+      "notes": "UTF-8 byte-order mark at offset 0: excused",
+      "period": "2026-10-25"
     },
     {
       "id": "benign-utf16_notes",
       "path": "benign/utf16_notes.txt",
       "label": "clean",
       "sha256": "df9e0c0a9e107359bd968f41b3af2a5dd6dcf88b891cafe6e76b4c4eedbdbdef",
-      "notes": "UTF-16LE text with BOM: decoded, nothing hidden"
+      "notes": "UTF-16LE text with BOM: decoded, nothing hidden",
+      "period": "2026-10-25"
     },
     {
       "id": "benign-hello_elf",
       "path": "benign/hello_elf.bin",
       "label": "clean",
       "sha256": "056292c136ccc2b54a9de94a579b782e328da248213b588f0bd541ee0c19c317",
-      "notes": "synthetic ELF64 PIE written byte-for-byte by scanner/static TestWriteELFFixtures: system loader path, libc imports, non-executable stack, build-id; static score 0"
+      "notes": "synthetic ELF64 PIE written byte-for-byte by scanner/static TestWriteELFFixtures: system loader path, libc imports, non-executable stack, build-id; static score 0",
+      "period": "2026-10-25"
     },
     {
       "id": "mal-elf_dropper_profile",
@@ -127,7 +143,8 @@
       "label": "elf_dropper_profile",
       "family": "elf_dropper_profile",
       "sha256": "451510bb4df04d001ced58f5635722ee864dd30e9dbfd57632abb83cb025ef2f",
-      "notes": "synthetic ELF64 written by scanner/static TestWriteELFFixtures: RWX packed .text, program interpreter under /tmp, dlopen/dlsym-only imports; trips scanner/static segment.rwx + segment.exec-high-entropy + dynamic.interp-unusual + imports.loader-only (a structural profile; the bytes are pseudo-random, nothing in it runs)"
+      "notes": "synthetic ELF64 written by scanner/static TestWriteELFFixtures: RWX packed .text, program interpreter under /tmp, dlopen/dlsym-only imports; trips scanner/static segment.rwx + segment.exec-high-entropy + dynamic.interp-unusual + imports.loader-only (a structural profile; the bytes are pseudo-random, nothing in it runs)",
+      "period": "2026-10-25"
     },
     {
       "id": "mal-encoded_elf",
@@ -135,7 +152,8 @@
       "label": "encoded_exe",
       "family": "encoded_exe",
       "sha256": "6adda1ca0cac2f5a2d552a5b0e45eb84ee79cc2dfa711cdae64422cb76e586b1",
-      "notes": "base64-encoded ELF header; trips scanner/encchain (encchain.elf)"
+      "notes": "base64-encoded ELF header; trips scanner/encchain (encchain.elf)",
+      "period": "2026-10-30"
     }
   ]
 }

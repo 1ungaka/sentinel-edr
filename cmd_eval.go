@@ -7,16 +7,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/s-b-repo/cau/internal/eval"
-	"github.com/s-b-repo/cau/internal/eval/scannerbridge"
 	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/scanner"
-	"github.com/s-b-repo/cau/scanner/encchain"
-	"github.com/s-b-repo/cau/scanner/static"
-	"github.com/s-b-repo/cau/scanner/stego"
 )
 
 func evalUsage(w io.Writer) {
@@ -27,12 +21,15 @@ func evalUsage(w io.Writer) {
   report    render a saved report as text or JSON
   diff      compare two reports ("this change adds 0.4 pt recall and 3x the FPs")
   gate      fail (exit 1) when a candidate report regresses against a baseline
+  temporal  score the content across a time boundary in the corpus: the recall
+            drop across the boundary fails the gate
   policy    print the default regression policy as JSON
 
 Typical CI flow:
   cau eval validate --corpus corpus/smoke/manifest.json --verify-hashes
   cau eval run      --corpus corpus/smoke/manifest.json --rules rules --out report.json
   cau eval gate     --baseline baselines/smoke.json --candidate report.json
+  cau eval temporal --corpus corpus/smoke/manifest.json
 
 Exit codes: 0 ok, 1 validation errors / gate failed, 3 the run failed, 4 usage.
 `)
@@ -54,6 +51,8 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 		return evalDiff(args[1:], stdout, stderr)
 	case "gate":
 		return evalGate(args[1:], stdout, stderr)
+	case "temporal":
+		return evalTemporal(args[1:], stdout, stderr)
 	case "policy":
 		if err := eval.DefaultPolicy().WriteJSON(stdout); err != nil {
 			fmt.Fprintf(stderr, "[ERROR] %v\n", err)
@@ -120,21 +119,7 @@ func evalRun(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("eval run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	corpus := fs.String("corpus", "", "corpus manifest (JSON)")
-	dbFlag := fs.String("db", "", "signature database (default: <manifest dir>/hashes.txt, else auto-discovered)")
-	rulesFlag := fs.String("rules", "", "YARA rules (default: auto-discovered)")
-	noHash := fs.Bool("no-hash", false, "disable the hash detector")
-	noYara := fs.Bool("no-yara", false, "disable the YARA detector")
-	noHeur := fs.Bool("no-heuristics", false, "disable the heuristic detector")
-	threshold := fs.Int("heuristic-threshold", scanner.HeuristicThreshold, "heuristic detection threshold")
-	noStatic := fs.Bool("no-static", false, "disable the static structural detector")
-	staticThreshold := fs.Int("static-threshold", static.Threshold, "static detection threshold")
-	fuzzyFlag := fs.String("fuzzy-db", "", "fuzzy signature database for the static detector (default: <manifest dir>/fuzzy.txt, else auto-discovered, else none)")
-	noStego := fs.Bool("no-stego", false, "disable the invisible-codepoint (stego) detector")
-	noEncChain := fs.Bool("no-encchain", false, "disable the encoded-executable detector")
-	stegoThreshold := fs.Int("stego-threshold", stego.Threshold, "stego detection threshold")
-	encChainThreshold := fs.Int("encchain-threshold", encchain.Threshold, "encoded-executable detection threshold")
-	noFormats := fs.Bool("no-format-passes", false, "disable the format passes (.lnk, OLE, PDF, ISO, Linux package, peeler, archive, CHM, tradecraft)")
-	noFusion := fs.Bool("no-fusion", false, "disable the fusion detector (corroboration of sub-threshold detectors)")
+	sf := evalScanFlagSet(fs)
 	jobs := fs.Int("jobs", 0, "samples scanned concurrently (default: GOMAXPROCS)")
 	onError := fs.String("on-error", string(eval.OnErrorExclude), "unscannable samples: exclude, miss (count as FN) or fail")
 	maxSize := fs.Int64("max-file-size", 0, "skip samples larger than this many bytes")
@@ -175,106 +160,11 @@ func evalRun(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// ── detectors ──
-	var db *scanner.SignatureDB
-	if !*noHash {
-		dbPath := *dbFlag
-		if dbPath == "" {
-			if local := filepath.Join(m.Dir, "hashes.txt"); fileExists(local) {
-				dbPath = local
-			} else {
-				dbPath, _ = findResource("", envSignatures, relSignatures)
-			}
-		}
-		if dbPath == "" {
-			return fail(stderr, report.ExitRunFailed, "no signature database found; pass --db or --no-hash")
-		}
-		if db, err = scanner.LoadSignatures(dbPath); err != nil {
-			return fail(stderr, report.ExitRunFailed, "%v", err)
-		}
-		if !*quiet {
-			fmt.Fprintf(stderr, "[*] hash: %d signatures from %s\n", db.Count(), dbPath)
-		}
+	detectors, closer, err := evalDetectors(sf, m, stderr, *quiet)
+	if err != nil {
+		return fail(stderr, report.ExitRunFailed, "%v", err)
 	}
-	var ys *scanner.YaraScanner
-	if !*noYara {
-		rulesPath, searched := findResource(*rulesFlag, envRules, relRules)
-		if rulesPath == "" {
-			return fail(stderr, report.ExitRunFailed, "no YARA rules found; pass --rules or --no-yara (searched: %s)", strings.Join(searched, ", "))
-		}
-		warn := func(format string, a ...interface{}) {
-			if !*quiet {
-				fmt.Fprintf(stderr, "[WARN] "+format+"\n", a...)
-			}
-		}
-		var files int
-		if ys, files, err = scanner.LoadYaraRules(rulesPath, scanner.WithWarnFunc(warn)); err != nil {
-			return fail(stderr, report.ExitRunFailed, "YARA: %v", err)
-		}
-		defer ys.Close()
-		if !*quiet {
-			fmt.Fprintf(stderr, "[*] yara: %d rules from %d file(s) at %s\n", ys.RuleCount(), files, rulesPath)
-		}
-	}
-	th := *threshold
-	if *noHeur {
-		th = -1
-	}
-	detectors := scannerbridge.Engine(db, ys, th)
-	var fuzzy *static.FuzzyDB
-	if !*noStatic {
-		fuzzyPath := *fuzzyFlag
-		if fuzzyPath == "" {
-			if local := filepath.Join(m.Dir, "fuzzy.txt"); fileExists(local) {
-				fuzzyPath = local
-			} else {
-				fuzzyPath, _ = findResource("", envFuzzy, relFuzzy)
-			}
-		}
-		if fuzzyPath != "" {
-			if fuzzy, err = static.LoadFuzzyDB(fuzzyPath); err != nil {
-				return fail(stderr, report.ExitRunFailed, "%v", err)
-			}
-			if !*quiet {
-				fmt.Fprintf(stderr, "[*] static: %d fuzzy signatures from %s\n", fuzzy.Count(), fuzzyPath)
-			}
-		} else if !*quiet {
-			fmt.Fprintln(stderr, "[*] static: no fuzzy database, similarity lookups off")
-		}
-		detectors = append(detectors, scannerbridge.StaticDetector(*staticThreshold, fuzzy))
-	}
-	if !*noStego {
-		detectors = append(detectors, scannerbridge.StegoDetector(*stegoThreshold))
-	}
-	if !*noEncChain {
-		detectors = append(detectors, scannerbridge.EncChainDetector(*encChainThreshold))
-	}
-	if !*noFormats {
-		detectors = append(detectors, scannerbridge.PassDetectors()...)
-	}
-	if !*noFusion {
-		// The fusion detector runs the same engine the CLI runs and reports
-		// only what corroboration adds.
-		fe := &scanner.Engine{
-			DB:                 db,
-			Yara:               ys,
-			Heuristics:         !*noHeur,
-			HeuristicThreshold: *threshold,
-			Static:             !*noStatic,
-			StaticThreshold:    *staticThreshold,
-			FuzzyDB:            fuzzy,
-			Stego:              !*noStego,
-			StegoThreshold:     *stegoThreshold,
-			EncChain:           !*noEncChain,
-			EncChainThreshold:  *encChainThreshold,
-		}
-		if !*noFormats {
-			scannerbridge.EnableFormatPasses(fe)
-		}
-		detectors = append(detectors, scannerbridge.FusionDetector(fe))
-	}
-	if len(detectors) == 0 {
-		return fail(stderr, report.ExitUsage, "every detector is disabled")
-	}
+	defer closer()
 
 	// ── run ──
 	ropts := eval.RunOptions{

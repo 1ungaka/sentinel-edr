@@ -119,6 +119,15 @@ jobs:
           set -o pipefail
           make eval | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # The temporal gate is its own step because it is its own question: not
+      # "did this change regress" but "does the content still catch what it
+      # caught in an earlier period of the corpus". `make eval` runs it too;
+      # it is named here so a failure says which gate failed.
+      - name: Temporal generalization gate
+        run: |
+          set -o pipefail
+          make temporal-gate | tee -a "$GITHUB_STEP_SUMMARY"
+
       # Published even when a gate above failed: the report is the evidence for
       # the failure, so a reviewer should never have to re-run the job to get it.
       - name: Publish the gate reports

@@ -323,6 +323,57 @@ gate: FAIL (1 violation(s))
   ✗ [overall] max_recall_drop: dropped 60.00 pt, at most 0.00 pt allowed (baseline 100.00%, candidate 40.00%)
 ```
 
+### The temporal gate
+
+`cau eval temporal` asks a different question from the regression gate: not
+"did this change regress" but "**does the content still catch what it caught
+in an earlier period**". Temporal snooping is the field's most widespread
+evaluation flaw — content (or a model) tuned on everything at once looks best
+in distribution and is often the worst across a time boundary — and a gate is
+the only way to notice.
+
+A corpus declares the period each sample belongs to:
+
+```json
+{ "id": "mal-wannacry_strings", "path": "malicious/wannacry_strings.bin",
+  "label": "wannacry", "period": "2026-10-24" }
+```
+
+The period is a string that sorts chronologically (`2026`, `2026-10`,
+`2026-Q3`, `2026-10-24`). The manifest may declare a default period for the
+samples that omit one.
+
+```sh
+cau eval temporal --corpus corpus/smoke/manifest.json --db corpus/smoke/hashes.txt
+```
+
+The corpus is cut at the median period (or at the one `--split` names), and
+both sides are scored by the same scan. The rule is the policy's
+`max_recall_drop`, applied across the boundary: the content must not lose
+more than that much recall between the earlier periods and the later ones. A
+period with no malware in it says nothing about recall, so an undefined metric
+is skipped with a note rather than failing the gate.
+
+```
+temporal generalization
+  periods : 2026-10-24, 2026-10-25, 2026-10-30
+  split   : 2026-10-25 (earlier periods before it, later periods from it)
+  earlier : tp=5 fp=0 tn=4 fn=0  recall 100.00%  precision 100.00%
+  later   : tp=3 fp=0 tn=6 fn=0  recall 100.00%  precision 100.00%
+  recall drop across the boundary: 0.00 pt (the later period did better)
+temporal gate: PASS
+```
+
+The per-detector table is the diagnostic: it shows which detector caught what
+in which period, so a rule that stopped carrying a period shows up even when
+another rule covers for it.
+
+Samples with no period are left out of both halves and counted. On the
+committed smoke corpus the periods are the days the samples entered the
+corpus, which is a real time dimension and a small one: with one to three
+positives per period, the per-detector numbers are a plumbing check, not a
+measurement. The mechanism is what a corpus with real periods needs.
+
 ### The content gates beside it
 
 Two more gates run in CI next to the eval gate and fail the build the same

@@ -3,6 +3,52 @@
 All notable changes to CAU EDR. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### The bug-shape sweep runs in CI, and what it found
+
+- **The sweep for bug shapes is a gate again.** The repository ships a regex
+  sweep for swallowed errors, unbounded allocations and broken conditions, with
+  a baseline of the hits somebody read. It had not been run since the last
+  hardening wave: the baseline still listed hits the wave had fixed, the
+  wave's own changes had introduced new ones, and no lane ran it — so it
+  could not tell. The sweep is green again, the baseline says what it says,
+  and the CI lint lane runs it (`make regex-audit`). The sweep can now read a
+  baseline from elsewhere and prefix the paths it reports, so the kernel
+  sensor's tree is swept by the same tool and the same baseline.
+- **The peeler allocated before the budget was consulted.** A base64 body was
+  sized and allocated, then measured against the output budget; an ASCII85
+  body of `z` runs is four bytes per character, so it could cost four times
+  the memory the budget allows before the budget got a say. The budget is
+  asked first now, the way the hex layer already did it.
+- **The persistence scan stopped walking at 20,000 entries and said nothing.**
+  A set-uid binary in the uninspected remainder was not reported, and the
+  audit read as clean for a host nobody looked at. The tree that was cut is
+  named as incomplete coverage now, the way an unreadable path already was.
+- **The watcher's walk error was dropped**, so a walk that stopped early left
+  a coverage gap that nothing reported.
+- **A Zip64 bound could wrap**: the end record's offset was checked as a sum
+  against the buffer length, and it is a subtraction now.
+- **Sentinel errors were compared with `==`** in the MCP request reader, the
+  LZMA decoder and the ingest tail reader — which stops seeing them the
+  moment anything wraps them.
+- **A drafted YARA rule hid what was missing.** A rule drafted without a
+  description or a family carried placeholders and no warning, so a draft
+  looked finished; it says which fields are still missing now.
+- **The pipeline regression tests threw the reason away**: each refusal
+  asserted that a script failed with its stderr discarded, so a script that
+  failed for an unrelated reason passed the check.
+
+### Pipeline
+
+- Validate the workflows and the shell in every pull request with
+  `actionlint`, and keep the PR path filters honest: a change to a script or
+  to packaging now runs the lanes it can affect.
+- One deterministic source-archive recipe for packaging and release, one
+  staging step that asserts every distro and architecture artifact
+  individually, and a release that waits for the packaging workflow rather
+  than racing it.
+
 ## [0.2.0] - 2026-11-08
 
 ### Pipeline, Arch packaging and worker reliability

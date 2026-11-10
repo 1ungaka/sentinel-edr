@@ -3506,7 +3506,7 @@ deferred for a stated reason, not forgotten, and will not be padded into
       filesystem attributes and persistence-dir provenance, which live in the
       sensor. If an engine-side weak-anchor variant ships, it ships labeled
       *partial by design*, like the discovery rows, never as full coverage.
-- [ ] **Shellcode atom strength (`$ror13`).** The 3-byte `{ C1 C? 0D }` atom is
+- [x] **Shellcode atom strength (`$ror13`).** The 3-byte `{ C1 C? 0D }` atom is
       flagged weak by the rule linter. Tightening the wildcard to the ROR
       encodings is recall-safe but trips YARA's slow-string warning;
       lengthening it to a 4+ byte invariant is recall-affecting. **Gate:** a
@@ -3515,9 +3515,21 @@ deferred for a stated reason, not forgotten, and will not be padded into
       them".
       Status 2026-11-06: the 3-byte atom is no longer in `rules/rule_list.yar`. The
       shellcode rule now carries 4- and 6-byte forms (`$hash32`, `$hash64`: the rotate
-      followed by the add), which the linter accepts. The row stays open because its
-      own gate was not met: I found no recorded recall measurement for the lengthened
-      atoms against a shellcode corpus, so whether the change cost recall is unknown.
+      followed by the add), which the linter accepts. The row stayed open because its
+      own gate was not met: no recorded recall measurement for the lengthened atoms
+      against a shellcode corpus, so whether the change cost recall was unknown.
+      **Measured 2026-11-10** (`scanner/shellcode_corpus_test.go`): a synthetic corpus
+      of the byte sequences the technique is made of — the PEB module walk plus the
+      rotate-and-add — in six forms (the conventional `ror edi,13` and `ror r9d,13` with
+      both add directions, a rotate of another register, and a rotate of another
+      amount). The narrow rule catches **3 of 6**: exactly the three conventional forms
+      it claims. The Go pass (`tradecraft.hashLoopNear`) catches **6 of 6**: it accepts
+      any rotate and any register, which is what the rule's own comment says it is for.
+      So the lengthened atoms cost no recall on the forms the rule claims, the forms it
+      declines are covered by the other pass, and the system's recall over the corpus is
+      6/6. The fragments are byte sequences, not working shellcode: they carry no
+      payload and are built in the test rather than committed, as the corpus policy
+      asks.
 
 ### Process additions
 

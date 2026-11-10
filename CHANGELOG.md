@@ -5,6 +5,21 @@ All notable changes to CAU EDR. The format follows
 
 ## [Unreleased]
 
+### The shellcode atoms are measured
+
+- **The recall of the lengthened export-hash atoms is now recorded.** The
+  atoms were narrowed to the conventional rotate-and-add form without anyone
+  measuring whether that cost recall, so the row stayed open. A synthetic
+  corpus of the technique's byte sequences — the PEB module walk plus the
+  rotate-and-add, in six forms — measures it: the narrow rule catches **3 of
+  6**, exactly the three conventional forms it claims, and the Go pass catches
+  **6 of 6**, because it accepts any rotate and any register. The lengthened
+  atoms cost no recall on the forms the rule claims; the forms it declines
+  are covered by the other pass.
+- The fragments are byte sequences, not working shellcode: they carry no
+  payload and are built in the test rather than committed, as the corpus policy
+  asks.
+
 ### The robustness contract is per rule, not per sampled family
 
 - **The detection-robustness harness now covers every bundled rule.** It reads

@@ -643,8 +643,8 @@ func tailDigest(f *os.File, offset int64) string {
 	if n <= 0 {
 		return ""
 	}
-	buf := make([]byte, n)
-	if _, err := f.ReadAt(buf, offset-n); err != nil && err != io.EOF {
+	buf := make([]byte, n) // audit:ok bounded: n is min(tailBytes, offset) and tailBytes is a constant
+	if _, err := f.ReadAt(buf, offset-n); err != nil && !errors.Is(err, io.EOF) {
 		return ""
 	}
 	sum := sha256.Sum256(buf)

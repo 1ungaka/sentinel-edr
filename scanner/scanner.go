@@ -511,7 +511,7 @@ func hashReader(r io.Reader) (digests, error) {
 		}
 		select {
 		case p := <-broke:
-			panic(p)
+			panic(p) // audit:ok the worker's panic is re-raised here on purpose; the caller's recover turns it into a per-file error
 		default:
 		}
 		if err == io.EOF {

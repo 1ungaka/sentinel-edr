@@ -247,7 +247,7 @@ func (d *decoder) setProps(p props) {
 	if n := 0x300 << (p.lc + p.lp); cap(d.lit) >= n {
 		d.lit = d.lit[:n]
 	} else {
-		d.lit = make([]uint16, n)
+		d.lit = make([]uint16, n) // audit:ok bounded: the properties are validated to lc<=8, lp<=4, so n is at most 0x300<<12
 	}
 	d.resetState()
 }
@@ -315,7 +315,7 @@ func (d *decoder) run(target int, allowMarker bool) (bool, error) {
 			// Literal.
 			var prev uint32
 			if len(d.out) > d.dictStart {
-				prev = uint32(d.out[len(d.out)-1])
+				prev = uint32(d.out[len(d.out)-1]) // audit:ok guarded: len(d.out) > d.dictStart means the slice is not empty
 			}
 			probs := d.lit[0x300*(((pos&d.lpMask)<<lc)+(prev>>(8-lc))):]
 			sym := uint32(1)
@@ -485,9 +485,9 @@ func DecodeAlone(in []byte, limit int) ([]byte, error) {
 
 	ended, err := d.run(target, true)
 	switch {
-	case err == errExhausted:
+	case errors.Is(err, errExhausted):
 		return nil, ErrTruncated
-	case err == errOverrun:
+	case errors.Is(err, errOverrun):
 		if sizeKnown {
 			return nil, ErrCorrupt
 		}

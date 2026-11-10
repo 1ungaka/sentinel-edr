@@ -657,7 +657,10 @@ func findZip64DirectoryEnd(data []byte, eocd int) (off, size uint32, ok bool) {
 		return 0, 0, false // a multiple-disk archive is not walked
 	}
 	p := le64(data, loc+8)
-	if p > uint64(len(data)) || p+zip64EOCDLen > uint64(len(data)) {
+	// The record must fit whole: the bound is written as a subtraction, so an
+	// offset near the end of the address space cannot wrap the sum back
+	// inside the buffer.
+	if uint64(len(data)) < zip64EOCDLen || p > uint64(len(data))-zip64EOCDLen {
 		return 0, 0, false
 	}
 	start := int(p)

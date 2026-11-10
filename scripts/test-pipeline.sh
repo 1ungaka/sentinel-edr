@@ -41,9 +41,12 @@ git commit -qm source-change
 if cmp -s "$work/a.tar.gz" "$work/current.tar.gz"; then
     echo 'source archive ignored the source change' >&2; exit 1
 fi
-if "$scripts/source-archive.sh" 1.2.3 "$work/bad.tar.gz" missing-ref 2>/dev/null; then
+# A refusal is only a refusal for the right reason, so the reason is kept and
+# printed: a script that failed for an unrelated reason would pass this check.
+if out=$("$scripts/source-archive.sh" 1.2.3 "$work/bad.tar.gz" missing-ref 2>&1); then
     echo 'source archive accepted a missing ref' >&2; exit 1
 fi
+echo "source archive refused the missing ref: $out"
 [ ! -e "$work/bad.tar.gz" ]
 
 artifacts="$work/artifacts"
@@ -66,17 +69,20 @@ for arch in amd64 arm64; do
 done
 # Neither a successful Debian leg nor a debug package can mask a missing leg.
 mv "$artifacts/cau-kali-rolling-arm64" "$work/missing-kali"
-if "$scripts/stage-release-packages.sh" "$artifacts" "$work/missing-kali-dist" 2>/dev/null; then
+if out=$("$scripts/stage-release-packages.sh" "$artifacts" "$work/missing-kali-dist" 2>&1); then
     echo 'release staging accepted a missing Kali package' >&2; exit 1
 fi
+echo "release staging refused the missing Kali package: $out"
 mv "$work/missing-kali" "$artifacts/cau-kali-rolling-arm64"
 mv "$artifacts/cau-archlinux-arm64/cau-1.2.3-1-aarch64.pkg.tar.zst" "$work/missing-arch"
-if "$scripts/stage-release-packages.sh" "$artifacts" "$work/missing-arch-dist" 2>/dev/null; then
+if out=$("$scripts/stage-release-packages.sh" "$artifacts" "$work/missing-arch-dist" 2>&1); then
     echo 'release staging accepted a debug package in place of the main package' >&2; exit 1
 fi
+echo "release staging refused the debug package: $out"
 mv "$work/missing-arch" "$artifacts/cau-archlinux-arm64/cau-1.2.3-1-aarch64.pkg.tar.zst"
 cp "$artifacts/cau-debian-trixie-amd64/cau_1.2.3-1_amd64.deb" "$artifacts/cau-debian-trixie-amd64/cau_1.2.4-1_amd64.deb"
-if "$scripts/stage-release-packages.sh" "$artifacts" "$work/ambiguous-dist" 2>/dev/null; then
+if out=$("$scripts/stage-release-packages.sh" "$artifacts" "$work/ambiguous-dist" 2>&1); then
     echo 'release staging accepted ambiguous package versions' >&2; exit 1
 fi
+echo "release staging refused the ambiguous versions: $out"
 echo 'pipeline regressions: passed'

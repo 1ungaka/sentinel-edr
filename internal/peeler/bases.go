@@ -19,6 +19,13 @@ type baseLayer struct {
 	name   string
 	detect func([]byte) bool
 	decode func([]byte) ([]byte, bool)
+	// size returns the exact number of bytes the decoder needs for this input,
+	// computed without allocating anything. It is set only by the decoders that
+	// can produce MORE bytes than they read — an ASCII85 body of 'z' runs is
+	// four bytes per character — so Unwrap can check the output budget before
+	// the buffer exists. A decoder without it never expands its input, so its
+	// allocation is already bounded by the size of the blob.
+	size func(src []byte) int
 }
 
 func (l baseLayer) Name() string { return l.name }
@@ -29,7 +36,16 @@ func (l baseLayer) Detect(b []byte) bool {
 }
 
 func (l baseLayer) Unwrap(b []byte, limit int64) ([]byte, error) {
-	out, ok := l.decode(textBody(b))
+	src := textBody(b)
+	if l.size != nil && int64(l.size(src)) > limit {
+		// The layer decodes to more than the budget left. Refusing it here is
+		// the verdict the check below would reach, reached without
+		// allocating the buffer first — which is the whole point: a body that
+		// expands four times over must not cost four times the memory before
+		// the budget gets a say.
+		return nil, errBombCap
+	}
+	out, ok := l.decode(src)
 	if !ok || len(out) < minLayerLen/2 {
 		return nil, ErrNotThisLayer
 	}
@@ -256,25 +272,30 @@ func ascii85Layer() baseLayer {
 			}
 			return true
 		},
+		size: func(src []byte) int { return ascii85Size(frame(src)) },
 		decode: func(b []byte) ([]byte, bool) {
 			src := frame(b)
-			// Five digits make four bytes, but a 'z' is one digit that stands
-			// for four zero bytes, so a body of nothing but 'z' expands four
-			// times over and the length alone sizes nothing. The run count is
-			// the true worst case: the decoder stops, silently and without an
-			// error, one byte before it can write, so this bound may not be
-			// short for any body.
-			z := 0
-			for _, c := range src {
-				if c == 'z' {
-					z++
-				}
-			}
-			out := make([]byte, 4*z+4*(len(src)-z)/5+4)
+			out := make([]byte, ascii85Size(src)) // audit:ok bounded: the size was checked against the output budget above, before this line
 			n, _, err := ascii85.Decode(out, src, true)
 			return out[:n], err == nil
 		},
 	}
+}
+
+// ascii85Size is the number of bytes the Adobe ASCII85 decoder needs for src.
+// Five digits make four bytes, but a 'z' is one digit that stands for four zero
+// bytes, so a body of nothing but 'z' expands four times over and the length
+// alone sizes nothing. The run count is the true worst case: the decoder stops,
+// silently and without an error, one byte before it can write, so this bound may
+// not be short for any body.
+func ascii85Size(src []byte) int {
+	z := 0
+	for _, c := range src {
+		if c == 'z' {
+			z++
+		}
+	}
+	return 4*z + 4*(len(src)-z)/5 + 4
 }
 
 const base91Digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%&()*+,./:;<=>?@[]^_`{|}~\""

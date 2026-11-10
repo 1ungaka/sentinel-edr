@@ -182,6 +182,35 @@ func TestGenerateYaraRuleCompiles(t *testing.T) {
 	}
 }
 
+// TestGenerateYaraRuleSaysWhatIsStillMissing: a draft without a description or
+// a family carries placeholders, and the tool says so. A draft that looks
+// finished is the failure mode here — the placeholders alone are too quiet to
+// notice in a rule file.
+func TestGenerateYaraRuleSaysWhatIsStillMissing(t *testing.T) {
+	srv := testServer(t)
+	req := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"generate_yara_rule","arguments":{"name":"gen_draft","strings":["a_distinctive_marker_string"]}}}`
+	resp := drive(t, srv, req)
+	var out struct {
+		Rule     string   `json:"rule"`
+		Compiled bool     `json:"compiled"`
+		Warnings []string `json:"warnings"`
+	}
+	toolPayload(t, resp[1], &out)
+	if !out.Compiled {
+		t.Errorf("generated rule did not compile:\n%s", out.Rule)
+	}
+	if !strings.Contains(out.Rule, "TODO") {
+		t.Errorf("a draft with no description did not carry a visible placeholder:\n%s", out.Rule)
+	}
+	joined := strings.Join(out.Warnings, "\n")
+	if !strings.Contains(joined, "description") {
+		t.Errorf("the missing description was not reported: %v", out.Warnings)
+	}
+	if !strings.Contains(joined, "family") {
+		t.Errorf("the missing family was not reported: %v", out.Warnings)
+	}
+}
+
 func TestYaraTestRuleMatches(t *testing.T) {
 	root := t.TempDir()
 	f := filepath.Join(root, "s.txt")

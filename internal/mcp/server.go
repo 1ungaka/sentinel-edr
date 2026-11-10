@@ -153,17 +153,17 @@ func (s *Server) Serve(in io.Reader, out io.Writer) error {
 	br := bufio.NewReaderSize(in, 1<<20)
 	for {
 		line, err := readLine(br)
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			if len(line) == 0 {
 				return nil
 			}
 			// trailing line without newline: process then stop
-		} else if err == errLineTooLong {
+		} else if errors.Is(err, errLineTooLong) {
 			// An over-long request is a protocol violation, not an I/O
 			// failure. Drop the rest of the line so the next request stays
 			// framed, answer the client, and keep serving — the same way the
 			// HTTP transport answers an over-cap body.
-			if derr := discardLine(br); derr != nil && derr != io.EOF {
+			if derr := discardLine(br); derr != nil && !errors.Is(derr, io.EOF) {
 				return derr
 			}
 			if werr := s.write(rpcResponse{JSONRPC: "2.0", Error: errf(codeInvalidRequest, "request line exceeds the %d-byte limit", maxRequestLine)}); werr != nil {
@@ -312,7 +312,7 @@ func readLine(br *bufio.Reader) ([]byte, error) {
 			return nil, errLineTooLong
 		}
 		line = append(line, frag...)
-		if err != bufio.ErrBufferFull {
+		if !errors.Is(err, bufio.ErrBufferFull) {
 			return line, err
 		}
 	}
@@ -324,7 +324,7 @@ func readLine(br *bufio.Reader) ([]byte, error) {
 func discardLine(br *bufio.Reader) error {
 	for {
 		_, err := br.ReadSlice('\n')
-		if err != bufio.ErrBufferFull {
+		if !errors.Is(err, bufio.ErrBufferFull) {
 			return err
 		}
 	}

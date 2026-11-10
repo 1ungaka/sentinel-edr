@@ -111,6 +111,10 @@ type Options struct {
 type audit struct {
 	root string
 
+	// maxWalk bounds the entries one walk reads. It is a field rather than a
+	// constant so a test can lower it; the shipped value is the constant.
+	maxWalk int
+
 	mu         sync.Mutex
 	checked    int
 	out        []Finding
@@ -130,7 +134,7 @@ func (a *audit) noteUnreadable(rel string) {
 
 // Scan runs every check.
 func Scan(opts Options) *Result {
-	a := &audit{root: opts.Root, links: map[string]bool{}, unreadable: map[string]bool{}}
+	a := &audit{root: opts.Root, maxWalk: maxWalk, links: map[string]bool{}, unreadable: map[string]bool{}}
 	if a.root == "" {
 		a.root = "/"
 	}
@@ -747,7 +751,12 @@ func (a *audit) checkSUID() {
 	for _, d := range []string{"tmp", "var/tmp", "dev/shm"} {
 		base := filepath.Join(a.root, d)
 		walkedRoot := safefs.WalkRoot(base)
-		_ = filepath.WalkDir(walkedRoot, func(p string, e fs.DirEntry, err error) error {
+		// The walk stops at maxWalk entries, and everything under it is then
+		// uninspected. A set-uid binary in that remainder would not be
+		// reported, so the tree is recorded as incomplete rather than left
+		// looking clean.
+		capped := false
+		err := filepath.WalkDir(walkedRoot, func(p string, e fs.DirEntry, err error) error { // audit:ok the root is safefs.WalkRoot, which resolves a symlinked root
 			if err != nil {
 				// A root that is not there is the documented skip, so one
 				// default list works across hosts. Any other error leaves a
@@ -759,7 +768,8 @@ func (a *audit) checkSUID() {
 				}
 				return nil
 			}
-			if walked++; walked > maxWalk {
+			if walked++; walked > a.maxWalk {
+				capped = true
 				return filepath.SkipAll
 			}
 			if !e.Type().IsRegular() {
@@ -774,5 +784,18 @@ func (a *audit) checkSUID() {
 				Detail: "a set-uid or set-gid program sits in a world-writable directory", Evidence: fi.Mode().String()})
 			return nil
 		})
+		if err != nil {
+			// The callback above reports every per-path failure. An error here
+			// means the walk itself stopped early, so the rest of the tree was
+			// never inspected.
+			if rel, relErr := filepath.Rel(a.root, walkedRoot); relErr == nil {
+				a.noteUnreadable(rel)
+			}
+		}
+		if capped {
+			if rel, relErr := filepath.Rel(a.root, walkedRoot); relErr == nil {
+				a.noteUnreadable(rel)
+			}
+		}
 	}
 }

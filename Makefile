@@ -96,6 +96,11 @@ lint: fmt-check vet pipeline-check
 
 # Regex sweep for bug shapes: swallowed errors, memory handling, broken logic and
 # more, over all the code in the tree. Hits are candidates and need reading.
+#
+# It is a gate: the sweep fails when it finds a hit that is not in
+# scripts/regex-audit.baseline, and a baseline entry stands for a hit somebody
+# read. A sweep nothing runs is a report nobody reads, so it is in `make ci`
+# and in the CI lint lane.
 regex-audit:
 	python3 scripts/regex-audit.py --self-test
 	python3 scripts/regex-audit.py
@@ -243,7 +248,7 @@ coverage: build
 coverage-record: build
 	./$(BINARY) coverage --rules $(RULES) --expect $(COVERAGE) --record --quiet --format text >/dev/null
 
-ci: lint build build-mcp test-race lint-rules coverage-gate eval
+ci: lint build build-mcp test-race lint-rules coverage-gate eval regex-audit
 
 # ── Install ─────────────────────────────────────────────────────────────────
 # Installs the binary plus its content to PREFIX. The binary finds

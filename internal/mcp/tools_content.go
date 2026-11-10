@@ -116,13 +116,20 @@ func (s *Server) toolGenerateYaraRule(raw json.RawMessage) (interface{}, *rpcErr
 		return toolErr("generate_yara_rule: %q is not an ATT&CK technique id (T1234 or T1234.001)", args.Technique)
 	}
 
+	var warnings []string
 	desc := strings.TrimSpace(args.Description)
 	if desc == "" {
+		// The linter wants a description, and a rule without one is a hit
+		// nobody can triage. The placeholder satisfies the shape; the warning
+		// says what is still missing, so a draft is never mistaken for a
+		// finished rule.
 		desc = "TODO: describe what this rule detects and how to triage a hit"
+		warnings = append(warnings, "the rule has no description: fill it in before the rule ships, or a hit nobody can read is a hit nobody can triage")
 	}
 	family := strings.TrimSpace(args.ThreatName)
 	if family == "" {
 		family = "TODO-family"
+		warnings = append(warnings, "the rule has no family: the evaluation harness groups per-family recall by it")
 	}
 
 	var b strings.Builder
@@ -136,7 +143,6 @@ func (s *Server) toolGenerateYaraRule(raw json.RawMessage) (interface{}, *rpcErr
 		fmt.Fprintf(&b, "        mitre_attack = %q\n", args.Technique)
 	}
 	b.WriteString("    strings:\n")
-	var warnings []string
 	for i, str := range args.Strings {
 		if len(str) < 4 {
 			warnings = append(warnings, fmt.Sprintf("string %d (%q) is short; short strings drive false positives", i, str))

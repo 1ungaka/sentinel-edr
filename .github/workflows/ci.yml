@@ -52,6 +52,17 @@ jobs:
       - name: gofmt, go vet and pipeline regressions
         run: make lint
 
+      # The regex sweep for bug shapes (swallowed errors, unbounded
+      # allocations, broken conditions). It is a gate: a hit that is not in
+      # scripts/regex-audit.baseline fails the job, because a baseline entry
+      # stands for a hit somebody read and marked. The script needs only the
+      # standard library, and the runner image ships python3 — the step says
+      # so out loud rather than failing on a missing interpreter.
+      - name: Regex sweep for bug shapes
+        run: |
+          python3 --version
+          make regex-audit
+
       - name: Validate GitHub workflows and shell commands
         run: |
           docker run --rm -v "$PWD:/repo:ro" --workdir /repo \

@@ -207,8 +207,14 @@ func (base64Layer) Unwrap(b []byte, limit int64) ([]byte, error) {
 	} {
 		// Four characters make three bytes, and base64 never writes its input:
 		// the output is sized here and decoded into it, with no copy of the
-		// text in between.
-		out := make([]byte, enc.DecodedLen(len(src)))
+		// text in between. The size is checked against the budget first, the
+		// way the hex layer does it: a body that decodes to more than the
+		// wall left is refused before the buffer exists.
+		want := int64(enc.DecodedLen(len(src)))
+		if want > limit {
+			return nil, errBombCap
+		}
+		out := make([]byte, want)
 		n, err := enc.Decode(out, src)
 		if err == nil && n >= minLayerLen {
 			if int64(n) > limit {

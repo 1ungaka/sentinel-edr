@@ -173,7 +173,7 @@ func (c *Clusterer) Clusters(minSimilarity float64) []Cluster {
 	// pair enumeration — without this, one large set of identical binaries
 	// costs every pair inside every shared bucket. A file with no imphash
 	// has no exact group and speaks for itself.
-	lshSkip := make([]bool, n)
+	lshSkip := make([]bool, n) // audit:ok bounded: n is the number of analysed items
 	for _, idx := range byImp {
 		for _, i := range idx[1:] {
 			lshSkip[i] = true

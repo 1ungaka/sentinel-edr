@@ -10,7 +10,8 @@ make test                   # unit tests
 make test-race              # with the race detector; the CI `test` lane
 make bench                  # YARA, heuristics, static and stego benchmarks
 make eval                   # validate the smoke corpus, run it, gate against the baseline
-make ci                     # lint + build + race tests + eval; the local aggregate
+make regex-audit            # sweep the tree for bug shapes; a new hit fails
+make ci                     # lint + build + race tests + eval + the sweep; the local aggregate
 ```
 
 `.github/workflows/ci.yml` runs these same targets as six named, time-bounded
@@ -18,10 +19,12 @@ lanes (`lint`, `test`, `gates`, `selfscan`, `fuzz`, `release`) instead of one
 serial `make ci` job, and the packaging proof
 (`.github/workflows/package.yml`) is a separate workflow.
 
-- **`lint` (15 min)** runs `gofmt` + `go vet`, plus a `vendor/` consistency
-  gate (`go mod vendor && git diff --exit-code -- vendor`), so a stale
-  committed tree fails here where it costs seconds instead of in the Debian
-  and Arch builds that carry `GOPROXY=off`.
+- **`lint` (15 min)** runs `gofmt` + `go vet`, the regex sweep for bug shapes
+  (`make regex-audit`: a hit that is not in `scripts/regex-audit.baseline` fails
+  the job, because a baseline entry stands for a hit somebody read), plus a
+  `vendor/` consistency gate (`go mod vendor && git diff --exit-code -- vendor`),
+  so a stale committed tree fails here where it costs seconds instead of in the
+  Debian and Arch builds that carry `GOPROXY=off`.
 - **`test` (45 min)** runs `make test-race` over every package.
 - **`gates` (20 min)** runs `make build build-mcp`, `make lint-rules`,
   `make coverage` (the ATT&CK-coverage gate against `baselines/attack-coverage.txt`),

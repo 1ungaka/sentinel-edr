@@ -89,7 +89,7 @@ func (s *Server) toolDescs() []toolDesc {
 		{
 			Name:        "generate_yara_rule",
 			Description: "Draft a well-formed YARA rule skeleton from string literals and metadata, satisfying the linter's required-meta and string-quality checks. A detection-authoring aid; the author still reviews and tests it.",
-			InputSchema: obj(`{"type":"object","properties":{"name":{"type":"string","description":"rule identifier"},"strings":{"type":"array","items":{"type":"string"},"description":"ASCII string literals to match"},"description":{"type":"string"},"technique":{"type":"string","description":"ATT&CK technique id, e.g. T1059.001"},"threat_name":{"type":"string"},"condition":{"type":"string","description":"optional; defaults to 'all of them'"}},"required":["name","strings"]}`),
+			InputSchema: obj(`{"type":"object","properties":{"name":{"type":"string","description":"rule identifier"},"strings":{"type":"array","items":{"type":"string"},"description":"ASCII string literals to match"},"description":{"type":"string","description":"what the rule detects and how to triage a hit; the draft carries a placeholder and a warning without it"},"technique":{"type":"string","description":"ATT&CK technique id, e.g. T1059.001"},"threat_name":{"type":"string","description":"the rule family; the evaluation harness groups per-family recall by it"},"condition":{"type":"string","description":"optional; defaults to 'all of them'"}},"required":["name","strings"]}`),
 		},
 		{
 			Name:        "list_signatures",

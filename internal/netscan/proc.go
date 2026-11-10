@@ -437,7 +437,7 @@ func socketInodes(dir string) (inodes []string, partial bool) {
 func readNetTables(base, ns string, budget *rowBudget) []Socket {
 	var out []Socket
 	add := func(socks []Socket) {
-		for _, s := range budget.take(socks) {
+		for _, s := range budget.take(socks) { // audit:ok the copy is the point: each socket is labelled and appended
 			s.NetNS = ns
 			out = append(out, s)
 		}

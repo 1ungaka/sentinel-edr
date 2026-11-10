@@ -99,7 +99,11 @@ func (w *Watcher) addTree(root string, found func(string), full func()) {
 		}
 	}()
 	walked := safefs.WalkRoot(root)
-	_ = filepath.WalkDir(walked, func(p string, d fs.DirEntry, err error) error {
+	// The callback below reports every per-path failure. An error returned by
+	// the walk itself means it stopped before the tree was exhausted, so
+	// whatever is left was watched by nothing: the coverage gap is recorded
+	// rather than left as a silent hole.
+	err := filepath.WalkDir(walked, func(p string, d fs.DirEntry, err error) error { // audit:ok the root is safefs.WalkRoot, which resolves a symlinked root
 		if err != nil {
 			// A root that is not there is the documented skip, so one default
 			// list works across hosts. Anything else — an unreadable subtree, a
@@ -135,6 +139,9 @@ func (w *Watcher) addTree(root string, found func(string), full func()) {
 		w.dirs[int32(wd)] = p
 		return nil
 	})
+	if err != nil {
+		w.markIncomplete()
+	}
 }
 
 // Run delivers events to fn until Close. It returns nil after Close. fn is called

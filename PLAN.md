@@ -3548,10 +3548,26 @@ remaining NOVEL-012 surface, each with its own FP gate:
       re-scan cost per file.
       **Peeler half shipped 2026-11-06:** `peeler.WithLeaves(maxBytes)` exposes the
       decoded leaves (at most 8, chosen by a scheduling-independent order, bounded,
-      off by default so the scan path pays nothing). **Open:** the engine side in
-      `scanner/engine.go`: run the YARA and heuristic indicators over each leaf with a
-      per-file cost cap, attribute hits as `peel.<class>` evidence, and gate it on a
-      benign text-population measurement as this row says.
+      off by default so the scan path pays nothing).
+      **Engine half shipped 2026-11-10** (`scanner/engine_leaves.go`, the
+      `PeelIndicators` engine option, on in `cau defend`): the detection rules and
+      the heuristic indicators run over the decoded layers, and the hits are
+      attributed as `peel.rule-match` and `peel.indicator-match` evidence. A rule
+      match flags on its own (60, the same weight a revealed executable carries) —
+      a base64-wrapped script that trips a rule is the case the row is about — while
+      a heuristic indicator is corroboration only (25, below the threshold). Two
+      bounds keep the cost honest and the false positives down: only leaves the
+      peeler took for *code* are rescanned, and only chains with a deliberate
+      encoding or substitution in them — compression alone is packaging, so a
+      gzipped document that mentions a payload is a document.
+      **Measured 2026-11-10 on 139,984 benign files** (`/usr/share/doc`,
+      `/usr/share/man`, `/usr/lib/python3`, `/usr/bin`, `/etc`): 1 file flagged by a
+      decoded-layer rule — a Metasploit-framework *documentation* page that embeds
+      a base64+gzip PowerShell payload. That is a true positive about the content
+      and a false positive about the context, and it is the whole of the false
+      positives (0.0007 %). Five heuristic indicator hits, none of them flagging on
+      its own. The per-file cost is capped at 8 leaves, 1 MiB per leaf and 4 MiB in
+      all.
 - [~] **Container layers.** gzip/zlib/zip/xz as decode layers alongside
       base64/hex, with the decompression-bomb caps the plan already requires
       (ratio and absolute-size limits, a global budget shared across layers).

@@ -2771,7 +2771,7 @@ func (d *defender) startForward(o defendForward, status func(string, ...interfac
 // are in on a host that never had it.
 func defendEngine(rules, db, fuzzyPath string, status func(string, ...interface{})) (*scanner.Engine, func(), []startFault) {
 	e := &scanner.Engine{Heuristics: true, Static: true, Stego: true, EncChain: true, LNK: true, OLE: true, PDF: true,
-		ISO: true, LinuxPkg: true, Peel: true, Archive: true, CHM: true, Tradecraft: true}
+		ISO: true, LinuxPkg: true, Peel: true, PeelIndicators: true, Archive: true, CHM: true, Tradecraft: true}
 	closer := func() {}
 	var faults []startFault
 	unusable := func(class, what string, err error) {

@@ -87,9 +87,14 @@ func TestEveryFindingClassIsInTheCatalog(t *testing.T) {
 		known[c.Class] = true
 	}
 	deepArchive := compose(fakeELF, "base64", "gzip", "hex", "zlib")
+	// The two evidence classes are produced by the caller that rescans a
+	// decoded layer, so the fixture adds them the way the engine does.
+	withEvidence := peelDefault(compose(harmlessScript, "base64", "gzip"))
+	withEvidence.AddEvidence(Finding{Class: "peel.rule-match", Score: 40, Detail: "a rule matched the decoded layer"})
+	withEvidence.AddEvidence(Finding{Class: "peel.indicator-match", Score: 25, Detail: "an indicator matched the decoded layer"})
 	for _, r := range []Result{
 		peelDefault(deepArchive),
-		peelDefault(compose(harmlessScript, "base64", "gzip")),
+		withEvidence,
 		New(WithLimits(BudgetLimits{MaxDepth: 1})).Peel(context.Background(), deepArchive),
 	} {
 		for _, f := range r.Findings {

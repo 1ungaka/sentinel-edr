@@ -25,5 +25,9 @@ func Classes() []Class {
 			"a layer chain that outlived the per-sample budget wall — rendered first-class as peel-exhausted, never silent-clean"},
 		{"peel.deep-chain", Technique, Novel, 30,
 			"four or more layers peeled, whatever is at the bottom — 15 a layer past the second, so it flags alone from six"},
+		{"peel.rule-match", Technique, Novel, 40,
+			"a detection rule matched a decoded layer: the content only appears after the layers are peeled"},
+		{"peel.indicator-match", Technique, Novel, 25,
+			"a heuristic indicator matched a decoded layer"},
 	}
 }

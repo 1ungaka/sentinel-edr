@@ -22,6 +22,32 @@ type Leaf struct {
 	Truncated bool
 }
 
+// Encoded reports whether the chain that reached this leaf included an
+// encoding or a substitution: the layers that hide content deliberately.
+//
+// Compression and archives are packaging: a gzipped README is a gzipped
+// README, and a rule that matches the text inside it is a statement about the
+// document, not about the sample. A caller that rescans leaves wants the
+// deliberate ones.
+func (l Leaf) Encoded() bool {
+	for _, step := range strings.Split(l.Signature, ">") {
+		if isEncoding(step) {
+			return true
+		}
+	}
+	return false
+}
+
+// isEncoding reports whether a chain step is a deliberate encoding or
+// substitution rather than packaging.
+func isEncoding(step string) bool {
+	switch step {
+	case "", "gzip", "zlib", "bzip2", "zip", "flate", "carve":
+		return false
+	}
+	return true
+}
+
 // maxLeaves bounds how many leaves one result carries, so a rescan costs a
 // fixed number of passes whatever the shape of the tree.
 const maxLeaves = 8

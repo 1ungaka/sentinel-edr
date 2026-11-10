@@ -191,6 +191,11 @@ type Engine struct {
 	// Peel enables the obfuscation-chain peeler (NOVEL-012). Its result rides
 	// on ScanResult.Peel.
 	Peel bool
+	// PeelIndicators runs the detection rules and the heuristic indicators
+	// over the peeler's decoded layers, so a base64-wrapped script is caught
+	// even when the decode is a script and not an executable. The cost is
+	// capped per file.
+	PeelIndicators bool
 	// PeelThreshold overrides peeler.Threshold (0 = package default).
 	PeelThreshold int
 
@@ -680,9 +685,21 @@ func (e *Engine) ScanFile(path string) (res ScanResult, h *HeuristicResult) {
 	if e.Peel {
 		run("peel", func() {
 			if data != nil {
-				pr := peeler.New().Peel(context.Background(), data)
+				p := peeler.New()
+				if e.PeelIndicators {
+					// The leaves are what the rescan below reads; without
+					// them the peel pays nothing for it.
+					p = peeler.New(peeler.WithLeaves(maxLeafRescanBytes))
+				}
+				// The engine's ScanFile takes no context, so the peel cannot
+				// be cancelled from here; its own budget (nodes, bytes, depth,
+				// wall clock) is what bounds the work.
+				pr := p.Peel(context.Background(), data) // audit:ok no caller context to pass: ScanFile has no context parameter
 				pr.FilePath = path
 				pr.Threshold = e.peelThreshold()
+				if e.PeelIndicators {
+					e.rescanLeaves(&pr, path, &res)
+				}
 				res.Peel = &pr
 			} else {
 				res.Peel = &peeler.Result{

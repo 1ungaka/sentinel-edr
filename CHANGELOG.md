@@ -5,6 +5,26 @@ All notable changes to CAU EDR. The format follows
 
 ## [Unreleased]
 
+### The decoded layers are read by the rules too
+
+- **New: the detection rules and the heuristic indicators run over what the
+  peeler decoded** (`scanner/engine_leaves.go`, the `PeelIndicators` engine
+  option, on in `cau defend`). A base64-wrapped mimikatz or a PowerShell cradle
+  is caught even when the decode is a script and not an executable — the case the
+  peeler's own "revealed script" verdict deliberately does not flag on its own.
+  The hits are attributed as `peel.rule-match` and `peel.indicator-match`; a
+  rule match flags on its own, a heuristic indicator corroborates.
+  - Two bounds keep it honest: only leaves the peeler took for *code* are
+    rescanned, and only chains with a deliberate encoding or substitution in
+    them — compression alone is packaging, so a gzipped document that mentions a
+    payload is a document.
+  - Measured on 139,984 benign files: **1** flagged — a Metasploit-framework
+    documentation page that embeds a base64+gzip PowerShell payload. That is a
+    true positive about the content and a false positive about the context, and
+    it is the whole of the false positives (0.0007 %).
+  - The per-file cost is capped at 8 leaves, 1 MiB per leaf and 4 MiB in all,
+    and what the cap cut is said in the report.
+
 ### Firmware: looking inside the image, and the kernel's own state
 
 - **New `cau firmware scan`** (`scanner/firmware`): looks inside a firmware

@@ -103,9 +103,12 @@ func evasionEngine(rulesPath, dbPath string, stderr io.Writer) (*scanner.Engine,
 		ISO:        true,
 		LinuxPkg:   true,
 		Peel:       true,
-		Archive:    true,
-		CHM:        true,
-		Tradecraft: true,
+		// The decoded layers are rescanned with the same rules, so the
+		// report says how fragile a decoded detection is too.
+		PeelIndicators: true,
+		Archive:        true,
+		CHM:            true,
+		Tradecraft:     true,
 	}
 	closer := func() {}
 	if dbPath != "" {

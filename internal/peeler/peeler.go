@@ -149,6 +149,11 @@ type Result struct {
 	// rescans them. Empty unless the Peeler was built WithLeaves.
 	Leaves []Leaf `json:"-"`
 
+	// extra are the findings a caller added with AddEvidence. They are kept
+	// apart from the peeler's own findings so that raising the score can
+	// re-render the peeler's findings without duplicating them.
+	extra []Finding
+
 	// ── detector contract (set by the engine; empty for standalone peels) ──
 	FilePath  string    `json:"file_path,omitempty"`
 	Size      int       `json:"size,omitempty"`
@@ -738,6 +743,23 @@ func (st *peel) finish(exhausted bool, reason string) Result {
 	r.Score = score(r)
 	r.Findings = buildFindings(r)
 	return r
+}
+
+// AddEvidence records evidence a caller found by rescanning a decoded layer.
+//
+// The finding joins the result's findings and its score raises the result's
+// score, capped at 100. The peeler's own findings carry the result's score, so
+// they are re-rendered with the new total: a report that shows a payload
+// finding at 60 and a result at 100 would be two different numbers for one
+// verdict.
+//
+// The caller is the engine, which rescans the leaves with the detection rules
+// and the heuristic indicators: a base64-wrapped script is caught even when
+// the decode is a script and not an executable.
+func (r *Result) AddEvidence(f Finding) {
+	r.extra = append(r.extra, f)
+	r.Score = min(100, r.Score+f.Score)
+	r.Findings = append(buildFindings(*r), r.extra...)
 }
 
 // buildFindings renders the detector-contract findings from a scored result:

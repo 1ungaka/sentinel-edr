@@ -36,6 +36,9 @@ const (
 	LayerKernel      Layer = "kernel"
 	LayerCanary      Layer = "canary"
 	LayerPackage     Layer = "package"
+	// LayerBehavior is the host's own behaviour: the inventories that say
+	// something on this host is arranging for the next file to be missed.
+	LayerBehavior Layer = "behavior"
 	// LayerNetwork is the network plane as the host's own kernel sees it: which
 	// process holds which socket, where it is talking to, what the resolver and
 	// the neighbour table say.

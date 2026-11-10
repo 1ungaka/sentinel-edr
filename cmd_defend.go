@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/s-b-repo/cau/internal/behavior"
 	"github.com/s-b-repo/cau/internal/canary"
 	"github.com/s-b-repo/cau/internal/correlate"
 	"github.com/s-b-repo/cau/internal/forward"
@@ -344,6 +345,7 @@ const (
 	viewPackage
 	viewSelftest
 	viewExternal
+	viewBehavior
 )
 
 // defender is a set of goroutines that never wait for each other. Each layer owns
@@ -1161,6 +1163,33 @@ func (d *defender) persistenceLayer() {
 
 func (d *defender) canaryLayer() { d.publish(viewCanary, d.canarySignals()) }
 
+// behaviorLayer reads the host's own behaviour: the inventories that say
+// something on this host is arranging for the next file to be missed — an
+// auditor library in every process, a fanotify listener that ignores events, a
+// systemd generator that adds a unit at every boot, a BPF program nobody's
+// package owns.
+//
+// The inventories are state, not proof, so their scores sit below the
+// response threshold: they corroborate, and they are published so an operator
+// can see what the host is doing.
+func (d *defender) behaviorLayer() { d.publish(viewBehavior, d.behaviorSignals()) }
+
+// behaviorSignals reads the behaviour inventories and turns them into signals.
+func (d *defender) behaviorSignals() []correlate.Signal {
+	res := behavior.Check(behavior.Options{ProcRoot: d.procRoot, Root: d.persistRoot})
+	out := make([]correlate.Signal, 0, len(res.Findings))
+	for _, f := range res.Findings {
+		out = append(out, correlate.Signal{
+			Layer:  correlate.LayerBehavior,
+			Class:  f.Class,
+			Score:  f.Score,
+			Detail: f.Detail,
+			Files:  correlate.ReferencedPaths(f.Evidence),
+		})
+	}
+	return out
+}
+
 func (d *defender) packageLayer() {
 	d.lastPackage = time.Now()
 	d.publish(viewPackage, d.packageSignals())
@@ -1547,7 +1576,7 @@ func (d *defender) cycle() []correlate.Incident {
 	// own quiet connection. In the daemon nothing waits — the ingest layer fires
 	// the network layer when it learns something new.
 	d.ingestLayer()
-	parallel.Do(d.processLayer, d.persistenceLayer, d.networkLayer, d.canaryLayer, d.selftestLayer, d.drainFiles, func() {
+	parallel.Do(d.processLayer, d.persistenceLayer, d.networkLayer, d.canaryLayer, d.selftestLayer, d.behaviorLayer, d.drainFiles, func() {
 		if d.packageDue() {
 			d.packageLayer()
 		}

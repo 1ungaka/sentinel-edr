@@ -5,6 +5,23 @@ All notable changes to CAU EDR. The format follows
 
 ## [Unreleased]
 
+### The host's own inventories: the sensor side of the host techniques
+
+- **New `internal/behavior`**, run by the resident agent (`cau defend`): the
+  inventories that say something on this host is arranging for the next file to
+  be missed — an auditor library (`LD_AUDIT` / `LD_PRELOAD`) loaded into
+  processes from a library no package owns, a fanotify listener nobody's
+  package owns (and the mask it asked not to be told about), a systemd
+  generator unit that adds itself at every boot, and a pinned BPF program no
+  package owns.
+  - The benign anchor is the package database: a distribution package that
+    ships an auditor, a watcher or a generator is ordinary software. With no
+    package database there is no anchor, and the layer says so rather than
+    presenting the inventories as clean.
+  - The classes are state, not proof, and sit below the response threshold: they
+    corroborate, and they are published so an operator can see what the host is
+    doing.
+
 ### The shellcode atoms are measured
 
 - **The recall of the lengthened export-hash atoms is now recorded.** The

@@ -629,6 +629,30 @@ Nothing decoded is ever executed. It is SUSPICIOUS-tier, never MALICIOUS, so a
 hit alone does not trigger `--quarantine` at its default level. `--no-tradecraft`
 disables it and `--tradecraft-threshold` tunes the score.
 
+## Host behaviour (the sensor's own inventories)
+
+The file detectors answer "is this file malicious". The behaviour layer answers
+a different question: is something on this host arranging for the next file to
+be missed? It runs in the resident agent (`cau defend`), read-only, and reports
+state rather than proof — a host administrator may legitimately install any of
+these, so every class sits below the response threshold and corroborates rather
+than convicts.
+
+| Class | Novel | What it reads |
+|---|---|---|
+| `behavior.audit-library` | NOVEL-007 | a process whose environment loads `LD_AUDIT` or `LD_PRELOAD` from a library **no package owns**. A distribution package that ships an auditor is ordinary software, and the package database is what says so |
+| `behavior.fanotify-listener` | NOVEL-008 | a process holding a fanotify file descriptor (the kernel describes it in `fdinfo`) that no package owns: a watcher on the filesystem |
+| `behavior.fanotify-ignored-mask` | NOVEL-008 | the same listener asking **not** to be told about some events. An ignored mask is the suppression primitive, so it scores above the listener itself |
+| `behavior.systemd-generator` | NOVEL-009 | a unit under `/run/systemd/generator` that no package owns: it adds itself at every boot |
+| `behavior.bpf-program` | NOVEL-010 | a pinned object under `/sys/fs/bpf` that no package owns: a program loaded into the kernel |
+
+The benign anchor is the package database, and it is reported: with no package
+database there is no anchor, so the inventories are published without one and
+the layer says so rather than presenting them as clean. A surface that is
+*absent* (no generator directory, no bpffs root) is not a finding; a surface
+that exists and cannot be read is noted, because that is a permission problem
+and not an absence.
+
 ## Fusion
 
 Each detector's threshold is tuned so that it alone stays quiet on ordinary

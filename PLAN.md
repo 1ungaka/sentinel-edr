@@ -1190,10 +1190,25 @@ catch and how to catch it, not how to build it. This Phase 4-connected work maps
   this detector in go-yara without C, and a byte-pattern rule for the UTF-8 of U+200D
   would fire on every family emoji, so the Go detector is the single implementation
   and the YARA-module idea is dropped. Console still adds the egress URL check.
-- [ ] Sensor-side rules in `internal/behavior` for the host techniques: binder
+- [~] Sensor-side rules in `internal/behavior` for the host techniques: binder
   reconciliation, respawn-chain graphs, kill-pool matching, fanotify/generator/BPF
   inventories, CRIU restore tracing. Provenance (Debian/etc., per Phase 7 #5) is the
   benign anchor for all five inventory checks.
+  **The inventory half shipped 2026-11-10** as `internal/behavior`, run by the
+  resident agent (`cau defend`): the auditor-library inventory (LD_AUDIT /
+  LD_PRELOAD, reconciled with the package database), the fanotify inventory (the
+  listener, and the mask it asked not to be told about), the systemd generator
+  inventory, and the pinned BPF program inventory. Provenance is the benign
+  anchor for all four, and the layer says so when there is no package database:
+  the inventories are then published without an anchor rather than presented as
+  clean. The classes are state, not proof, and sit below the response threshold.
+  **Open:** the binder reconciliation (NOVEL-003), the respawn-chain graph
+  (NOVEL-004), the kill-pool matching (NOVEL-005) and the CRIU restore tracing
+  (NOVEL-011) — the three that need a history the host does not keep by itself
+  (who bound the port, which process was respawned by which, which names were
+  killed, which process was restored from a checkpoint image). They need the
+  kernel guard's event log and a time series rather than a point reading, which
+  is a different shape of rule than an inventory.
 - [ ] Phase 6 ties: each technique becomes a fixed regression case in the evasion-report
   suite, executed against the corpus.
 - [ ] Fixtures are generated synthetic samples (corpus policy: nothing sensitive is

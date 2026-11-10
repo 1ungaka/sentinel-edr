@@ -19,6 +19,7 @@ complete -c cau -n __fish_use_subcommand -a honesty -d 'coverage, measurements a
 complete -c cau -n __fish_use_subcommand -a quarantine -d 'vault flagged files'
 complete -c cau -n __fish_use_subcommand -a canary -d 'plant decoys and detect tampering'
 complete -c cau -n __fish_use_subcommand -a peel -d 'walk an obfuscation chain'
+complete -c cau -n __fish_use_subcommand -a evasion -d 'measure how fragile the shipped detections are'
 complete -c cau -n __fish_use_subcommand -a firmware -d 'parse a UEFI firmware image'
 complete -c cau -n __fish_use_subcommand -a boot-scan -d 'read the boot chain, read-only'
 complete -c cau -n __fish_use_subcommand -a hwid -d 'snapshot and compare the hardware identity'

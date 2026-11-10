@@ -75,6 +75,14 @@ compression layer, in parallel, reporting depth as a signal in its own right.
 \fB\-\-jobs\fP peels several files at once and \fB\-\-stream\fP prints each
 layer as it is found.
 .TP
+.B cau evasion \fR<\fBreport\fP|\fBbench\fR> [\fPflags\fR]
+Measure how fragile the shipped detections are: for every detector that fired,
+how many bytes have to change for it to stop firing. The distance comes from
+the detection's own evidence, and a detector whose distance cannot be derived
+is reported as not derivable rather than guessed at. The report describes the
+change and never carries a patch: no offsets, no matched bytes, no mutated
+sample.
+.TP
 .B cau firmware \fR[\fPflags\fR] \fP<\fBimage\fR>
 Parse a UEFI firmware image: firmware-volume and file inventory, integrity and
 an implant blocklist.

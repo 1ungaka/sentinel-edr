@@ -14,7 +14,7 @@ _cau() {
     local -a top
     top=(
         scan hash cluster add-hash add-fuzzy eval heldout rules coverage honesty
-        quarantine canary peel firmware boot-scan hwid ps net persist defend installed feed intake update
+        quarantine canary peel evasion firmware boot-scan hwid ps net persist defend installed feed intake update
         selftest verify-self bundle version help
     )
 

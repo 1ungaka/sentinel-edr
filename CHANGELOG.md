@@ -5,6 +5,29 @@ All notable changes to CAU EDR. The format follows
 
 ## [Unreleased]
 
+### The evasion report: how fragile the shipped detections are
+
+- **New `cau evasion report` and `cau evasion bench`** (`internal/evasion`): for
+  every detector that fired, how many bytes have to change for it to stop
+  firing on this file. The distance comes from the detection's own evidence —
+  the matched hash, the rule's condition read back and costed (in `a and b` one
+  side is enough, in `a or b` both are, in `3 of them` the count has to drop
+  below three), the invisible codepoints, the overlay's size — and a detector
+  whose distance cannot be derived is reported as **not derivable**, with the
+  reason, instead of being given a number nobody checked.
+  - The whole-verdict figure is a range, because one edit can break several
+    detectors at once: the largest single distance is the lower bound, their
+    sum the upper bound.
+  - The report names the change and carries no patch: no offsets, no matched
+    bytes, no mutated sample. The repository implements detection rows and not
+    the techniques that defeat them.
+  - `cau evasion bench` measures a corpus the operator supplies — the eval
+    harness's own manifest format, so the numbers come from the corpus the
+    recall figures are published from — and reports, per detector, how often it
+    fired and how many of its firings were one byte from silence. It ships no
+    attacks and generates none.
+  - See [docs/evasion.md](docs/evasion.md).
+
 ### The bug-shape sweep runs in CI, and what it found
 
 - **The sweep for bug shapes is a gate again.** The repository ships a regex

@@ -157,6 +157,7 @@ failed, 4 usage.
 | [Detection content](docs/detection-content.md) | signature databases, YARA conventions and the rule linter, the fuzzy-hash database |
 | [Detection engineering](docs/detection-engineering.md) | ADS documents, the ATT&CK coverage matrix and its gate, Pyramid of Pain, OCSF |
 | [Evaluation harness](docs/evaluation.md) | corpora, baselines, regression gates, every measurement behind the docs |
+| [Evasion report](docs/evasion.md) | how fragile the shipped detections are: the bytes that must change for each detector to stop firing, per file and per corpus |
 | [Library usage](docs/library.md) | using the engine and the fusion lattice from Go |
 | [Architecture](docs/architecture.md) | the single-read pipeline, verdict tiers, design rules, layout |
 | [Packaging](docs/packaging.md) | the maintainer guide: what CI builds on push and tag, the release checklist, the signed apt repository |

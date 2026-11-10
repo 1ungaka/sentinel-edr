@@ -16,6 +16,7 @@ written in Go. These pages are the reference; the repository
 | [Detection engineering](detection-engineering.md) | ADS documents per detector, the ATT&CK coverage matrix and its gate, Pyramid of Pain levels, OCSF |
 | [ADS](ads/README.md) | one Alerting and Detection Strategy per detector, the obfuscation-chain peeler included |
 | [Evaluation harness](evaluation.md) | corpora, manifests, baselines, regression policies, the measurements behind every number |
+| [Evasion report](evasion.md) | how fragile the shipped detections are: the bytes that must change for each detector to stop firing, measured per file and per corpus |
 | [Library usage](library.md) | using the engine from Go |
 | [Architecture](architecture.md) | the single-read pipeline, verdict tiers, design rules, repository layout |
 | [Limitations](limitations.md) | what each detector cannot do, the documented false-positive classes |

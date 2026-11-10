@@ -575,14 +575,29 @@ Static engines lose to packing. Each tier earns its place only where the previou
 
 The credibility engine. Nobody ships this, and it is defensible purely on being honest.
 
-- [ ] `cau evasion-report --file X` → minimum patch set that flips the verdict, per
-      detector, with evasion distance.
+- [x] `cau evasion report --file X` → per detector, the bytes that must change for it
+      to stop firing, with the evasion distance. Shipped (`internal/evasion`,
+      `cmd_evasion.go`): the distance comes from the detection's own evidence (the
+      matched hash, the rule's condition read back and costed, the invisible
+      codepoints, the overlay's size), and a detector whose distance cannot be
+      derived is reported as not derivable rather than given a number nobody
+      checked. **The patch set is deliberately not shipped**: the scope note says
+      the part that crosses into bypass is refused, not split off and shipped, so
+      the report names the change and carries no offsets, no matched bytes and no
+      mutated sample. `docs/evasion.md` states the line and why.
 - [ ] Adversarial harness implementing the published state of the art:
       XAI-guided function-call replacement via integrated gradients (94–100% success),
       MalAOI-style RL active-opcode insertion (93.7%), PhantomCall FCG dummy-function
-      injection (85–100%, +95 pts over prior SOTA).
-- [ ] Benchmark every detector against the suite. A detector that cannot be attacked has
-      not been tested.
+      injection (85–100%, +95 pts over prior SOTA). **Declined, on purpose:** these
+      are attack generators. The scope note refuses the technique side outright, and
+      the measurement side is what the plan's own claim needs.
+- [x] Benchmark every detector against the suite. A detector that cannot be attacked has
+      not been tested. Shipped as the measurement half: `cau evasion bench --corpus M`
+      runs the shipped detectors over a corpus the operator supplies (the eval
+      harness's own manifest format, so the numbers come from the corpus the
+      recall figures are published from) and reports, per detector, how often it
+      fired and how many of its firings were one byte from silence. The corpus is
+      the operator's: the repository ships no attacks and generates none.
 
 ---
 

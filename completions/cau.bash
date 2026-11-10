@@ -19,7 +19,7 @@ _cau() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     top="scan hash cluster add-hash add-fuzzy eval heldout rules coverage honesty
-quarantine canary peel firmware boot-scan hwid ps net persist defend installed feed intake update selftest
+quarantine canary peel evasion firmware boot-scan hwid ps net persist defend installed feed intake update selftest
 verify-self bundle completion version help"
 
     # ── flags ────────────────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ cau firmware  [flags] <image>        parse a UEFI firmware image: inventory, FV 
 cau boot-scan [flags]                read the boot chain, read-only: MBR/GPT, the ESP, Secure Boot, firmware tables
 cau hwid      [flags]                snapshot the hardware identity, and compare it with a baseline
 cau peel      [flags] <file>...      walk obfuscation chains: every common base, rot and Caesar, in parallel
+cau evasion  report|bench [flags]    measure how fragile the shipped detections are, per detector
 cau feed      <subcommand> [flags]   abuse-intel feed: list / check / update
 cau intake    --format <fmt> [flags] ingest STIX, MISP, MalwareBazaar, LOLDrivers or TAXII 2.1 intel
 cau update    (--from|--url) [flags] install a signed signature-DB bundle, refusing an older one
@@ -1472,6 +1473,55 @@ opened. A chain four or more layers deep is the `deep-chain` outcome
 benign local files no chain reached depth 3. Exit codes: 0 clean, 1 a chain
 revealed a payload, was four or more layers deep, or the peel was exhausted, 3
 failed, 4 usage.
+
+## cau evasion
+
+```sh
+cau evasion report --file <path> [--rules <dir>] [--db <path>] [--format text|json]
+cau evasion bench --corpus <manifest> [--rules <dir>] [--db <path>]
+                   [--format text|json] [--limit n]
+```
+
+Measures how fragile the shipped detections are. For every detector that fired
+it answers one question: how many bytes have to change for that detector to
+stop firing on this file? The number comes from the detection's own evidence —
+the matched hash, the rule's condition, the invisible codepoints — and never
+from a guess. A detector whose distance cannot be derived (a finding that keys
+on a structure rather than on bytes) is reported as *not derivable*, with the
+reason, instead of being given a number nobody checked.
+
+What the report deliberately does not do is produce a patched file. It describes
+the change ("breaking the rule needs at least two bytes changed") and never
+the bytes to write: no offsets, no matched values, no mutated sample. This is
+a measurement of how much work the detection content still needs, in the same
+spirit as the recall and false-positive numbers the evaluation harness
+publishes — not a kit for making a sample quiet.
+
+The bounds are bounds. One edit can break several detectors at once — a byte
+inside a string two rules share — so the bytes that must change for the whole
+verdict to move are given as a range: the largest single detector's distance is
+the lower bound, and the sum of the distances is the upper bound.
+
+`report` measures one file. `bench` measures a corpus — the same manifest
+format `cau eval` reads, so the numbers come from the corpus the recall
+figures are published from — and reports, per detector, how often it fired and
+how many of its firings were a single byte from silence. The corpus is the
+operator's: the bench ships no attacks and generates none.
+
+```
+$ cau evasion bench --corpus corpus/smoke/manifest.json --db corpus/smoke/hashes.txt
+evasion bench: corpus/smoke/manifest.json
+  samples  : 18 (8 with a detection)
+  detector                          fired  one-byte  min distance
+  encchain encchain.elf                1         1  1 byte(s)
+  hash Smoke_Hash Synthetic Sample     1         1  1 byte(s)
+  yara generic_ransomware_extensi…     1         1  1 byte(s)
+  static segment.rwx                   1         0  n/a
+  yara wannacry_ransomware             1         0  2 byte(s)
+  stego stego.codepoints               1         0  48 byte(s)
+```
+
+Exit codes: 0 the measurement was taken, 3 the measurement failed, 4 usage.
 
 ## cau intake
 

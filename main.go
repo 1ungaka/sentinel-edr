@@ -77,6 +77,8 @@ Usage:
   cau quarantine <subcommand>          vault flagged files (add/list/restore/verify/delete)
   cau canary    plant|check [flags]    plant decoy files and detect tampering
   cau peel      [flags] <file>...      walk obfuscation chains, depth as signal
+  cau evasion  report|bench [flags]    measure how fragile the shipped detections are: the bytes that
+                                        must change for each detector to stop firing, never a patched sample
   cau firmware  [flags] <image>        parse a UEFI firmware image (FV/FFS inventory, integrity, implant blocklist)
   cau boot-scan [flags]                read the boot chain, read-only: MBR/GPT/boot sectors, the EFI System Partition,
                                        Secure Boot state and boot entries, WPBT, option ROMs
@@ -157,6 +159,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdCanary(args[1:], stdout, stderr)
 	case "peel":
 		return cmdPeel(args[1:], stdout, stderr)
+	case "evasion":
+		return cmdEvasion(args[1:], stdout, stderr)
 	case "firmware":
 		return cmdFirmware(args[1:], stdout, stderr)
 	case "boot-scan":

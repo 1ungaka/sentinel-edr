@@ -245,9 +245,11 @@ def fingerprint(r, path, line):
     return f"{r.id}\t{path}\t{hashlib.sha256(line.encode()).hexdigest()[:16]}"
 
 
-def load_baseline(root):
+def load_baseline(root, path=None):
+    """Reads the hits somebody read. A missing baseline is an empty one, which
+    makes every hit a new candidate: the sweep then says what it sees."""
     try:
-        with open(os.path.join(root, BASELINE)) as f:
+        with open(path or os.path.join(root, BASELINE)) as f:
             return {line.rstrip("\n") for line in f if line.strip() and not line.startswith("#")}
     except FileNotFoundError:
         return set()
@@ -386,6 +388,8 @@ def scan(root, opts):
                 continue
             full = os.path.join(dirpath, name)
             path = os.path.relpath(full, root)
+            if opts.prefix:
+                path = os.path.join(opts.prefix, path)
             if not opts.tests and (name.endswith("_test.go") or "/vmtest/" in full):
                 continue
             with open(full, errors="replace") as f:
@@ -408,6 +412,8 @@ def scan(root, opts):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default=".")
+    ap.add_argument("--baseline", help="the baseline file to read (default: <root>/scripts/regex-audit.baseline). A tree that is not this repository reads its baseline from here, so one sweep covers both.")
+    ap.add_argument("--prefix", default="", help="prefix for the reported paths, so a sibling tree produces the paths the baseline names (the baseline records them relative to this repository's root)")
     ap.add_argument("--family", choices=sorted({r.family for r in RULES}))
     ap.add_argument("--rule", help="run one rule by id")
     ap.add_argument("--tests", action="store_true", help="include test code")
@@ -434,7 +440,7 @@ def main():
             f.write("".join(e + "\n" for e in entries))
         print(f"recorded {len(entries)} hit(s) in {BASELINE}")
         return 0
-    known = set() if opts.all else load_baseline(opts.root)
+    known = set() if opts.all else load_baseline(opts.root, opts.baseline)
     total = len(hits)
     hits = [h for h in hits if fingerprint(h[0], h[1], h[3]) not in known]
     counts = collections.Counter(r.id for r, *_ in hits)

@@ -53,7 +53,7 @@ Append a TLSH, ssdeep or imphash signature.
 Corpus evaluation harness: validate a manifest, run it, report on it, diff two
 runs and gate a run against a measured baseline.
 .TP
-.B cau heldout \fR<\fBinit\fP|\fBadd\fP|\fBpull\fP|\fBsync\fP|\fBremove\fP|\fBrm\fP|\fBlist\fP|\fBmanifest\fP\fR>
+.B cau heldout \fR<\fBinit\fP|\fBadd\fP|\fBpull\fP|\fBsync\fP|\fBremove\fP|\fBrm\fP|\fBlist\fP|\fBls\fP|\fBmanifest\fP\fR>
 Manage the encrypted held-out recall-corpus hash database.
 .TP
 .B cau rules \fR<\fBlint\fP|\fBlist\fR>
@@ -83,15 +83,22 @@ is reported as not derivable rather than guessed at. The report describes the
 change and never carries a patch: no offsets, no matched bytes, no mutated
 sample.
 .TP
-.B cau model \fR<\fBlist\fP|\fBverify\fP|\fBpromote\fP|\fBrollback\fR> [\fPflags\fR]
+.B cau model \fR<\fBlist\fP|\fBverify\fP|\fBpromote\fP|\fBrollback\fP|\fBcard\fR> [\fPflags\fR]
 The signed registry of the model artifacts the engine may run: every artifact
 named by its digest and carrying an SBOM and a model card, with the version in
 force and the history a rollback returns to. The registry never runs anything;
 inference belongs to a sidecar.
 .TP
-.B cau firmware \fR[\fPflags\fR] \fP<\fBimage\fR>
+.B cau firmware \fR<\fBscan\fR> | \fR[\fPflags\fR] \fP[\fBimage\fR]
 Parse a UEFI firmware image: firmware-volume and file inventory, integrity and
 an implant blocklist.
+.TP
+.B cau firmware scan \fR[\fPflags\fR] \fP[\fBimage\fR ...]
+Look inside a firmware image and run the ordinary detectors over what is
+there: the container formats present (squashfs, cramfs, jffs2, ext, FAT,
+gzip, zip, tar, xz, zstd, LZMA, uImage, ISO), with the members of the
+formats this build can open extracted and scanned. A container that cannot be
+opened is reported with the reason, never as an empty result.
 .TP
 .B cau boot\-scan \fR[\fPflags\fR]
 Read the boot chain, strictly read-only: the MBR, GPT and partition boot
@@ -146,7 +153,7 @@ Verify the bundled detection content has not been tampered with.
 .B cau verify\-self \fB\-\-from\fP|\fB\-\-url\fP \fR[\fPflags\fR]
 Verify this binary against the signed release manifest.
 .TP
-.B cau bundle \fR<\fBupdate\fP|\fBchecksums\fP|\fBsbom\fR>
+.B cau bundle \fR<\fBupdate\fP|\fBchecksums\fP|\fPsbom\fP|\fBkeygen\fR>
 Produce signed release artifacts and a CycloneDX bill of materials; intended for
 CI.
 .TP

@@ -48,6 +48,20 @@ Exit codes: 0 clean, 1 suspicious, 3 the run failed, 4 usage.
 }
 
 func cmdFirmware(args []string, stdout, stderr io.Writer) int {
+	// A bare first word is a subcommand; an existing file is an image, the
+	// form this command shipped with. Anything else is neither, and says so
+	// rather than guessing.
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		switch args[0] {
+		case "scan":
+			return cmdFirmwareScan(args[1:], stdout, stderr)
+		default:
+			if !fileExists(args[0]) {
+				return fail(stderr, report.ExitUsage,
+					"cau firmware: %q is neither a subcommand (scan) nor an existing image", args[0])
+			}
+		}
+	}
 	fs := flag.NewFlagSet("firmware", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	format := fs.String("format", "text", "output format: text or json")

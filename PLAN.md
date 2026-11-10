@@ -889,16 +889,44 @@ command, not part of the per-file `cau scan`. The remaining Phase 8 items below 
   targets in `make fuzz`. Measured so far only on synthetic images and one real host
   (0 scored findings); no benign-population FP number yet, and its techniques
   (T1542.001/.002/.003, T1561.002, T1486, T1553.006) are not yet rows in `cau coverage`.
-- [ ] Firmware-image bulk scanning at the scan node: router/NAS/IoT/vendor images with
+- [~] Firmware-image bulk scanning at the scan node: router/NAS/IoT/vendor images with
   binwalk-style unpack (squashfs, jffs2, cramfs) recursed into the normal detectors —
   LOLDrivers, HijackLibs and bootloaders.io intake already supply the hashes and rules.
-- [ ] Sensor surface (console side): efivarfs watch, kernel-taint and
+  **Container identification and extraction shipped 2026-11-10** as `scanner/firmware` +
+  `cau firmware scan`: the image is searched for the container formats a device image
+  actually holds (squashfs, cramfs, jffs2, ext2/3/4, FAT, gzip, zip, tar, xz, zstd, LZMA,
+  uImage, ISO — a tar's "ustar" sits 257 bytes in, an ext superblock's magic 1080, so the
+  container's own start is found, not guessed), the members of gzip, zip and tar are
+  extracted, and the ordinary detectors run over them like any other file. A container
+  this build cannot open is reported with its offset and the reason it was not opened —
+  never as an empty result, because an image whose filesystem was not unpacked is an
+  image nothing was measured in. The extraction is bounded (members, per-member bytes
+  and total bytes). **Open:** squashfs, cramfs and jffs2 are identified but not opened —
+  their metadata blocks need decoders this build does not carry (squashfs in particular
+  may use zstd), so those images still need an extractor, and "identified" is not
+  "inspected".
+- [~] Sensor surface (console side): efivarfs watch, kernel-taint and
   `module.sig_enforce` state as behavior-engine telemetry; persistence-info catalog as
   the cross-check list.
+  **The kernel-state half shipped 2026-11-10** as `internal/bootscan/kernel.go` and
+  `cau boot-scan --proc`: the taint word, the module signature enforcement mode and the
+  module count, read from a proc root and reported as state rather than as a finding (a
+  permissive signature mode is a policy question the operator owns). The taint table is
+  the same one the kernel sensor (`cau-kernel`) decodes with, so the two agree on what
+  a flag means; an unknown taint bit is reported as `taint-bit-<n>` rather than
+  dropped. **Open:** the efivarfs *watch* — efivarfs is not an inotify-capable
+  filesystem, so a watch over it is a poll, and the poll's interval and its cost are
+  not settled; the persistence-info catalog is console-side.
 - [ ] Fixture corpus with the Phase 1 gates intact: public UEFI/BIOS implant fixtures and
   rule packs (LoJax/MoonBounce-class), measured for FP/FN like any other detection
   content. Firmware rules have a small-n truth set — say so in their model cards rather
   than inflating recall claims.
+  **Declined here, on purpose:** the corpus policy says fixtures are synthetic and
+  generated at eval time, never built from real samples, and the public LoJax- and
+  MoonBounce-class artifacts are real malware. Shipping them would break that rule for
+  the sake of a benchmark. What the engine ships instead is the synthetic firmware
+  corpus the UEFI parser is measured on, and the operator's own images through
+  `cau firmware scan` — with the boundary stated rather than papered over.
 
 ## Phase 9 — Blind-spot sweep (what this plan had been missing)
 

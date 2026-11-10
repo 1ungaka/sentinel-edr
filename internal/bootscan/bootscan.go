@@ -149,6 +149,9 @@ type Options struct {
 	EFIVars string
 	// Sysfs is the sysfs root (normally /sys) for the firmware inventory.
 	Sysfs string
+	// Proc is the proc root (normally /proc) for the kernel's own state: the
+	// taint word, the module signature enforcement mode and the module list.
+	Proc string
 	// DBXReference is a revocation list to compare the host's dbx against:
 	// the UEFI Forum's published dbx update for this architecture.
 	DBXReference string
@@ -165,6 +168,9 @@ type Result struct {
 	ESP       *ESPReport      `json:"esp,omitempty"`
 	EFI       *EFIReport      `json:"efi,omitempty"`
 	Firmware  *FirmwareReport `json:"firmware,omitempty"`
+	// Kernel is the kernel's own state: the taint word, the module signature
+	// enforcement mode and the module count. It is state, not a finding.
+	Kernel *KernelReport `json:"kernel,omitempty"`
 	// Notes say what was not inspected and why. A scan that could not read
 	// something reports that, never a clean result for it.
 	Notes []string `json:"notes,omitempty"`
@@ -175,7 +181,7 @@ func (r *Result) Detected() bool { return r != nil && r.Score >= r.Threshold }
 
 // Scanned reports whether anything was actually read.
 func (r *Result) Scanned() bool {
-	return r != nil && (len(r.Disks) > 0 || r.ESP != nil || r.EFI != nil || r.Firmware != nil)
+	return r != nil && (len(r.Disks) > 0 || r.ESP != nil || r.EFI != nil || r.Firmware != nil || r.Kernel != nil)
 }
 
 func (r *Result) add(fs ...Finding) {
@@ -236,6 +242,14 @@ func Run(opts Options) *Result {
 		}
 		if rep != nil && res.EFI != nil {
 			res.add(crossCheckBootEntries(res.EFI, rep)...)
+		}
+	}
+
+	if opts.Proc != "" {
+		rep, notes := ScanKernel(opts.Proc)
+		res.Kernel = rep
+		for _, n := range notes {
+			res.note(n)
 		}
 	}
 

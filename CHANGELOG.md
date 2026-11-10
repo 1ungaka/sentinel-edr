@@ -5,6 +5,31 @@ All notable changes to CAU EDR. The format follows
 
 ## [Unreleased]
 
+### Firmware: looking inside the image, and the kernel's own state
+
+- **New `cau firmware scan`** (`scanner/firmware`): looks inside a firmware
+  image and runs the ordinary detectors over what is there. A router, NAS or
+  IoT image is a container, and scanning it as one blob finds the container's
+  bytes and nothing else.
+  - The image is searched for the container formats a device image actually
+    holds — squashfs, cramfs, jffs2, ext2/3/4, FAT, gzip, zip, tar, xz, zstd,
+    LZMA, uImage, ISO — and the container's own start is found rather than
+    guessed: a tar's `ustar` sits 257 bytes in, an ext superblock's magic 1080.
+  - The members of gzip, zip and tar are extracted and scanned like any other
+    file. A container this build cannot open is reported with its offset and
+    the reason it was not opened, never as an empty result: an image whose
+    filesystem was not unpacked is an image nothing was measured in.
+  - The extraction is bounded (members, per-member bytes, total bytes).
+  - Squashfs, cramfs and jffs2 are identified but not opened yet: their
+    metadata blocks need decoders this build does not carry.
+- **The kernel's own state is now a surface** (`internal/bootscan/kernel.go`,
+  `cau boot-scan --proc`): the taint word, the module signature enforcement
+  mode and the module count, reported as state rather than as a finding — a
+  permissive signature mode is a policy question the operator owns. The taint
+  table is the same one the kernel sensor decodes with, so the two agree on
+  what a flag means, and an unknown taint bit is reported as `taint-bit-<n>`
+  rather than dropped.
+
 ### The model registry: the signed catalogue of what may run
 
 - **New `cau model list|verify|promote|rollback|card`** (`internal/model`): the

@@ -984,6 +984,29 @@ The `--implants` file is one `guid` or `guid|name` per line, `#` comments.
 Exit codes: `0` clean, `1` suspicious, `3` the run failed, `4` usage. (This is a
 standalone command; UEFI is not part of the per-file `cau scan`.)
 
+### cau firmware scan
+
+```sh
+cau firmware scan [--format text|json] [--rules <dir>] [--db <path>]
+                  [--no-static] [--max-members <n>] [--fail-on none|heuristic|malicious]
+                  <image>...
+```
+
+Looks inside a firmware image and runs the ordinary detectors over what it
+finds there. A router, NAS or IoT image is a container: a filesystem, an
+archive or a compressed stream with the real content somewhere inside it, and
+scanning the image as one blob finds the container's bytes and nothing else.
+
+The container formats this build identifies are squashfs, cramfs, jffs2,
+ext2/3/4, FAT, gzip, zip, tar, xz, zstd, LZMA, uImage and ISO. The members of
+gzip, zip and tar are extracted and scanned like any other file. A container
+this build cannot open is reported with its offset and the reason it was not
+opened — never as an empty result, because an image whose filesystem was not
+unpacked is an image nothing was measured in.
+
+The extraction is bounded: at most `--max-members` members per image, each
+member and the whole extraction under fixed byte budgets.
+
 ## cau boot-scan
 
 Reads the **boot chain**, the part of a host that a file scan never reaches,

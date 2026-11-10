@@ -52,6 +52,9 @@ Flags:
                          or /boot, whichever holds an EFI directory)
   --efivars <dir>        efivarfs mount (default /sys/firmware/efi/efivars)
   --sysfs <dir>          sysfs root for the firmware inventory (default /sys)
+  --proc <dir>           proc root for the kernel's own state: the taint word, the
+                         module signature enforcement mode and the module count
+                         (default /proc)
   --offline              scan only what is named; no host auto-discovery
   --dbx-reference <file> compare the host revocation list against this one (the
                          dbx update the UEFI Forum publishes for the platform)
@@ -165,6 +168,7 @@ func cmdBootScan(args []string, stdout, stderr io.Writer) int {
 	esp := fs.String("esp", "", "mounted EFI System Partition")
 	efivars := fs.String("efivars", "", "efivarfs mount")
 	sysfs := fs.String("sysfs", "", "sysfs root for the firmware inventory")
+	procRoot := fs.String("proc", "", "proc root for the kernel's own state (taint word, module signature enforcement)")
 	offline := fs.Bool("offline", false, "scan only what is named; no host auto-discovery")
 	dbxRef := fs.String("dbx-reference", "", "reference revocation list to compare the host dbx against")
 	format := fs.String("format", "text", "output format: text or json")
@@ -198,7 +202,7 @@ func cmdBootScan(args []string, stdout, stderr io.Writer) int {
 	}
 
 	opts := bootscan.Options{
-		Disks: disks, ESP: *esp, EFIVars: *efivars, Sysfs: *sysfs,
+		Disks: disks, ESP: *esp, EFIVars: *efivars, Sysfs: *sysfs, Proc: *procRoot,
 		DBXReference: *dbxRef, Threshold: *threshold,
 	}
 	if !*offline {
@@ -212,6 +216,9 @@ func cmdBootScan(args []string, stdout, stderr io.Writer) int {
 		}
 		if opts.Sysfs == "" && dirExists("/sys/firmware") {
 			opts.Sysfs = "/sys"
+		}
+		if opts.Proc == "" && dirExists("/proc/sys/kernel") {
+			opts.Proc = "/proc"
 		}
 	}
 	if len(opts.Disks) == 0 && opts.ESP == "" && opts.EFIVars == "" && opts.Sysfs == "" {
@@ -761,6 +768,26 @@ func writeBootScanText(w io.Writer, res *bootscan.Result) {
 		}
 		for _, e := range f.ESRT {
 			fmt.Fprintf(w, "  firmware    : %s version %s\n", safe(e.Class), safe(e.Version))
+		}
+	}
+
+	if k := res.Kernel; k != nil {
+		mode := "unknown"
+		switch {
+		case !k.SigEnforceKnown:
+			mode = "unreadable"
+		case k.SigEnforce == 1:
+			mode = "enforcing"
+		case k.SigEnforce == 0:
+			mode = "permissive"
+		}
+		fmt.Fprintf(w, "Kernel state      : taint %d, module signatures %s, %d module(s) loaded\n",
+			k.Tainted, mode, k.ModuleCount)
+		for _, flag := range k.TaintFlags {
+			fmt.Fprintf(w, "  taint  : %s\n", safe(flag))
+		}
+		for _, u := range k.Unreadable {
+			fmt.Fprintf(w, "  unreadable : %s\n", safe(u))
 		}
 	}
 

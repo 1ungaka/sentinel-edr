@@ -83,11 +83,11 @@ is reported as not derivable rather than guessed at. The report describes the
 change and never carries a patch: no offsets, no matched bytes, no mutated
 sample.
 .TP
-.B cau model \fR<\fBlist\fP|\fBverify\fP|\fBpromote\fP|\fBrollback\fP|\fBcard\fR> [\fPflags\fR]
+.B cau model \fR<\fBlist\fP|\fBverify\fP|\fBpromote\fP|\fBrollback\fP|\fBcard\fP|\fBscore\fR> [\fPflags\fR]
 The signed registry of the model artifacts the engine may run: every artifact
 named by its digest and carrying an SBOM and a model card, with the version in
 force and the history a rollback returns to. The registry never runs anything;
-inference belongs to a sidecar.
+inference belongs to a sidecar, which \fBscore\fP asks.
 .TP
 .B cau firmware \fR<\fBscan\fR> | \fR[\fPflags\fR] \fP[\fBimage\fR]
 Parse a UEFI firmware image: firmware-volume and file inventory, integrity and

@@ -12,6 +12,7 @@ import (
 	"github.com/s-b-repo/cau/internal/model"
 	"github.com/s-b-repo/cau/internal/release"
 	"github.com/s-b-repo/cau/internal/report"
+	"github.com/s-b-repo/cau/internal/sidecar"
 )
 
 // modelFixture writes a signed registry, its artifacts and a key pair.
@@ -174,5 +175,36 @@ func TestModelCard(t *testing.T) {
 	}
 	if !strings.Contains(out, "What it is.") {
 		t.Errorf("the card was not printed:\n%s", out)
+	}
+}
+
+// The score path talks to the sidecar, not to a model in this process: the
+// engine never loads a model, and the sidecar holds the runtime.
+func TestModelScoreAsksTheSidecar(t *testing.T) {
+	registry, _, _ := modelFixture(t)
+	sock := filepath.Join(t.TempDir(), "sidecar.sock")
+	l, err := sidecar.Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		_ = sidecar.Serve(l, func(req sidecar.Request) sidecar.Response {
+			return sidecar.Response{OK: true, Model: req.Model,
+				Scores: map[string]float64{"malicious": 0.93}, Version: "test"}
+		})
+	}()
+
+	file := filepath.Join(t.TempDir(), "sample.bin")
+	if err := os.WriteFile(file, []byte("sample bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runCLI(t, "model", "score", "--registry", registry,
+		"--model", "embedder@1.0.0", "--file", file, "--sidecar", sock)
+	if code != report.ExitOK {
+		t.Fatalf("code=%d stderr=%s\n%s", code, errOut, out)
+	}
+	if !strings.Contains(out, "malicious") {
+		t.Errorf("the score was not reported:\n%s", out)
 	}
 }

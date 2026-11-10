@@ -6,12 +6,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/s-b-repo/cau/internal/model"
 	"github.com/s-b-repo/cau/internal/release"
 	"github.com/s-b-repo/cau/internal/report"
 	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/s-b-repo/cau/internal/sidecar"
 )
 
 // The model registry is the signed catalogue of the artifacts the engine may
@@ -29,6 +31,7 @@ func modelUsage(w io.Writer) {
   promote    make a version the one in force (the previous one is remembered)
   rollback   go back to the version that was in force before
   card       print an artifact's model card
+  score      ask the inference sidecar to score a file with a registered model
 
 A model is a file an attacker would love to replace, so the registry is
 signed with the same trust anchor as the release manifest and the update
@@ -41,6 +44,9 @@ Flags:
   --sig <path>       the detached signature over the registry
   --pubkey <file>    the trusted public key (hex); also read from $CAU_MODEL_PUBKEY
   --model <id>       the artifact to act on, as name@version
+  --file <path>      the file to score (score)
+  --sidecar <path>   the sidecar's unix socket (score)
+  --fail-at <score>  exit non-zero when the model scores at or above this (score)
   --format <fmt>     text or json (default text)
   --out <path>       write the result here instead of stdout
 
@@ -60,6 +66,10 @@ const envModelPubKey = "CAU_MODEL_PUBKEY"
 // otherwise.
 const defaultModelRegistry = "models/registry.json"
 
+// defaultModelSidecar is where the inference sidecar listens when nothing says
+// otherwise.
+const defaultModelSidecar = "/run/cau-model.sock"
+
 func cmdModel(args []string, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
 		modelUsage(stderr)
@@ -76,6 +86,8 @@ func cmdModel(args []string, stdout, stderr io.Writer) int {
 		return modelRollback(args[1:], stdout, stderr)
 	case "card":
 		return modelCard(args[1:], stdout, stderr)
+	case "score":
+		return modelScore(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		modelUsage(stdout)
 		return report.ExitOK
@@ -91,6 +103,9 @@ type modelFlags struct {
 	sig      *string
 	pubkey   *string
 	model    *string
+	file     *string
+	sidecar  *string
+	failAt   *float64
 	format   *string
 	out      *string
 }
@@ -101,6 +116,9 @@ func newModelFlags(fs *flag.FlagSet) modelFlags {
 		sig:      fs.String("sig", "", "the detached signature over the registry"),
 		pubkey:   fs.String("pubkey", "", "the trusted public key (hex)"),
 		model:    fs.String("model", "", "the artifact to act on, as name@version"),
+		file:     fs.String("file", "", "the file to score"),
+		sidecar:  fs.String("sidecar", defaultModelSidecar, "the inference sidecar's unix socket"),
+		failAt:   fs.Float64("fail-at", -1, "exit non-zero when the model scores at or above this"),
 		format:   fs.String("format", "text", "text or json"),
 		out:      fs.String("out", "", "write the result here instead of stdout"),
 	}
@@ -299,6 +317,79 @@ func modelCard(args []string, stdout, stderr io.Writer) int {
 		return fail(stderr, report.ExitRunFailed, "%v", err)
 	}
 	return report.ExitOK
+}
+
+// modelScore asks the sidecar to score a file with a registered model.
+//
+// The engine does not do inference: the bytes go to the sidecar, which holds
+// the runtime and the artifacts, and the answer comes back as scores. A model
+// that is not in the registry is not asked for: which artifact may run is the
+// registry's decision.
+func modelScore(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("model score", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	f := newModelFlags(fs)
+	if err := fs.Parse(interspersed(fs, args)); err != nil {
+		return report.ExitUsage
+	}
+	if *f.model == "" {
+		return fail(stderr, report.ExitUsage, "model score: --model is required")
+	}
+	if *f.file == "" {
+		return fail(stderr, report.ExitUsage, "model score: --file is required")
+	}
+	r, _, err := loadModelRegistry(*f.registry)
+	if err != nil {
+		return fail(stderr, report.ExitRunFailed, "%v", err)
+	}
+	m, ok := r.Find(*f.model)
+	if !ok {
+		return fail(stderr, report.ExitRunFailed, "model score: %q is not in the registry", *f.model)
+	}
+	data, err := safefs.ReadFile(*f.file, maxModelDocumentBytes)
+	if err != nil {
+		return fail(stderr, report.ExitRunFailed, "model score: %v", err)
+	}
+	client := &sidecar.Client{Socket: *f.sidecar}
+	resp, err := client.Score(sidecar.Request{Model: m.ID(), ModelBytes: data})
+	if err != nil {
+		return fail(stderr, report.ExitRunFailed, "model score: %v", err)
+	}
+	if *f.format == "json" {
+		if err := writeJSON(stdout, resp); err != nil {
+			return fail(stderr, report.ExitRunFailed, "%v", err)
+		}
+	} else {
+		fmt.Fprintf(stdout, "model %s scored %s\n", m.ID(), *f.file)
+		for _, name := range sortedKeys(resp.Scores) {
+			label := resp.Labels[name]
+			if label != "" {
+				label = " (" + label + ")"
+			}
+			fmt.Fprintf(stdout, "  %-24s %.4f%s\n", name, resp.Scores[name], label)
+		}
+		if resp.Version != "" {
+			fmt.Fprintf(stdout, "  sidecar: %s\n", resp.Version)
+		}
+	}
+	if *f.failAt >= 0 {
+		for _, score := range resp.Scores {
+			if score >= *f.failAt {
+				return report.ExitThreat
+			}
+		}
+	}
+	return report.ExitOK
+}
+
+// sortedKeys lists a map's keys in order.
+func sortedKeys(m map[string]float64) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // modelVerifyKey reads the trusted public key: the flag, or the environment.

@@ -30,6 +30,19 @@ All notable changes to CAU EDR. The format follows
   what a flag means, and an unknown taint bit is reported as `taint-bit-<n>`
   rather than dropped.
 
+### The sidecar: the engine never does inference
+
+- **New `cau model score`** (`internal/sidecar`): the core asks an inference
+  sidecar to score bytes with a registered model and gets scores back. The
+  engine never loads a model into its own process, and
+  `TestNoInferenceInTheEngine` — a source gate beside the injection gate —
+  keeps it that way: a runtime linked into the core would put a model inside
+  the process that reads hostile files.
+- The protocol is a length-prefixed JSON frame over a unix socket, so the core
+  needs no dependency of its own to speak it. The transport is not gRPC: the
+  repository vendors no protobuf or gRPC dependency and the standard library
+  has neither.
+
 ### The model registry: the signed catalogue of what may run
 
 - **New `cau model list|verify|promote|rollback|card`** (`internal/model`): the

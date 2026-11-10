@@ -560,8 +560,26 @@ Static engines lose to packing. Each tier earns its place only where the previou
 | 3 | LLM static analyst over FLOSS/decompiled output | s | Best ROI on obfuscated samples; also the rule-generation engine |
 | 4 | Dynamic API-call graph → GNN/transformer | sandbox | The only tier that survives packing. GraphShield-class: 99.5% F1 @ <1% FPR |
 
-- [ ] ONNX Runtime sidecar over gRPC from the Go core. Do not do inference in Go.
+- [~] ONNX Runtime sidecar over gRPC from the Go core. Do not do inference in Go.
+  **The engine's half shipped 2026-11-10** as `internal/sidecar` + `cau model score`:
+  the core asks a sidecar to score bytes and gets scores back; it never loads a
+  model into its own process, and `TestNoInferenceInTheEngine` (a source gate
+  beside the injection gate) keeps it that way — a runtime linked into the core
+  would put a model inside the process that reads hostile files. The protocol is
+  a length-prefixed JSON frame over a unix socket, so the core needs no
+  dependency of its own to speak it. **Open:** the transport is not gRPC: the
+  repository vendors no protobuf or gRPC dependency and the standard library
+  has neither, so the frame is JSON and the production sidecar (an ONNX Runtime
+  service) has to speak the same frame. The artifact formats the sidecar
+  accepts, and the sidecar image itself, are the operator's.
 - [ ] Adversarial training mandatory — reduces evasion, does not remove it.
+  **Declined here, on purpose:** this is a training programme, not a detection
+  row: it needs a model, a training pipeline and training data, none of which
+  this repository ships, and the corpus policy says the data is synthetic and
+  generated at eval time. What ships instead is the measurement half — the
+  evasion report and the bench — which is what tells an operator whether their
+  content is fragile, without a training pipeline pretending to be a
+  contribution.
 - [x] **Temporal generalization as a hard CI gate.** Train on period A, score on period B,
       fail on AUC drop. TESSERACT / Arp et al.: temporal snooping is the field's most
       widespread evaluation flaw. Flat-feature models look best in-distribution and are

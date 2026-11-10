@@ -1594,6 +1594,23 @@ The registry does not run anything: inference belongs to a sidecar process.
 What it answers is "which artifact may run, is it the one that was signed, and
 how do I go back to the previous one".
 
+`cau model score` is the engine's half of the sidecar conversation: the bytes
+go to the sidecar, which holds the runtime and the artifacts, and the scores
+come back. The engine never loads a model into its own process — a runtime
+linked into the core would put a model inside the process that reads hostile
+files — and the source gate `TestNoInferenceInTheEngine` keeps it that way.
+
+```sh
+cau model score --model embedder@1.2.0 --file sample.bin \
+    --sidecar /run/cau-model.sock [--fail-at 0.8]
+```
+
+The protocol is a length-prefixed JSON frame over a unix socket: one request
+(`{"model": "name@version", "bytes": "<base64>"}`) and one response (the
+scores, the labels, the sidecar's version, or the reason the model did not
+run). A model that is not in the registry is not asked for, and a sidecar that
+says "the model did not run" is an error, never a clean result.
+
 | Flag | Default | Meaning |
 |---|---|---|
 | `--registry PATH` | `models/registry.json` | the registry document |

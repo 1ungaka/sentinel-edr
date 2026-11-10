@@ -144,6 +144,27 @@ func TestNoInjectionPrimitives(t *testing.T) {
 	}
 }
 
+// TestNoInferenceInTheEngine is the "do not do inference in Go" rule, enforced
+// by the build rather than by prose. A model is a file, and running one is
+// another process's job: the core reads files, hashes them and matches rules.
+// A runtime linked into the core would put a model inside the process that
+// reads hostile files, which is the one place a model has no business being.
+//
+// The inference sidecar is a separate process (internal/sidecar speaks to it);
+// nothing in the engine loads a model.
+func TestNoInferenceInTheEngine(t *testing.T) {
+	for _, src := range engineSource(t) {
+		for _, forbidden := range []string{
+			"onnxruntime", "go-onnx", "tensorflow", "gopickle", "torch",
+			"onnx/protobuf", "onnxruntime_go", "python",
+		} {
+			if src.imports(forbidden) {
+				t.Errorf("%s imports %q: the engine does not do inference, the sidecar does", src.path, forbidden)
+			}
+		}
+	}
+}
+
 // The gate must actually recognise what it forbids.
 func TestInjectionGateRecognisesPrimitives(t *testing.T) {
 	for _, name := range []string{"PtraceAttach", "PtracePokeText", "PtraceSeize", "SYS_PTRACE", "PTRACE_POKEDATA",

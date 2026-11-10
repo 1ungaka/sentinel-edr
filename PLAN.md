@@ -3527,9 +3527,23 @@ deferred for a stated reason, not forgotten, and will not be padded into
       `FUZZTIME=4m` per target (pushes and pull requests keep 30s). The job has read-only
       repository access, so a crasher is published as an artifact and the red run is the
       alert; committing the seed stays a human step.
-- [ ] Extend the detection-robustness harness to every bundled rule as new
+- [x] Extend the detection-robustness harness to every bundled rule as new
       rules are added, so the nocase/wide contract is enforced per rule, not
       per sampled family.
+      **Shipped 2026-11-10** (`scanner/robustness_contract_test.go`): the harness now
+      reads every rule the repository ships, builds a synthetic sample from that
+      rule's own literals, and checks that the rule still fires under the benign
+      perturbations — a rule that declares `nocase` must survive upper- and
+      lower-casing, a rule that declares `wide` must survive UTF-16LE, and every
+      rule must survive junk before or after the content. A rule that keys on
+      the file's structure (a PE header, a size) cannot be sampled from a text
+      sample and is named as such rather than passed over in silence. The
+      contract covers a rule the moment it lands, so a new rule is measured
+      without anyone remembering to add it. Measured on the eight bundled rules:
+      six sampled and holding their contract, one (`linpeas_script_in_binary`)
+      losing the case perturbation because it declares no `nocase` — the
+      measurement the row asks for — and two named as not samplable (a
+      hex-atom rule and a rule that keys on the file's structure).
 - [x] A `cau rules lint --strict` gate once the `$ror13` atom is resolved, so
       the ruleset is warning-clean and strict lint can block merges.
       **Shipped 2026-11-06:** `make lint-rules` now runs `cau rules lint --strict`,

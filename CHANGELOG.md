@@ -5,6 +5,19 @@ All notable changes to CAU EDR. The format follows
 
 ## [Unreleased]
 
+### The robustness contract is per rule, not per sampled family
+
+- **The detection-robustness harness now covers every bundled rule.** It reads
+  the rules the repository ships, builds a synthetic sample from each rule's own
+  literals, and checks that the rule still fires under the benign
+  perturbations: a rule that declares `nocase` must survive upper- and
+  lower-casing, one that declares `wide` must survive UTF-16LE, and every rule
+  must survive junk before or after the content. A rule that keys on the file's
+  structure (a PE header, a size) cannot be sampled from a text sample and is
+  named as such rather than passed over in silence.
+- A new rule is covered the moment it lands: the contract reads the ruleset,
+  so nobody has to remember to add a fixture.
+
 ### The decoded layers are read by the rules too
 
 - **New: the detection rules and the heuristic indicators run over what the

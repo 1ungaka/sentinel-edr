@@ -79,9 +79,15 @@ const (
 	DomainChecksums Domain = "cau-v1-release-checksums"
 	// DomainUpdateManifest: the bytes of an update bundle's manifest.json.
 	DomainUpdateManifest Domain = "cau-v1-update-manifest"
+	// DomainModelRegistry: the bytes of the model registry's document. The
+	// registry names the artifacts the engine may run, so a signature over it
+	// must never be replayable as a signature over anything else.
+	DomainModelRegistry Domain = "cau-v1-model-registry"
 )
 
-func (d Domain) valid() bool { return d == DomainChecksums || d == DomainUpdateManifest }
+func (d Domain) valid() bool {
+	return d == DomainChecksums || d == DomainUpdateManifest || d == DomainModelRegistry
+}
 
 // VerifyKey is a trusted public key. Ed25519 is always set; MLDSA is set for a
 // hybrid key and nil for an Ed25519-only one. Which of the two it is decides

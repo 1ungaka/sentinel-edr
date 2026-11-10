@@ -12,6 +12,8 @@ cau boot-scan [flags]                read the boot chain, read-only: MBR/GPT, th
 cau hwid      [flags]                snapshot the hardware identity, and compare it with a baseline
 cau peel      [flags] <file>...      walk obfuscation chains: every common base, rot and Caesar, in parallel
 cau evasion  report|bench [flags]    measure how fragile the shipped detections are, per detector
+cau model    list|verify|promote|rollback [flags]
+                                        the signed registry of the model artifacts the engine may run
 cau feed      <subcommand> [flags]   abuse-intel feed: list / check / update
 cau intake    --format <fmt> [flags] ingest STIX, MISP, MalwareBazaar, LOLDrivers or TAXII 2.1 intel
 cau update    (--from|--url) [flags] install a signed signature-DB bundle, refusing an older one
@@ -1541,6 +1543,44 @@ evasion bench: corpus/smoke/manifest.json
 ```
 
 Exit codes: 0 the measurement was taken, 3 the measurement failed, 4 usage.
+
+## cau model
+
+```sh
+cau model list
+cau model verify --sig models/registry.sig --pubkey pub.hex
+cau model promote --model embedder@1.2.0
+cau model rollback
+cau model card --model embedder@1.2.0
+```
+
+The registry of the model artifacts the engine may run. A model is a file an
+attacker would love to replace — a classifier that says "clean" is worse than
+no classifier at all — so the registry is signed with the same trust anchor as
+the release manifest and the update bundle, over its own canonical bytes and in
+its own signature domain. Every artifact is named by its digest, and every
+artifact carries an SBOM and a model card; both are checked against their
+digests, and a model without either is refused at parse time.
+
+The registry records which version is in force. `promote` makes a version
+active and remembers the one it replaced; `rollback` returns to it. Both
+rewrite the document, so a promotion is an act that has to be signed again —
+`cau model promote` says so.
+
+The registry does not run anything: inference belongs to a sidecar process.
+What it answers is "which artifact may run, is it the one that was signed, and
+how do I go back to the previous one".
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--registry PATH` | `models/registry.json` | the registry document |
+| `--sig PATH` | | the detached signature over the registry |
+| `--pubkey FILE` | `$CAU_MODEL_PUBKEY` | the trusted public key (hex) |
+| `--model ID` | | the artifact to act on, as `name@version` |
+| `--format text\|json` | text | stdout rendering |
+| `--out PATH` | the registry | write the result here instead of stdout |
+
+Exit codes: 0 ok, 1 the verification failed, 3 the operation failed, 4 usage.
 
 ## cau intake
 

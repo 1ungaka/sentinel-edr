@@ -574,7 +574,14 @@ Static engines lose to packing. Each tier earns its place only where the previou
       boundary is the detection content, and the gate says how much of it did not.
       The per-detector table is the diagnostic: a rule that stopped carrying a period
       shows up even when another rule covers for it.
-- [ ] Model registry with signed artifacts, SBOM, model cards, promote/rollback.
+- [x] Model registry with signed artifacts, SBOM, model cards, promote/rollback. Shipped
+      (`internal/model`, `cau model`): the registry is signed with the same trust anchor as
+      the release manifest and the update bundle, over its own canonical bytes and in its
+      own signature domain; every artifact is named by its digest and carries an SBOM
+      and a model card, and a model without either is refused at parse time. `promote`
+      makes a version active and remembers the one it replaced, `rollback` returns to it,
+      and both rewrite the document — so a promotion is an act that has to be signed again.
+      The registry never runs anything: inference belongs to a sidecar.
 
 ---
 

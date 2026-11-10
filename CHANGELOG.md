@@ -5,6 +5,21 @@ All notable changes to CAU EDR. The format follows
 
 ## [Unreleased]
 
+### The model registry: the signed catalogue of what may run
+
+- **New `cau model list|verify|promote|rollback|card`** (`internal/model`): the
+  registry of the model artifacts the engine may run. A model is a file an
+  attacker would love to replace, so the registry is signed with the same trust
+  anchor as the release manifest and the update bundle, over its own canonical
+  bytes and in its own signature domain (`cau-v1-model-registry`).
+  - Every artifact is named by its digest and carries an SBOM and a model card;
+    both are checked against their digests, and a model without either is
+    refused at parse time.
+  - `promote` makes a version active and remembers the one it replaced;
+    `rollback` returns to it. Both rewrite the document, so a promotion has to
+    be signed again — the command says so.
+  - The registry never runs anything: inference belongs to a sidecar.
+
 ### The temporal gate: does the content still catch what it caught?
 
 - **New `cau eval temporal`** (`internal/eval/temporal.go`): the shipped content

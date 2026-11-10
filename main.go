@@ -79,6 +79,8 @@ Usage:
   cau peel      [flags] <file>...      walk obfuscation chains, depth as signal
   cau evasion  report|bench [flags]    measure how fragile the shipped detections are: the bytes that
                                         must change for each detector to stop firing, never a patched sample
+  cau model    list|verify|promote|rollback [flags]
+                                        the signed registry of the model artifacts the engine may run
   cau firmware  [flags] <image>        parse a UEFI firmware image (FV/FFS inventory, integrity, implant blocklist)
   cau boot-scan [flags]                read the boot chain, read-only: MBR/GPT/boot sectors, the EFI System Partition,
                                        Secure Boot state and boot entries, WPBT, option ROMs
@@ -161,6 +163,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdPeel(args[1:], stdout, stderr)
 	case "evasion":
 		return cmdEvasion(args[1:], stdout, stderr)
+	case "model":
+		return cmdModel(args[1:], stdout, stderr)
 	case "firmware":
 		return cmdFirmware(args[1:], stdout, stderr)
 	case "boot-scan":

@@ -784,15 +784,12 @@ func (a *audit) checkSUID() {
 				Detail: "a set-uid or set-gid program sits in a world-writable directory", Evidence: fi.Mode().String()})
 			return nil
 		})
-		if err != nil {
-			// The callback above reports every per-path failure. An error here
-			// means the walk itself stopped early, so the rest of the tree was
-			// never inspected.
-			if rel, relErr := filepath.Rel(a.root, walkedRoot); relErr == nil {
-				a.noteUnreadable(rel)
-			}
-		}
-		if capped {
+		if err != nil || capped {
+			// Two ways the tree was not fully inspected: the walk itself
+			// stopped early, or the entry limit cut it. Either way the rest of
+			// the tree was never looked at, and a set-uid binary in it would
+			// not be reported — so the tree is named as incomplete coverage
+			// rather than left looking clean.
 			if rel, relErr := filepath.Rel(a.root, walkedRoot); relErr == nil {
 				a.noteUnreadable(rel)
 			}

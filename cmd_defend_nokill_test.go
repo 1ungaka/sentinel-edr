@@ -81,7 +81,13 @@ func (h *defendHost) defend(t *testing.T) (code int, output string) {
 	t.Helper()
 	args := []string{"defend", "--once", "--report-only", "--no-process", "--no-persistence",
 		"--package-interval", "0", "--netblock=false", "--watch", h.watch,
-		"--etc-root", h.empty, "--persist-root", h.empty, "--dpkg-info", h.empty, "--pacman-local", h.empty,
+		"--etc-root", h.empty, "--persist-root", h.empty, "--host-root", h.empty,
+		// The behaviour inventories read the process table, and the host's
+		// real one is a few hundred processes: under the race detector that
+		// is seconds of work the test does not need. The fixture is empty,
+		// which is what the test means anyway.
+		"--proc-root", h.empty,
+		"--dpkg-info", h.empty, "--pacman-local", h.empty,
 		"--quarantine-store", filepath.Join(h.dir, "vault"), "--kernel-events", filepath.Join(h.dir, "no-events"),
 		"--db", h.db, "--rules", h.rules, "--fuzzy-db", h.fuzzy, "--feed", h.feed,
 		"--selftest-manifest", h.manifest, "--selftest-pubkey", h.key, "--config", h.config,

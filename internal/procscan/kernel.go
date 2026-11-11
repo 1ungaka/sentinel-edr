@@ -2,7 +2,9 @@ package procscan
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,10 +17,21 @@ import (
 // append-only and a long-lived host has no use for last month's PIDs.
 const maxKernelLog = 4 << 20
 
+// maxKernelLine bounds one log line. A guard event is a couple of hundred
+// bytes; a line far longer than that is not an event.
+const maxKernelLine = 1 << 20
+
 // KernelEvent is one line of the log `cau-kernel enforce netshell --log` writes.
 // The field names are that command's contract.
+//
+// The guard records the process's start time (start_ticks, the same clock and
+// unit as field 22 of /proc/<pid>/stat) and the thread that called execve
+// (tid). A guard that does not record the start time — an older one, or one
+// whose kernel could not read it — writes events without it: those carry no
+// identity and are reported as context about the PID only. See Identity.
 type KernelEvent struct {
 	PID    int    `json:"pid"`
+	TID    int    `json:"tid"`
 	TGID   int    `json:"tgid"`
 	UID    int    `json:"uid"`
 	Reason string `json:"reason"`
@@ -45,6 +58,9 @@ func (e KernelEvent) Identity() bool { return e.StartTicks != 0 }
 // LoadKernelEvents reads the guard's event log. A missing file is not an error:
 // it means the guard is not running, and the scan is still valid without it. A
 // malformed line is skipped, since a writer killed mid-line leaves one.
+//
+// A line longer than the bound is skipped too, and the rest of the log is
+// still read: one over-long line must not cost every event after it.
 func LoadKernelEvents(path string) ([]KernelEvent, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -60,14 +76,57 @@ func LoadKernelEvents(path string) ([]KernelEvent, error) {
 		}
 	}
 	var out []KernelEvent
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		var e KernelEvent
-		if json.Unmarshal(s.Bytes(), &e) == nil && e.Reason != "" {
-			out = append(out, e)
+	r := bufio.NewReader(f)
+	for {
+		line, err := readBoundedLine(r, maxKernelLine)
+		if len(line) > 0 {
+			var e KernelEvent
+			if json.Unmarshal(line, &e) == nil && e.Reason != "" {
+				out = append(out, e)
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return out, nil
+			}
+			return out, fmt.Errorf("kernel events: %w", err)
 		}
 	}
-	return out, s.Err()
+}
+
+// readBoundedLine reads one newline-terminated line and returns it without the
+// newline. A line longer than max is discarded: the reader skips to the next
+// newline and carries on, because one over-long line must not cost every event
+// after it.
+//
+// io.EOF means the file ended; the bytes read before that are still returned,
+// so a last line without a newline is not lost.
+func readBoundedLine(r *bufio.Reader, max int) ([]byte, error) {
+	var line []byte
+	over := false
+	for {
+		chunk, err := r.ReadSlice('\n')
+		if !over {
+			if len(line)+len(chunk) > max {
+				over = true
+				line = nil
+			} else {
+				line = append(line, chunk...)
+			}
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if err != nil {
+			return trimEOL(line), err
+		}
+		return trimEOL(line), nil
+	}
+}
+
+// trimEOL removes the line terminator.
+func trimEOL(line []byte) []byte {
+	return bytes.TrimRight(line, "\r\n")
 }
 
 type kernelIndex map[int][]KernelEvent
@@ -95,6 +154,10 @@ func indexKernelEvents(events []KernelEvent, res *Result) kernelIndex {
 // carries no start time — a log written before the schema had one — is still
 // reported when the name agrees, but as context about the PID only, because
 // nothing about it says the process running here is the process it saw.
+//
+// When the start time agrees, the name is not consulted: the process may have
+// renamed itself since the exec, and the start time has already settled which
+// process this is.
 func (idx kernelIndex) findings(rp rawProc) []Finding {
 	var out []Finding
 	seen := map[string]bool{}
@@ -102,10 +165,11 @@ func (idx kernelIndex) findings(rp rawProc) []Finding {
 		if seen[e.Reason] {
 			continue
 		}
-		if e.Identity() && e.StartTicks != rp.startTicks {
-			continue
-		}
-		if e.Comm != rp.comm && e.Exe != rp.comm && e.Exe != baseName(strings.TrimSuffix(rp.exeTarget, " (deleted)")) {
+		if e.Identity() {
+			if e.StartTicks != rp.startTicks {
+				continue
+			}
+		} else if e.Comm != rp.comm && e.Exe != rp.comm && e.Exe != baseName(strings.TrimSuffix(rp.exeTarget, " (deleted)")) {
 			continue
 		}
 		seen[e.Reason] = true

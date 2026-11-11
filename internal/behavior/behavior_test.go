@@ -32,7 +32,9 @@ func behaviorTree(t *testing.T) (procRoot, root string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(proc, "fdinfo", "7"),
-		[]byte("pos:\t0\nflags:\t02000002\nmnt_id:\t29\nino:\t1234\nfanotify:\tgroup=1 mask=1f mark=1f ignored=8\n"), 0o644); err != nil {
+		[]byte("pos:\t0\nflags:\t02000002\nmnt_id:\t29\nino:\t1234\n"+
+			"fanotify flags:8000000 event-flags:0\n"+
+			"fanotify sdev:801 mflags:8000000 mask:8000008 ignored_mask:4000\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(proc, "fd", "7", "x"), nil, 0o644); err != nil {
@@ -50,7 +52,7 @@ func behaviorTree(t *testing.T) (procRoot, root string) {
 	}
 
 	// The generator directory and the bpffs root.
-	gen := filepath.Join(root, "run", "systemd", "generator")
+	gen := filepath.Join(root, "etc", "systemd", "system-generators")
 	if err := os.MkdirAll(gen, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -135,6 +137,11 @@ func TestAPackageOwnedLibraryIsNotReported(t *testing.T) {
 
 // Without a package database there is no benign anchor, and the result says so
 // rather than presenting the inventories as clean.
+//
+// It must also *not* report the inventories as findings: a package database
+// that cannot answer does not say that no package owns the path, and treating
+// that silence as "nobody owns it" reports every library, listener, generator
+// and pinned object on the host as unowned.
 func TestWithoutAPackageDatabaseTheAnchorIsNamed(t *testing.T) {
 	procRoot, _ := behaviorTree(t)
 	// A root with no package database under it.
@@ -152,6 +159,9 @@ func TestWithoutAPackageDatabaseTheAnchorIsNamed(t *testing.T) {
 	if !strings.Contains(strings.Join(res.Notes, " "), "benign anchor") {
 		t.Errorf("the note does not say what is missing: %v", res.Notes)
 	}
+	if len(res.Findings) != 0 {
+		t.Errorf("without an anchor the inventories reported findings: %+v", res.Findings)
+	}
 }
 
 // The findings are sorted strongest first, so a report reads in order.
@@ -162,5 +172,43 @@ func TestTheFindingsAreSorted(t *testing.T) {
 		if res.Findings[i-1].Score < res.Findings[i].Score {
 			t.Fatalf("the findings are not sorted: %+v", res.Findings)
 		}
+	}
+}
+
+// The fanotify fdinfo line has been written in two shapes. The engine parsed
+// only the older one, so on every kernel since 4.19 the inventory saw nothing
+// at all and the check never fired.
+func TestBothFanotifyLineShapesAreRead(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		line string
+		want uint64
+	}{
+		{"current", "fanotify sdev:801 mflags:8000000 mask:8000008 ignored_mask:4000", 0x4000},
+		{"older", "fanotify:\tgroup=1 mask=1f mark=1f ignored=8", 0x8},
+	} {
+		got, ok := parseFanotifyLine(c.line)
+		if !ok || got != c.want {
+			t.Errorf("%s: parseFanotifyLine(%q) = %#x, %v; want %#x", c.name, c.line, got, ok, c.want)
+		}
+	}
+	if _, ok := parseFanotifyLine("pos:\t0"); ok {
+		t.Error("a line that is not a fanotify line was read as one")
+	}
+}
+
+// A listener that suppresses nothing, or only the ordinary directory events,
+// is ordinary software. One that will not hear about the loss of its own
+// queue can miss events without knowing it missed them.
+func TestOnlySecurityRelevantSuppressionsAreReported(t *testing.T) {
+	if got := suppressedEvents(0); got != "" {
+		t.Errorf("nothing suppressed, but %q was reported", got)
+	}
+	if got := suppressedEvents(0x01000000 | 0x02000000); got != "" {
+		t.Errorf("ordinary directory events were reported: %q", got)
+	}
+	got := suppressedEvents(0x4000)
+	if !strings.Contains(got, "FAN_Q_OVERFLOW") {
+		t.Errorf("the queue-overflow suppression was not named: %q", got)
 	}
 }

@@ -76,6 +76,13 @@ vault, `--block-exe` asks the kernel guard to refuse it, and `--netblock` drops
 its peers — in cau's own firewall table, with an expiry the kernel holds, and
 never an address the host itself needs.
 
+The kernel guard's event log is read as evidence, not as a hint. Each event
+carries the process's start time (the same clock and unit as field 22 of
+`/proc/<pid>/stat`), so an event is matched to the process it happened to and
+to no other — a PID is reused, and the log outlives the processes it names.
+That is what lets a refusal from the guard be pointed at a process, and what
+lets an exec the kernel saw and *allowed* be a finding rather than a footnote.
+
 **What gates it is the evidence, not a flag.** Under `cau defend` these are on
 by default, each degrading to a warning where the host cannot carry it out (no
 kernel guard, no firewall); `--report-only` turns the whole surface off to watch
@@ -187,7 +194,7 @@ failed, 4 usage.
 | scanning takes longer the larger the file | all detectors over `/usr/bin/bash` (1.4 MB), which is what an alert on a real binary waits for | about 0.3 s on a quiet host, 1.3 s at load 22, down from 3.7 s; most of it is regexes over the whole binary |
 | running detectors at once costs no throughput | the smoke corpus, serial and parallel engines built from one tree, 10 runs each in random order | 10 % faster at the median |
 | skipping regexes that cannot match changes no result | 10,410 files, mostly offensive tooling, against a build without the filter: every finding of every detector compared | 0 differences in 1,513 files with findings across 112 classes; about 100 s rather than 529 s, at a higher load |
-| kernel guards load and behave | the running kernel in QEMU, real verifier and real `execve` (`cau-kernel`: `make vm-test`) | 38/38 scenarios through the real CLI, including `ssh host cmd` shells, inetd listeners, blocking a running file and fail-open |
+| kernel guards load and behave | the running kernel in QEMU, real verifier and real `execve` (`cau-kernel`: `make vm-test`) | 57/57 scenarios through the real CLI, including `ssh host cmd` shells, inetd listeners, blocking a running file, the guard's process identity and fail-open |
 | the response really happens, and only where it should | the running kernel in QEMU, the real binary with its defaults as real root (`make vm-respond`) | 19/19: a shell on a TCP socket and a deleted binary stopped, one killed, a file moved to the vault and caught again when re-dropped; argv text, `/etc` and PID 1 left alone |
 | nothing regresses silently | `corpus/smoke` on every push | 100 % recall, 0 false positives, gated in CI against the committed baseline |
 | coverage claims are derived, not typed | `cau coverage` on every push | 59 techniques with content and no declared gaps (3 held honestly as `partial`), gated against `baselines/attack-coverage.txt`; every bundled rule passes `cau rules lint` |

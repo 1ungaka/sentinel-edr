@@ -46,7 +46,7 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f.d = &defender{
 		engine:   &scanner.Engine{Tradecraft: true, Heuristics: true},
-		procRoot: f.proc, persistRoot: f.root, process: true, persistence: true,
+		procRoot: f.proc, persistRoot: f.root, hostRoot: f.root, process: true, persistence: true,
 		store: f.store, json: true, out: &f.out, warn: func(string, ...interface{}) {},
 	}
 	f.d.ready()

@@ -126,4 +126,32 @@ func TestTheFrameFormatIsJSON(t *testing.T) {
 	}
 }
 
+// A client that connects and never sends a frame must not cost a goroutine
+// and a file descriptor for ever, and must not stop the sidecar serving the
+// clients that do send one.
+func TestAClientThatNeverSpeaksDoesNotStopTheSidecar(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "sidecar.sock")
+	l, err := Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	go func() {
+		_ = Serve(l, func(Request) Response { return Response{OK: true} })
+	}()
+
+	// A client that says nothing at all.
+	silent, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer silent.Close()
+
+	// The sidecar still answers the clients that do speak.
+	c := &Client{Socket: sock, Timeout: 5 * time.Second}
+	if _, err := c.Score(Request{Model: "m@1"}); err != nil {
+		t.Fatalf("the sidecar stopped serving: %v", err)
+	}
+}
+
 var _ net.Listener = (net.Listener)(nil)

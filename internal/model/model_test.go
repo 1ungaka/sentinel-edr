@@ -44,6 +44,27 @@ func TestParseAndFind(t *testing.T) {
 	}
 }
 
+// A registry names files inside its own directory. One that names a path
+// outside it is asking the reader to read a file the registry does not own,
+// and a command that opens it would print whatever is there.
+func TestParseRefusesAPathOutsideTheRegistry(t *testing.T) {
+	for _, bad := range []string{"../../etc/shadow", "/etc/shadow", "a/../../b"} {
+		doc := `{"schema_version":"1","models":[{"name":"m","version":"1","path":"` + bad +
+			`","sha256":"` + hex64 + `","sbom":"m.cdx.json","sbom_sha256":"` + hex64 +
+			`","card":"m.card.md","card_sha256":"` + hex64 + `"}]}`
+		if _, err := Parse([]byte(doc)); err == nil {
+			t.Errorf("the path %q was accepted", bad)
+		}
+	}
+	// A path that stays inside is fine.
+	doc := `{"schema_version":"1","models":[{"name":"m","version":"1","path":"models/m.onnx",
+		"sha256":"` + hex64 + `","sbom":"m.cdx.json","sbom_sha256":"` + hex64 +
+		`","card":"m.card.md","card_sha256":"` + hex64 + `"}]}`
+	if _, err := Parse([]byte(doc)); err != nil {
+		t.Errorf("a path inside the registry was refused: %v", err)
+	}
+}
+
 // Promoting a version records the one it replaced, so a rollback can return.
 func TestPromoteAndRollback(t *testing.T) {
 	r := testRegistry(t)

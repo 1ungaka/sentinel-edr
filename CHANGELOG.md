@@ -5,6 +5,111 @@ All notable changes to CAU EDR. The format follows
 
 ## [Unreleased]
 
+### The kernel guard's events now say which process they happened to
+
+- **The guard records the process's start time, and the engine uses it.** The
+  `cau-kernel` guard's event log had no way to say *which* process an event was
+  about: a PID alone is reused, and the log outlives the processes it names. So
+  every event the guard wrote was matched on the name alone and scored **0** —
+  context, not evidence — and the two findings that are supposed to be
+  conclusive (`procscan.kernel.netshell`, `procscan.kernel.memfd-exec`) could
+  never fire from a real log. An exec the kernel saw and *allowed* produced no
+  finding at all.
+  - The guard now reads `task_struct::start_boottime` in the kernel and records
+    it, in the same clock and unit as field 22 of `/proc/<pid>/stat`
+    (`start_ticks`), plus the thread that called `execve` (`tid`) and the time
+    the event was read (`time`). The kernel and the engine agree on the number
+    because the kernel derives both from the same value, and the QEMU test
+    proves it on a real kernel: the event's start time equals the live
+    process's own `starttime` field.
+  - The engine matches an event to a process on that start time, so an event
+    is raised against the process it happened to and no other. The name is no
+    longer consulted when the start time agrees — a process that renames itself
+    after the exec is still the process the event is about.
+  - `cau defend` can now point a refusal at a PID it is sure of: the refusal
+    is attributed to the process whose start time matches, not to whatever
+    holds that number today.
+  - The two projects share one wire format and nothing else, so the format is
+    pinned on both sides: the kernel's decoder is checked against the C
+    struct's field offsets by a test that reads the C source, and the engine
+    pins a real event line from the guard.
+- **The kernel layer never joined the daemon on a packaged host.** The guard's
+  shipped systemd unit writes its event log to
+  `/run/cau/kernel-events.jsonl`; the daemon looked for it under `/var/log` and
+  `/var/lib`, so on a host set up from the packages the log was written and
+  never read — the kernel layer was silently absent from every report. The
+  path the unit actually writes to is looked for first.
+
+### The bugs that made a check not fire
+
+- **A library mapped from `/dev/shm` was no longer flagged.** The maps parser
+  found the pathname by searching the line for the inode number — but the
+  hexadecimal address range in front of it routinely contains those digits (a
+  tmpfs inode is 1, 2, 3…), so the search found the wrong place and the
+  "path" that came out was the tail of the line. A shared object out of a
+  world-writable directory stopped looking like one, and the library-injection
+  check was defeated by the file's location alone. The pathname is now the
+  sixth field, cut where the kernel cuts it.
+- **The fanotify inventory never fired on any current kernel.** The kernel
+  writes a fanotify fdinfo line as `fanotify sdev:… ignored_mask:…`; the
+  parser looked for `fanotify: group=… ignored=…`, a shape the kernel has not
+  written since 4.19. A host with a fanotify listener no package owns was
+  reported as having none. Both shapes are read now.
+- **A listener that suppresses nothing was reported as suppressing events.**
+  The mask was compared as a string against `"0"`, and a listener that
+  suppresses directory events — ordinary software — tripped it. Only a
+  suppression worth reporting (the queue-overflow event, which is how a
+  listener hears that it missed events) is reported now, and the classes are
+  named.
+
+### The inventories that had no anchor
+
+- **A package database that could not answer was read as "nobody owns it".**
+  The inventories (an auditor library, a fanotify listener, a systemd
+  generator, a pinned BPF object) ask the package database who owns a path.
+  A database that was not found, one this resolver does not read (rpm), and an
+  index truncated at its cap all answer with an empty owner, and the empty
+  owner was read as "no package owns this". On an RPM host that reported every
+  library, every listener, every generator and every pinned object on the host
+  as unowned. The anchor now says whether it knows: an unknown answer is a
+  note, not a finding.
+- **A package-owned binary that was replaced was reported as unowned.** The
+  kernel's `" (deleted)"` suffix on `/proc/<pid>/exe` was part of the path
+  the package database was asked about.
+- **The systemd generator inventory reported the host's own systemd.** It
+  looked in `/run/systemd/generator`, which is where systemd's own generators
+  *put their output* at boot: every systemd host has entries there, no package
+  lists them, and every one of them was reported as an unowned generator that
+  adds itself at every boot — ten findings on an ordinary host. A generator is
+  *installed* in `/etc/systemd/system-generators` or
+  `/usr/local/lib/systemd/system-generators`, and those are where the
+  inventory looks now.
+- **The inventories read the wrong filesystem.** The behaviour layer was handed
+  the persistence layer's root, so with `--persist-root` pointing at a mounted
+  disk it looked for the systemd generator directories and the bpffs root on
+  that disk, where they are absent, and the host looked like it had neither.
+  The host's own surfaces have their own root now (`--host-root`, default `/`).
+- **The package database was re-read on every cycle.** The behaviour layer ran
+  on every pass and built its own package-database index each time, so the
+  daemon re-read and re-parsed every package's file list on every cycle. The
+  index is built once and shared — it costs a couple of seconds the first time
+  it is needed on a host with a full dpkg database, and nothing after that.
+
+### The rest
+
+- **The sidecar could be made to leak a goroutine and a file descriptor per
+  connection.** A client that connected and never sent a frame held its
+  handler for ever, and nothing bounded how many handlers ran at once. The
+  connections now have a deadline and the number served at once is bounded.
+- **The client's deadline started before the dial**, so a slow connect ate the
+  budget the answer was supposed to get.
+- **The model registry could name a path outside its own directory.** The
+  paths are relative to the registry's directory and a path that climbed out
+  of it (`../../etc/shadow`) was joined and opened. The registry is signed, so
+  this needed a signed registry to reach — but `cau model card` read the path
+  with no signature check at all. Paths are now checked, at parse time and
+  again before the file is opened.
+
 ### The host's own inventories: the sensor side of the host techniques
 
 - **New `internal/behavior`**, run by the resident agent (`cau defend`): the

@@ -86,14 +86,16 @@ func (c *Client) Score(req Request) (*Response, error) {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
-	deadline := time.Now().Add(timeout)
 
 	conn, err := net.DialTimeout("unix", c.Socket, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("sidecar: cannot reach %s: %w", c.Socket, err)
 	}
 	defer conn.Close()
-	if err := conn.SetDeadline(deadline); err != nil {
+	// The deadline starts when the connection is up, not before the dial:
+	// a slow connect eats the budget the answer was supposed to get, and
+	// the request then fails on a sidecar that was about to answer in time.
+	if err := conn.SetDeadline(time.Now().Add(timeout)); err != nil {
 		return nil, fmt.Errorf("sidecar: set deadline: %w", err)
 	}
 
@@ -153,16 +155,38 @@ func ReadFrame(r io.Reader, v any) error {
 	return nil
 }
 
+// ServeTimeout bounds one request on the serving side. A client that connects
+// and never sends a frame must not hold a handler for ever.
+const ServeTimeout = 5 * time.Minute
+
 // Serve answers requests on a listener with the given handler. It is what a
 // sidecar (or a test double of one) does.
+//
+// A connection that sends nothing is given a deadline, and the number of
+// connections served at once is bounded: a client that opens one connection
+// per request and never sends a frame would otherwise leave a goroutine and a
+// file descriptor behind for each of them.
+//
+// Serve returns when the listener is closed.
 func Serve(l net.Listener, handle func(Request) Response) error {
+	// One handler at a time per connection, up to this many at once. The
+	// sidecar runs one model at a time anyway.
+	const maxConcurrent = 8
+	sem := make(chan struct{}, maxConcurrent)
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			return err
 		}
+		sem <- struct{}{}
 		go func(c net.Conn) {
-			defer c.Close()
+			defer func() {
+				<-sem
+				c.Close()
+			}()
+			if err := c.SetDeadline(time.Now().Add(ServeTimeout)); err != nil {
+				return
+			}
 			var req Request
 			if err := ReadFrame(c, &req); err != nil {
 				return

@@ -40,12 +40,14 @@ type KernelReport struct {
 
 // taintBits maps a taint bit position to its letter and meaning.
 //
-// The table is the kernel's own list as it appears in the user-visible
-// /proc/sys/kernel/tainted word (the kernel shifts its internal flags by one,
-// so the word's bit 0 is the kernel's second flag). The kernel sensor
-// (`cau-kernel`) decodes the same word with the same table, and the two must
-// agree: a flag one of them reads and the other does not is a flag nobody
-// reads.
+// The table is the kernel's own list, and the word's bit i IS the kernel's
+// flag i: /proc/sys/kernel/tainted is the kernel's TAINT_* mask as it stands,
+// with no shift. (Bit 12 is TAINT_OOT_MODULE, "O"; bit 13 is
+// TAINT_UNSIGNED_MODULE, "E".) The kernel sensor (`cau-kernel`) decodes the
+// same word with the same table, and the two must agree: a flag one of them
+// reads and the other does not is a flag nobody reads.
+//
+// Keep the two tables in step. The kernel's list is include/linux/panic.h.
 var taintBits = []struct {
 	letter string
 	note   string

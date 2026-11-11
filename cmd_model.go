@@ -309,7 +309,15 @@ func modelCard(args []string, stdout, stderr io.Writer) int {
 	if m.Card == "" {
 		return fail(stderr, report.ExitRunFailed, "model card: %s has no card", m.ID())
 	}
-	data, err := safefs.ReadFile(filepath.Join(root, filepath.FromSlash(m.Card)), maxModelDocumentBytes)
+	// The card is named by the registry, and the registry may be unsigned.
+	// The path is therefore checked against the registry's own directory
+	// before it is opened: a registry that names a path outside it is
+	// asking this command to print a file the registry does not own.
+	card, err := model.ResolveArtifact(root, m.Card)
+	if err != nil {
+		return fail(stderr, report.ExitRunFailed, "model card: %v", err)
+	}
+	data, err := safefs.ReadFile(card, maxModelDocumentBytes)
 	if err != nil {
 		return fail(stderr, report.ExitRunFailed, "%v", err)
 	}

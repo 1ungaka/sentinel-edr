@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -398,7 +399,12 @@ func TestLoadKernelEvents(t *testing.T) {
 
 // realGuardEvent was written by cau-kernel's guard on a real kernel, in the QEMU
 // test. The two projects share this line format and nothing else, so it is pinned.
-const realGuardEvent = `{"pid":187,"tgid":187,"uid":0,"reason":"netshell","denied":true,"peer":"127.0.0.1:49638","comm":"init","exe":"sh"}`
+//
+// It carries the process's start time (start_ticks) and the thread that called
+// execve (tid): with the start time the engine can match an event to the
+// process it happened to, and a finding can carry a response.
+const realGuardEvent = `{"pid":184,"tid":184,"tgid":184,"uid":0,"reason":"netshell","denied":true,` +
+	`"peer":"127.0.0.1:54286","comm":"init","exe":"sh","start_ticks":284,"time":"2026-11-10T21:39:27.865614716Z"}`
 
 func TestKernelEventContract(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "log")
@@ -412,5 +418,59 @@ func TestKernelEventContract(t *testing.T) {
 	e := got[0]
 	if e.TGID == 0 || e.Reason != "netshell" || !e.Denied || e.Peer == "" || e.Exe != "sh" {
 		t.Fatalf("the guard's line no longer parses: %+v", e)
+	}
+	// The identity the engine matches on, and the time it reports.
+	if !e.Identity() || e.StartTicks == 0 {
+		t.Fatalf("the guard's line carries no process start time: %+v", e)
+	}
+	if e.Time.IsZero() {
+		t.Fatalf("the guard's line carries no time: %+v", e)
+	}
+	// "pid" is the process an operator looks up, "tid" the thread that exec'd.
+	if e.PID != e.TGID || e.TID != e.PID {
+		t.Fatalf("pid/tgid/tid disagree: %+v", e)
+	}
+}
+
+// An event that names the process it happened to is an attribution and can
+// carry a response; one without a start time is context about the PID and
+// cannot. This is the whole point of the start_ticks field the guard records.
+func TestKernelEventWithIdentityIsActionable(t *testing.T) {
+	res := &Result{}
+	idx := indexKernelEvents([]KernelEvent{
+		{TGID: 50, Reason: "netshell", Comm: "nc", Exe: "sh", Denied: true, Peer: "192.0.2.1:443", StartTicks: 1234},
+	}, res)
+	got := idx.findings(rawProc{pid: 50, comm: "nc", exeTarget: "/usr/bin/nc", startTicks: 1234})
+	if len(got) != 1 {
+		t.Fatalf("the event did not match the process it named: %+v", got)
+	}
+	if got[0].Score == 0 {
+		t.Fatalf("an event with a start time is context, not evidence: %+v", got[0])
+	}
+	// The same event about a process that has since let go of the PID.
+	if got := idx.findings(rawProc{pid: 50, comm: "nc", exeTarget: "/usr/bin/nc", startTicks: 999}); len(got) != 0 {
+		t.Fatalf("a reused PID matched: %+v", got)
+	}
+	// A process that renamed itself after the exec is still the same process:
+	// the start time has already settled it.
+	if got := idx.findings(rawProc{pid: 50, comm: "evil", exeTarget: "/usr/bin/nc", startTicks: 1234}); len(got) != 1 {
+		t.Fatalf("a renamed process did not match its own event: %+v", got)
+	}
+}
+
+// A log with one over-long line must not cost every event after it.
+func TestLoadKernelEventsSurvivesALongLine(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "log")
+	long := `{"pid":1,"tgid":1,"reason":"netshell","peer":"` + strings.Repeat("x", 2<<20) + `"}`
+	body := long + "\n" + `{"pid":3,"tgid":3,"reason":"memfd-exec"}` + "\n"
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadKernelEvents(p)
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	if len(got) != 1 || got[0].Reason != "memfd-exec" {
+		t.Fatalf("the events after a long line were lost: %+v", got)
 	}
 }

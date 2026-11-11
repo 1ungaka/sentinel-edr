@@ -55,7 +55,9 @@ Flags:
   --block-exe        with --respond: ask the kernel to refuse a confirmed process's
                      file through cau-kernel (never a system path or an interpreter)
   --kernel-bin <path> the cau-kernel binary --block-exe drives (default cau-kernel)
-  --kernel-events <f> correlate the cau-kernel guard's event log with live processes
+  --kernel-events <f> correlate the cau-kernel guard's event log with live
+                      processes (the guard records the process's start time, so
+                      an event is matched to the process it happened to)
   --feed <path>      abuse-intel feed to match process command lines against
   --proc-root <dir>  override /proc (testing)
 

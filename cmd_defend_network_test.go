@@ -70,7 +70,7 @@ func newNetFixture(t *testing.T) *netFixture {
 	f.fw = &recorder{tools: map[string]bool{"nft": true}}
 	f.d = &defender{
 		engine:   &scanner.Engine{Tradecraft: true, Heuristics: true},
-		procRoot: f.proc, persistRoot: f.dir, etcRoot: f.etc, network: true,
+		procRoot: f.proc, persistRoot: f.dir, hostRoot: f.dir, etcRoot: f.etc, network: true,
 		store: filepath.Join(f.dir, "vault"), json: true, out: &f.out,
 		warn: func(string, ...interface{}) {},
 	}

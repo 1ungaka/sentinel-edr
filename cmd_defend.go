@@ -32,6 +32,7 @@ import (
 	"github.com/s-b-repo/cau/internal/parallel"
 	"github.com/s-b-repo/cau/internal/persist"
 	"github.com/s-b-repo/cau/internal/procscan"
+	"github.com/s-b-repo/cau/internal/provenance"
 	"github.com/s-b-repo/cau/internal/quarantine"
 	"github.com/s-b-repo/cau/internal/report"
 	"github.com/s-b-repo/cau/internal/safefs"
@@ -265,6 +266,9 @@ Flags:
                         (default 10m; 0 disables)
   --rules <path>  --db <path>  --fuzzy-db <path>  --feed <path>   detection content
   --persist-root <dir>  filesystem the persistence layer audits (default /)
+  --host-root <dir>  filesystem the host's own surfaces are read from — the
+                     systemd generator directories, the bpffs root, the
+                     package database (default /)
   --dpkg-info <dir>  --pacman-local <dir>   where the package layer reads the
                         installed-package databases from
   --format <fmt>        text or json lines (default text)
@@ -363,6 +367,14 @@ type defender struct {
 	engine      *scanner.Engine
 	procRoot    string
 	persistRoot string
+	// hostRoot is the filesystem the host's own surfaces are read from: the
+	// systemd generator directory, the bpffs root and the package database.
+	// It is the host's filesystem, not the tree the persistence layer audits.
+	hostRoot string
+	// provenance is the package-database index, built once and shared: the
+	// behaviour layer runs on every cycle and the index is the expensive
+	// part of it.
+	provenance *provenance.Resolver
 	// feed is swapped atomically so the refresh layer can publish a newer feed
 	// without blocking readers; each reader takes a consistent snapshot.
 	feed         atomic.Pointer[intel.Feed]
@@ -1175,8 +1187,19 @@ func (d *defender) canaryLayer() { d.publish(viewCanary, d.canarySignals()) }
 func (d *defender) behaviorLayer() { d.publish(viewBehavior, d.behaviorSignals()) }
 
 // behaviorSignals reads the behaviour inventories and turns them into signals.
+//
+// The inventories are about *this host* — an auditor library in a running
+// process, a fanotify listener, a systemd generator, a pinned BPF object — so
+// they read the host's own filesystem, not the tree the persistence layer is
+// auditing. With --persist-root pointing somewhere else, the generator
+// directory and the bpffs root would be looked for on that filesystem, where
+// they are absent, and the host would look like it had neither.
+//
+// The resolver is the defender's own and is built once: the package database is
+// read and indexed once, not on every cycle. A new resolver per cycle would
+// re-read every package's file list on every pass.
 func (d *defender) behaviorSignals() []correlate.Signal {
-	res := behavior.Check(behavior.Options{ProcRoot: d.procRoot, Root: d.persistRoot})
+	res := behavior.Check(behavior.Options{ProcRoot: d.procRoot, Root: d.hostRoot, Resolver: d.provenance})
 	out := make([]correlate.Signal, 0, len(res.Findings))
 	for _, f := range res.Findings {
 		out = append(out, correlate.Signal{
@@ -2122,6 +2145,7 @@ func cmdDefend(args []string, stdout, stderr io.Writer) int {
 	noSelftest := fs.Bool("no-selftest", false, "disable the selftest layer")
 	procRoot := fs.String("proc-root", "/proc", "override /proc (testing)")
 	persistRoot := fs.String("persist-root", "/", "filesystem to audit for persistence")
+	hostRoot := fs.String("host-root", "/", "filesystem to read the host's own surfaces from (the systemd generator directory, the bpffs root, the package database)")
 	dpkgInfo := fs.String("dpkg-info", defaultDpkgInfo, "dpkg info directory")
 	pacmanDir := fs.String("pacman-local", defaultPacmanLocal, "pacman local database")
 	if err := fs.Parse(interspersed(fs, args)); err != nil {
@@ -2242,8 +2266,9 @@ func cmdDefend(args []string, stdout, stderr io.Writer) int {
 	// loud, as tamper, below; see startFault for why it does not stop here.
 	selftestPub, keyErr := defendPubkey(*selftestPubKeyFile)
 	d := &defender{
-		engine: engine, procRoot: *procRoot, persistRoot: *persistRoot,
-		feedPath: resolvedFeed, feedInterval: *feedInterval,
+		engine: engine, procRoot: *procRoot, persistRoot: *persistRoot, hostRoot: *hostRoot,
+		provenance: provenance.New(*hostRoot),
+		feedPath:   resolvedFeed, feedInterval: *feedInterval,
 		process: !*noProcess, persistence: !*noPersistence, kernelEvents: kernelPath, canaryManifest: canaryPath,
 		packageInterval:  *packageInterval,
 		selftestManifest: stManifest, selftestInterval: *selftestInterval, selftestPubKey: selftestPub,
@@ -2501,9 +2526,14 @@ func discoverCanaryManifest(status func(string, ...interface{})) string {
 // discoverKernelEvents looks in standard locations for the cau-kernel exec-guard
 // event log, so the kernel layer joins the daemon without extra flags on a host
 // where cau-kernel is installed.
+//
+// The first candidate is the one the shipped unit writes to: the guard's
+// systemd unit runs it with `--log /run/cau/kernel-events.jsonl`, and a path
+// the daemon does not look at is a log nobody reads.
 func discoverKernelEvents(status func(string, ...interface{})) string {
 	candidates := []string{
 		os.Getenv("CAU_KERNEL_EVENTS"),
+		"/run/cau/kernel-events.jsonl",
 		"/var/log/cau-kernel/events.jsonl",
 		"/var/lib/cau-kernel/events.jsonl",
 	}

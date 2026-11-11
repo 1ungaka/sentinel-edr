@@ -158,20 +158,25 @@ func mappedFiles(path string) (libs []string, anonRWX int, truncated bool) {
 	seen := make(map[string]bool)
 	var out []string
 	for _, line := range strings.Split(raw, "\n") {
-		// address perms offset dev inode pathname — the pathname is after the
-		// 5th field and may contain spaces (e.g. " (deleted)").
+		// address perms offset dev inode pathname — the pathname is the sixth
+		// field and may contain spaces (e.g. " (deleted)"), so the line is cut
+		// after the first five fields rather than split on every space.
+		//
+		// The pathname is not located by searching for the inode number: the
+		// address range in front of it is hexadecimal and often contains the
+		// inode's decimal digits (a tmpfs inode is 1, 2, 3…), so the search
+		// finds the wrong place and the "path" that comes out is the tail of
+		// the line. A library mapped from /dev/shm then no longer looks like
+		// one, and the injection check that exists for that case never fires.
 		fields := strings.Fields(line)
 		if len(fields) == 5 && strings.HasPrefix(fields[1], "rwx") {
 			anonRWX++
 		}
-		if len(fields) < 6 {
+		parts := strings.SplitN(line, " ", 6)
+		if len(parts) < 6 {
 			continue
 		}
-		idx := strings.Index(line, fields[4])
-		if idx < 0 {
-			continue
-		}
-		rest := strings.TrimSpace(line[idx+len(fields[4]):])
+		rest := strings.TrimSpace(parts[5])
 		if rest == "" || strings.HasPrefix(rest, "[") {
 			continue // anonymous or special ([heap], [stack], [vdso]…)
 		}

@@ -91,6 +91,34 @@ type Result struct {
 	Notes []string `json:"notes,omitempty"`
 }
 
+// generatorDirs are the directories a systemd generator is installed in.
+//
+// /usr/lib/systemd/system-generators is left out: it is owned by the systemd
+// package, so everything in it is accounted for. The other two are where a
+// generator that no package owns would be put, and where systemd reads it
+// from at every boot.
+var generatorDirs = []string{
+	"etc/systemd/system-generators",
+	"usr/local/lib/systemd/system-generators",
+}
+
+// noAnchor records, once, that the package database could not answer the
+// question the inventories ask it, so a path that no package owns could not be
+// told apart from a path the database never saw.
+//
+// The note matters more than the silence it replaces: without it the host
+// looks clean because the checks had nothing to say, rather than because
+// nothing was found.
+func (r *Result) noAnchor() {
+	const note = "the package database could not say whether a path is owned, so the inventories below have no benign anchor"
+	for _, n := range r.Notes {
+		if n == note {
+			return
+		}
+	}
+	r.Notes = append(r.Notes, note)
+}
+
 // Options configure the checks.
 type Options struct {
 	// ProcRoot overrides "/proc".
@@ -133,7 +161,7 @@ func Check(opts Options) *Result {
 	r := &Result{}
 	r.Provenance = resolver.Manager()
 	if r.Provenance == "" {
-		r.Notes = append(r.Notes, "no package database was found: the inventories below are reported without a benign anchor")
+		r.Notes = append(r.Notes, "no package database was found: the inventories below have no benign anchor, so they report nothing")
 	}
 
 	procs := readProcesses(opts.ProcRoot, opts.MaxProcesses, r)
@@ -156,10 +184,14 @@ func Check(opts Options) *Result {
 				if so == "" {
 					continue
 				}
-				owner := ownerOf(resolver, so)
+				owner, known := ownerOf(resolver, so)
 				if owner != "" {
 					// A package that ships the auditor is ordinary
 					// software; the package database is the anchor.
+					continue
+				}
+				if !known {
+					r.noAnchor()
 					continue
 				}
 				r.Findings = append(r.Findings, Finding{
@@ -177,8 +209,12 @@ func Check(opts Options) *Result {
 	// ── the fanotify inventory (NOVEL-008) ──
 	for _, p := range procs {
 		for _, fan := range p.fanotify {
-			owner := ownerOf(resolver, p.exe)
+			owner, known := ownerOf(resolver, p.exe)
 			if owner != "" {
+				continue
+			}
+			if !known {
+				r.noAnchor()
 				continue
 			}
 			r.Findings = append(r.Findings, Finding{
@@ -188,12 +224,12 @@ func Check(opts Options) *Result {
 				Detail:   "a fanotify listener no package owns is watching the filesystem",
 				Evidence: p.exe,
 			})
-			if fan.ignored != "" && fan.ignored != "0" {
+			if mask := suppressedEvents(fan.ignored); mask != "" {
 				r.Findings = append(r.Findings, Finding{
 					Class:    ClassFanotifyMask,
 					Score:    6,
 					Novel:    NovelFanotify,
-					Detail:   "the fanotify listener ignores events (" + fan.ignored + ")",
+					Detail:   "the fanotify listener suppresses events it was asked not to miss (" + mask + ")",
 					Evidence: p.exe,
 				})
 			}
@@ -201,26 +237,41 @@ func Check(opts Options) *Result {
 	}
 
 	// ── the systemd generator inventory (NOVEL-009) ──
-	generators, err := listDir(filepath.Join(opts.Root, "run/systemd/generator"))
-	if err != nil {
-		r.Notes = append(r.Notes, "the systemd generator directory could not be read: "+err.Error())
-	}
-	for _, unit := range generators {
-		if strings.HasSuffix(unit, ".wants") || strings.HasSuffix(unit, ".requires") {
+	//
+	// A generator is *installed* in one of the directories below. The
+	// runtime directory (/run/systemd/generator) holds what systemd's own
+	// generators produced at boot — every systemd host has entries there,
+	// none of them is an installation, and the package database lists none
+	// of them, so looking there reports the host's own systemd as an
+	// unowned generator on every run.
+	for _, dir := range generatorDirs {
+		full := filepath.Join(opts.Root, dir)
+		units, err := listDir(full)
+		if err != nil {
+			r.Notes = append(r.Notes, "the systemd generator directory "+full+" could not be read: "+err.Error())
 			continue
 		}
-		path := filepath.Join(opts.Root, "run/systemd/generator", unit)
-		owner := ownerOf(resolver, path)
-		if owner != "" {
-			continue
+		for _, unit := range units {
+			if strings.HasSuffix(unit, ".wants") || strings.HasSuffix(unit, ".requires") {
+				continue
+			}
+			path := filepath.Join(full, unit)
+			owner, known := ownerOf(resolver, path)
+			if owner != "" {
+				continue
+			}
+			if !known {
+				r.noAnchor()
+				continue
+			}
+			r.Findings = append(r.Findings, Finding{
+				Class:    ClassGenerator,
+				Score:    5,
+				Novel:    NovelGenerator,
+				Detail:   "a systemd generator unit no package owns is installed and adds itself at every boot",
+				Evidence: path,
+			})
 		}
-		r.Findings = append(r.Findings, Finding{
-			Class:    ClassGenerator,
-			Score:    5,
-			Novel:    NovelGenerator,
-			Detail:   "a systemd generator unit no package owns adds itself at every boot",
-			Evidence: path,
-		})
 	}
 
 	// ── the pinned BPF program inventory (NOVEL-010) ──
@@ -230,8 +281,12 @@ func Check(opts Options) *Result {
 	}
 	for _, obj := range programs {
 		path := filepath.Join(opts.Root, "sys/fs/bpf", obj)
-		owner := ownerOf(resolver, path)
+		owner, known := ownerOf(resolver, path)
 		if owner != "" {
+			continue
+		}
+		if !known {
+			r.noAnchor()
 			continue
 		}
 		r.Findings = append(r.Findings, Finding{
@@ -268,8 +323,11 @@ type procInfo struct {
 
 // fanotifyInfo is one fanotify file descriptor's masks.
 type fanotifyInfo struct {
-	// ignored is the mask of events the listener asked not to be told about.
-	ignored string
+	// ignored is the union of the events the listener's marks asked not to
+	// be told about.
+	ignored uint64
+	// marks is how many marks the group has.
+	marks int
 }
 
 // readProcesses reads the process table for the checks.
@@ -306,7 +364,11 @@ func readProcess(procRoot string, pid int) procInfo {
 	p := procInfo{pid: pid}
 	base := filepath.Join(procRoot, strconv.Itoa(pid))
 	if link, err := os.Readlink(filepath.Join(base, "exe")); err == nil {
-		p.exe = link
+		// The kernel appends " (deleted)" to the link when the binary has
+		// been unlinked. The package database lists the path without it,
+		// so the suffix is trimmed before the lookup: a package-owned
+		// binary that was replaced is still package-owned.
+		p.exe = strings.TrimSuffix(link, " (deleted)")
 	}
 	if data, err := safefs.ReadFile(filepath.Join(base, "environ"), maxEnvironBytes); err == nil {
 		for _, env := range strings.Split(string(data), "\x00") {
@@ -334,44 +396,152 @@ func readFanotify(base string) []fanotifyInfo {
 		if err != nil { // audit:ok one descriptor that cannot be read is one descriptor with no fanotify line in it
 			continue
 		}
+		info := fanotifyInfo{}
 		for _, line := range strings.Split(string(data), "\n") {
-			if !strings.HasPrefix(line, "fanotify:") {
+			mask, ok := parseFanotifyLine(line)
+			if !ok {
 				continue
 			}
-			info := fanotifyInfo{}
-			// The kernel writes the masks as "group=1 mask=1f mark=1f
-			// ignored=8", space separated; some kernels comma them, so
-			// both are split.
-			fields := strings.FieldsFunc(strings.TrimPrefix(line, "fanotify:"), func(r rune) bool {
-				return r == ' ' || r == ',' || r == '\t'
-			})
-			for _, field := range fields {
-				key, value, ok := strings.Cut(field, "=")
-				if !ok {
-					continue
-				}
-				switch key {
-				case "ignored", "ign":
-					info.ignored = value
-				}
-			}
+			info.ignored |= mask
+			info.marks++
+		}
+		if info.marks > 0 {
 			out = append(out, info)
 		}
 	}
 	return out
 }
 
-// ownerOf asks the package database who owns a path. An empty answer means no
-// package owns it, which is the interesting case.
-func ownerOf(r *provenance.Resolver, path string) string {
-	if r == nil {
+// parseFanotifyLine reads one line of a fanotify fdinfo and returns the events
+// the listener asked not to be told about, and whether the line was a fanotify
+// line at all.
+//
+// The kernel has written this line in two shapes. Since Linux 4.19 it is
+//
+//	fanotify sdev:%x mflags:%x mask:%x ignored_mask:%x
+//
+// one line per mark, and the older shape was
+//
+//	fanotify: group=%x mask=%x mark=%x ignored=%x
+//
+// The engine parsed only the older one, so on every current kernel the
+// fanotify inventory saw nothing at all: the check never fired, and the host
+// it was written for was reported as having no listener.
+func parseFanotifyLine(line string) (uint64, bool) {
+	if !strings.HasPrefix(line, "fanotify") {
+		return 0, false
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(line, "fanotify"))
+	rest = strings.TrimPrefix(rest, ":")
+	// The kernel writes the masks space separated; some kernels comma them,
+	// so both are split.
+	fields := strings.FieldsFunc(rest, func(r rune) bool {
+		return r == ' ' || r == ',' || r == '\t'
+	})
+	for _, field := range fields {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok {
+			// The current shape separates the key and the value with a
+			// colon: "ignored_mask:4000".
+			key, value, ok = strings.Cut(field, ":")
+			if !ok {
+				continue
+			}
+		}
+		switch key {
+		case "ignored", "ign", "ignored_mask":
+			n, err := strconv.ParseUint(value, 16, 64)
+			if err != nil { // audit:ok a field that is not a hex mask is not the one being read, and the line says which one is
+				continue
+			}
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+// fanotifyEvents names the event classes in a suppress mask, from
+// include/uapi/linux/fanotify.h. A mark's ignore mask says which events the
+// listener will not be told about.
+var fanotifyEvents = []struct {
+	bit  uint64
+	name string
+}{
+	{0x00000001, "FAN_ACCESS"},
+	{0x00000002, "FAN_MODIFY"},
+	{0x00000004, "FAN_ATTRIB"},
+	{0x00000008, "FAN_CLOSE_WRITE"},
+	{0x00000010, "FAN_CLOSE_NOWRITE"},
+	{0x00000020, "FAN_OPEN"},
+	{0x00000040, "FAN_MOVED_FROM"},
+	{0x00000080, "FAN_MOVED_TO"},
+	{0x00000100, "FAN_CREATE"},
+	{0x00000200, "FAN_DELETE"},
+	{0x00000400, "FAN_DELETE_SELF"},
+	{0x00000800, "FAN_MOVE_SELF"},
+	{0x00004000, "FAN_Q_OVERFLOW"},
+	{0x00010000, "FAN_OPEN_EXEC"},
+	{0x00020000, "FAN_ACCESS_PERM"},
+	{0x00040000, "FAN_OPEN_EXEC_PERM"},
+	{0x00080000, "FAN_OPEN_PERM"},
+	{0x00100000, "FAN_OPEN_BY_HANDLE_PERM"},
+	{0x01000000, "FAN_ONDIR"},
+	{0x02000000, "FAN_EVENT_ONCHILD"},
+}
+
+// fanotifySecurityEvents are the suppressions worth reporting.
+//
+// A mark's ignore mask is empty for an ordinary watcher, and a listener that
+// does not want directory events is ordinary software. What is worth reporting
+// is a listener that will not hear about the loss of its own queue: it can
+// miss events without knowing it missed them.
+var fanotifySecurityEvents = []uint64{0x00004000} // FAN_Q_OVERFLOW
+
+// suppressedEvents names the event classes a listener asked not to be told
+// about that matter, or returns "" when it suppressed none that matter.
+func suppressedEvents(mask uint64) string {
+	if mask == 0 {
 		return ""
+	}
+	var names []string
+	for _, e := range fanotifyEvents {
+		if mask&e.bit == 0 {
+			continue
+		}
+		for _, sec := range fanotifySecurityEvents {
+			if e.bit == sec {
+				names = append(names, e.name)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return strings.Join(names, ",")
+}
+
+// ownerOf asks the package database who owns a path.
+//
+// The second answer says whether the first is worth anything. A package
+// database that was not read (none was found, the one found could not be read,
+// or the index was truncated at its cap) and a package manager this resolver
+// does not read (rpm) cannot say that no package owns a path. Treating that
+// silence as "nobody owns it" reports every library, every fanotify listener,
+// every generator unit and every pinned BPF object on the host as unowned —
+// which is the whole host flagged, on every distribution whose package
+// database this resolver does not read.
+func ownerOf(r *provenance.Resolver, path string) (owner string, known bool) {
+	if r == nil {
+		return "", false
 	}
 	p := r.Lookup(path, provenance.Digests{})
-	if p.Package == "" {
-		return ""
+	switch p.State {
+	case provenance.Unowned:
+		return "", true // the database was read, and no package lists this path
+	case provenance.Unknown, provenance.Unsupported:
+		return "", false
 	}
-	return p.Package
+	return p.Package, true
 }
 
 // listDir lists the names in a directory, sorted.

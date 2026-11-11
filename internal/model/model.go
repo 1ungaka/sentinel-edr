@@ -28,6 +28,7 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -117,6 +118,18 @@ func (r *Registry) validate() error {
 		if m.Path == "" {
 			return fmt.Errorf("model: %s has no path", m.ID())
 		}
+		// The paths name files inside the registry's own directory. A path
+		// that climbs out of it ("../../etc/shadow") or names one
+		// absolutely is not a path inside the registry, and a registry that
+		// names one is asking the reader to read a file the registry has no
+		// business naming.
+		for _, p := range []struct{ kind, rel string }{
+			{"artifact", m.Path}, {"sbom", m.SBOM}, {"card", m.Card},
+		} {
+			if err := checkRelative(p.rel); err != nil {
+				return fmt.Errorf("model: %s has an unusable %s path %q: %w", m.ID(), p.kind, p.rel, err)
+			}
+		}
 		if !isSHA256(m.SHA256) {
 			return fmt.Errorf("model: %s has a malformed sha256 %q", m.ID(), m.SHA256)
 		}
@@ -133,6 +146,23 @@ func (r *Registry) validate() error {
 	}
 	if r.Active != "" && !seen[r.Active] {
 		return fmt.Errorf("model: the active version %q is not in the registry", r.Active)
+	}
+	return nil
+}
+
+// checkRelative refuses a path that does not stay inside the registry's
+// directory: an absolute path, or one with a ".." element.
+func checkRelative(rel string) error {
+	if rel == "" {
+		return errors.New("the path is empty")
+	}
+	if filepath.IsAbs(rel) || strings.HasPrefix(rel, "/") {
+		return errors.New("the path is absolute")
+	}
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if part == ".." {
+			return errors.New("the path climbs out of the registry directory")
+		}
 	}
 	return nil
 }
@@ -259,13 +289,48 @@ func Verify(r *Registry, root string, sig []byte, key release.VerifyKey) *Verifi
 	return v
 }
 
+// within reports whether path is inside root.
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil { // audit:ok the two paths cannot be related at all, so the path is certainly not inside the root
+		return false
+	}
+	return filepath.IsLocal(rel)
+}
+
+// ResolveArtifact returns the path of a file the registry names, refusing one
+// that is not inside the registry's directory.
+//
+// The registry's paths are relative to the directory it lives in. A path that
+// climbs out of it names a file the registry does not own, and a command that
+// opens it would read whatever is there.
+func ResolveArtifact(root, rel string) (string, error) {
+	if err := checkRelative(rel); err != nil {
+		return "", fmt.Errorf("the registry names a path outside its directory (%v): %q", err, rel)
+	}
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if !within(root, path) {
+		return "", fmt.Errorf("the registry names a path outside its directory: %q", rel)
+	}
+	return path, nil
+}
+
 // checkArtifact checks one file against the digest the registry names.
 func checkArtifact(m Model, root, kind, rel, wantSHA string, wantSize int64) []Problem {
 	if rel == "" {
 		return nil
 	}
 	var out []Problem
+	if err := checkRelative(rel); err != nil {
+		return []Problem{{Model: m.ID(), Kind: kind, Message: fmt.Sprintf("%s names a path outside the registry (%v)", rel, err)}}
+	}
 	path := filepath.Join(root, filepath.FromSlash(rel))
+	// The path is inside the registry directory by construction now, but the
+	// check is cheap and the consequence of being wrong is reading a file the
+	// registry does not name.
+	if !within(root, path) {
+		return []Problem{{Model: m.ID(), Kind: kind, Message: fmt.Sprintf("%s names a path outside the registry", rel)}}
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return []Problem{{Model: m.ID(), Kind: kind, Message: fmt.Sprintf("cannot read %s: %v", rel, err)}}

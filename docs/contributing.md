@@ -15,9 +15,19 @@ make ci                     # lint + build + race tests + eval + the sweep; the 
 ```
 
 `.github/workflows/ci.yml` runs these same targets as six named, time-bounded
-lanes (`lint`, `test`, `gates`, `selfscan`, `fuzz`, `release`) instead of one
-serial `make ci` job, and the packaging proof
-(`.github/workflows/package.yml`) is a separate workflow.
+lanes (`lint`, `test`, `gates`, `selfscan`, `fuzz`, `reproducible`) instead of
+one serial `make ci` job. Three more workflows sit beside it:
+
+- `.github/workflows/package.yml` — the packaging proof (every distro package
+  built, installed into a clean container and driven with a scan).
+- `.github/workflows/security.yml` — the automated security lane: `govulncheck`
+  (does this code reach the vulnerable code?), CodeQL (what do the data flows
+  look like?) and a dependency review of each pull request.
+- `.github/workflows/quality.yml` — the quality lane: the test coverage, the
+  project's own `cau honesty` report, the documentation contract and the
+  content gates in one place.
+- `.github/workflows/release.yml` — the release: a main release, a patch
+  release and a beta, all built and signed by the same steps.
 
 - **`lint` (15 min)** runs `gofmt` + `go vet`, the regex sweep for bug shapes
   (`make regex-audit`: a hit that is not in `scripts/regex-audit.baseline` fails
@@ -36,14 +46,18 @@ serial `make ci` job, and the packaging proof
 - **`fuzz` (30 min)** runs `make fuzz FUZZTIME=30s`, a coverage-guided hunt
   over every `Fuzz*` target. Seeds already run as unit tests, so this lane
   buys mutation coverage, not re-runs.
-- **`release` (30 min, on a `v*` tag)** builds and signs `cau`, `cau-mcp`,
-  the integrity manifest and `SHA256SUMS`, and `needs` the other five lanes.
+- **`reproducible` (20 min)** builds the same checkout in two directories of
+  different depth and requires the binaries to be byte-identical.
+
+The release lives in its own workflow because it is a different job: it waits
+for this workflow's run of the same commit, and it publishes a main release, a
+patch release or a beta — see [packaging.md](packaging.md#releases).
 
 A per-ref `concurrency` group cancels a superseded pull-request run; a nightly
 `schedule` is the drift canary for CGO against a moving Go / libyara / glibc
 runner image; pull requests that touch only Markdown, wiki, docs, completions,
-packaging, scripts or `debian/` get no runner time. The five non-release lanes
-share the `.github/actions/cau-env` composite action (Go pinned by `go.mod`,
+packaging, scripts or `debian/` get no runner time. The lanes share the
+`.github/actions/cau-env` composite action (Go pinned by `go.mod`,
 libyara 4.3+, pkg-config).
 
 Go 1.24, libyara 4.3 with headers and pkg-config are required; see

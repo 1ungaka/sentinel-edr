@@ -1,0 +1,130 @@
+name: security
+
+# The automated security lane: what can be found without a human reading the
+# code, run on every change.
+#
+# Three questions, three tools:
+#
+#   govulncheck       does the code reach the vulnerable code? A module with a
+#                     known CVE that no call path reaches is not this project's
+#                     problem, and a scanner that cannot say so is noise.
+#   CodeQL            what do the data flows look like? It reads the whole tree
+#                     and reports the paths a taint analysis finds, which is the
+#                     class of bug a human reader misses in a large file.
+#   dependency review  does a pull request bring in a package with a known
+#                     vulnerability? The answer is per-change, so it is asked
+#                     per-change.
+#
+# The repo's own detectors are in the CI workflow: the regex sweep for bug
+# shapes, the fuzzing of the untrusted-input parsers, and the engine scanning
+# its own tree. This workflow is what a scanner of somebody else's code would
+# find, which is the point: a detector that only this project knows about
+# cannot find this project's mistakes.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, because a vulnerability is published without a commit to this
+    # repository: a dependency's own advisory can turn yesterday's green run
+    # red without anything here changing.
+    - cron: "41 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  govulncheck:
+    name: vulnerable dependencies that this code reaches
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/cau-env
+
+      - name: Install govulncheck
+        run: |
+          # A pinned version, not @latest: the scanner is a build input here,
+          # and an input that moves on its own is an input nobody reviewed.
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          "$(go env GOPATH)/bin/govulncheck" -version
+
+      # The module graph, not the vendor tree: govulncheck needs the versions
+      # the module declares, and the vendor/ tree holds the code without the
+      # graph. -mod=mod says so explicitly, because with a vendor/ directory
+      # present Go defaults to it and the scan would read nothing.
+      - name: Scan the module graph
+        run: |
+          set -o pipefail
+          GOFLAGS=-mod=mod "$(go env GOPATH)/bin/govulncheck" ./... 2>&1 | tee "$RUNNER_TEMP/govulncheck.txt"
+
+      # govulncheck exits non-zero when it finds a reachable vulnerability.
+      # The finding is the report; a red run with the report attached is the
+      # alert.
+      - name: Publish the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: govulncheck-report
+          path: ${{ runner.temp }}/govulncheck.txt
+          retention-days: 30
+
+  codeql:
+    name: code scanning (CodeQL)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+      # The pull request's base and head, so the scan reports only what the
+      # change introduced.
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Initialize the analysis
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          languages: go
+          # The CGO build needs libyara's headers, or the analysis cannot type
+          # the binding and reports the cgo call as an unknown sink.
+          build-mode: autobuild
+
+      # The build happens in the analyze step, so the toolchain has to be here
+      # first.
+      - uses: ./.github/actions/cau-env
+
+      - name: Perform the analysis
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
+        with:
+          category: "/language:go"
+
+  dependency-review:
+    name: the pull request's own dependencies
+    # Only a pull request has a "change" to review: on a push there is no
+    # base to diff against, and the whole graph is reviewed by the scan above.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Review the changed dependencies
+        uses: actions/dependency-review-action@cc4f6536e38d1126c5e3b0683d469a14f23bfea4 # v3
+        with:
+          # A dependency with a known vulnerability that this code does not
+          # reach is not this pull request's problem; the reachability question
+          # is govulncheck's, above, and the two answers together are the one
+          # that is actionable.
+          fail-on-severity: high

@@ -1,0 +1,166 @@
+name: quality
+
+# The quality lane: what the tree's own measure says about itself.
+#
+# The CI workflow proves the tree is correct today. This one measures it, so a
+# change that quietly removes a test is visible rather than invisible:
+#
+#   coverage   how much of the engine the test suite actually exercises, per
+#              package and in total. A drop is a review item, not a failure:
+#              the number is a measure, and a measure that blocks every pull
+#              request stops being read.
+#   honesty    the project's own quality document (`cau honesty`): what the
+#              detection content covers, what was measured, and whether it is
+#              still intact. It is published so the answer is not only in a
+#              log nobody keeps.
+#   docs       the documentation contract: every command's help, every
+#              documented flag and every documented behaviour is checked against
+#              the code. It is part of the unit suite, and it gets its own lane
+#              here so a documentation failure is named as one.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 5 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  coverage:
+    name: test coverage
+    runs-on: ubuntu-24.04
+    # The suite is the slow part (the peeler and the static analysers walk
+    # real trees), and the coverage build is slower than the plain one.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: ./.github/actions/cau-env
+
+      # The measurement walk over the real filesystem is skipped here for the
+      # same reason the race lane skips it: it is a benchmark in all but name,
+      # and under instrumentation it costs minutes and proves nothing about the
+      # change.
+      - name: Measure the coverage
+        run: |
+          set -o pipefail
+          go test -count=1 -timeout 25m -skip 'TestMeasure' \
+            -coverprofile=coverage.out -covermode=atomic ./... 2>&1 | tee "$RUNNER_TEMP/coverage.log"
+
+      - name: Report the coverage
+        if: always()
+        run: |
+          set -euo pipefail
+          {
+            echo "### Test coverage"
+            echo
+            if [ -f coverage.out ]; then
+              go tool cover -func=coverage.out | tail -1
+              echo
+              echo "The per-package breakdown is in the artifact."
+            else
+              echo "The coverage profile was not written."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the coverage profile
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            ${{ runner.temp }}/coverage.log
+          retention-days: 30
+
+  honesty:
+    name: the project's own quality report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: ./.github/actions/cau-env
+
+      - name: Build
+        run: make build
+
+      - name: Read the honesty index
+        run: |
+          # `cau honesty` is the document the project publishes about itself:
+          # what the content covers, what was measured and whether the content
+          # is intact. It is published as an artifact so the answer outlives
+          # the run.
+          ./cau honesty --format json --output honesty.json || true
+          ./cau honesty --format text | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: honesty-report
+          path: honesty.json
+          retention-days: 90
+
+  docs:
+    name: the documentation contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: ./.github/actions/cau-env
+
+      # The help text, the manual pages and the documented flags are checked
+      # against the code by the test suite. It is named here so a failure says
+      # "the documentation is wrong", not "a test failed".
+      - name: The docs match the code
+        run: go test -count=1 -run 'TestDocs' .
+
+  # The content gates are the ones that decide whether a change may ship, and
+  # they are the slowest to run. This lane runs them together so a reviewer
+  # gets one answer ("the tree is releasable") rather than four.
+  gates:
+    name: the content gates, together
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: ./.github/actions/cau-env
+
+      - name: Rule lint, coverage gate and corpus evaluation
+        run: |
+          set -o pipefail
+          make lint-rules
+          make coverage-gate
+          make eval | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: The detection content is intact
+        run: |
+          set -euo pipefail
+          # The integrity baseline is what `cau selftest` verifies at runtime.
+          # The release records one; here the shipped content is checked against
+          # the rules and the signature database it is supposed to hold, so a
+          # content change that nobody meant is visible.
+          make build
+          ./cau rules lint --strict --rules rules
+
+      - name: Publish the gate reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: quality-gates
+          path: |
+            eval-out/report.json
+            eval-out/attack-navigator.json
+            eval-out/attack-coverage.sarif
+          retention-days: 30

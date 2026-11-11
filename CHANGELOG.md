@@ -5,6 +5,47 @@ All notable changes to CAU EDR. The format follows
 
 ## [Unreleased]
 
+### The pipeline: current runners, an automated security lane, and a release that names itself
+
+- **The workflows run on current runners and current actions.** The pinned
+  action SHAs moved to `actions/checkout` v7, `actions/setup-go` v7,
+  `actions/upload-artifact` v7, `github/codeql-action` v4 and
+  `softprops/action-gh-release` v3 (the Node 24 line, which GitHub-hosted
+  runners support), and the runner image is pinned to `ubuntu-24.04` instead of
+  following `latest`. An image that moves under a build is a build that was
+  never checked against that image.
+- **New `security.yml`: the automated security lane.** `govulncheck` answers
+  the question a version list cannot — does this code *reach* the vulnerable
+  code — CodeQL reads the data flows, and a dependency review answers, per pull
+  request, whether it brings in a package with a known vulnerability. The
+  repository's own detectors (the regex sweep, the fuzzing, the self-scan)
+  stay where they were: they find what a scanner of somebody else's code
+  cannot.
+- **New `quality.yml`: the quality lane.** The test coverage is measured and
+  published (it was not measured at all), the project's own `cau honesty`
+  report is published as an artifact rather than only in a log, the
+  documentation contract gets its own named lane, and the content gates run
+  together so a reviewer gets one answer about whether the tree is releasable.
+- **New `release.yml`: one release pipeline for a main release, a patch
+  release and a beta.** A `v*` tag publishes the tagged version; a push to the
+  `beta` branch publishes `<last version>-beta.<commits since the tag>`, whose
+  number is a function of the commit, so the same commit always publishes the
+  same beta. Everything after the version is the same path — a beta is built,
+  signed and checksummed by exactly the steps a tagged release takes, because a
+  beta that took a different path would be a beta nobody could trust to
+  become a release.
+  - The release **waits for the CI workflow's run of the same commit**, so a
+    release is still published only from a tree whose gates passed.
+  - It **checks the packaging metadata against the tag** before it builds
+    anything: a `.deb` that says 0.2.0 under a v0.2.1 tag is a mislabelled
+    package, and the signed digest would authenticate the wrong bytes.
+  - It **opens a pull request that pins the released source archive in the
+    Arch recipe**, because that digest cannot be known before the release
+    exists and was a manual step that was easy to forget.
+- **The kernel sensor gained the same treatment**: a security lane, a release
+  workflow (binary, BPF-LSM objects and source archive under one manifest) and
+  a dependabot that watches the action pins, which nothing did before.
+
 ### The kernel guard's events now say which process they happened to
 
 - **The guard records the process's start time, and the engine uses it.** The

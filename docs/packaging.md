@@ -27,15 +27,15 @@ gets. `arch=('x86_64' 'aarch64')` in the PKGBUILD is the declaration of that,
 and `.SRCINFO` carries both entries.
 
 Nothing here publishes: each leg uploads its package as a workflow artifact and
-nothing else. The release job in `.github/workflows/ci.yml` is the single
-publisher. On a `v*` tag it waits for this workflow's run for the same commit,
-downloads the six package artifacts into its own `dist/` and only then signs
-`SHA256SUMS`, so the signed manifest covers the `.deb`, the Kali `.deb` and the
-`.pkg.tar.zst` next to the source tarball, the binaries and the signed update
-bundle; one `action-gh-release` step then publishes `dist/` in full, and a leg
-that failed to build fails the release instead of shipping a package no digest
-authenticates. The checkout is full-depth, so `git describe` stamps the tag
-version into a package instead of a commit sha.
+nothing else. The release workflow (`.github/workflows/release.yml`) is the
+single publisher. On a `v*` tag it waits for this workflow's run for the same
+commit, downloads the six package artifacts into its own `dist/` and only then
+signs `SHA256SUMS`, so the signed manifest covers the `.deb`, the Kali `.deb`
+and the `.pkg.tar.zst` next to the source tarball, the binaries and the signed
+update bundle; one `action-gh-release` step then publishes `dist/` in full, and
+a leg that failed to build fails the release instead of shipping a package no
+digest authenticates. The checkout is full-depth, so `git describe` stamps the
+tag version into a package instead of a commit sha.
 
 `scripts/package-smoke.sh` is distro-agnostic and asserts the behaviour a user
 buys the package for:
@@ -177,6 +177,22 @@ are Debian-based, without a second one.
 
 ## Releases
 
+The release workflow (`.github/workflows/release.yml`) publishes a main
+release, a patch release and a beta. The three differ only in where the
+version comes from; everything after that is the same steps, so a beta is
+built, signed and checksummed by exactly the path a tagged release takes.
+
+| Trigger | Version | What it publishes |
+|---|---|---|
+| a `v*` tag | the tag (`v1.2.0` → `1.2.0`) | a main release; a later tag (`v1.2.1`) is a patch release |
+| a push to `beta` | the last release's version plus the number of commits since it (`0.3.0-beta.4`) | a pre-release |
+| `workflow_dispatch` | the version given | whatever that version names |
+
+A tagged release is published only after the CI workflow's run of the same
+commit is green, and only after the packaging workflow's packages are staged
+into `dist/` — so the signed `SHA256SUMS` covers every asset the release
+offers, and a packaging leg that failed to build fails the release.
+
 1. Update `CHANGELOG.md` and move the entry out of `Unreleased`.
 2. Bump `pkgver` in `packaging/arch/PKGBUILD`, then run `updpkgsums` and
    `makepkg --printsrcinfo` there.
@@ -186,11 +202,34 @@ are Debian-based, without a second one.
    Cut the tag once, after the tree is final: the `PKGBUILD` checksum is a
    function of the tag's bytes, so moving a tag invalidates it (this cost a
    green Debian and Kali a red Arch).
-5. The `release` job in `ci.yml` publishes the packages and the source tarball
-   as one release: it stages this workflow's artifacts for the commit into
+5. The release workflow publishes the packages and the source tarball as one
+   release: it stages the packaging workflow's artifacts for the commit into
    `dist/` before it signs `SHA256SUMS`, then uploads `dist/` in full. Run
    `scripts/apt-repo.sh` over the downloaded artifacts and republish the
    repository.
+
+The release checks the packaging metadata before it builds anything: a tag
+whose version the `debian/changelog` or the `PKGBUILD` does not carry fails
+the release, because a `.deb` that says 0.2.0 under a v0.2.1 tag is a
+mislabelled package and the signed digest then authenticates the wrong bytes.
+
+### The beta
+
+A push to the `beta` branch publishes a pre-release named
+`<last version>-beta.<commits since the tag>`. The count is a function of the
+commit, so the same commit always publishes the same beta: a re-run is the
+same beta and not two. A beta carries the binaries, the source tarball, the
+SBOMs and the signed manifest; it carries no distro package, because the
+packaging workflow builds from a tag or from main and a beta is neither — a
+beta that shipped a `.deb` would ship one built from a different tree.
+
+### The pin that follows a release
+
+The `PKGBUILD` pins the digest of the released source archive, and that digest
+cannot be known before the release exists. The release workflow therefore opens
+a pull request after publishing that pins it, and a human merges it. The
+Arch package builds from the pinned archive; until the pin is merged it keeps
+building the version it already had.
 
 ### The source tarball is a release asset, on purpose
 

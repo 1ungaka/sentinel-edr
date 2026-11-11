@@ -6,6 +6,10 @@ name: ci
 # action, not a job: a red `test` can never mask a green `detection gates`, and
 # every failure has a name a reviewer can assign instead of a line in one
 # 20-minute log.
+#
+# The release is not here: it lives in release.yml, which waits for this
+# workflow's run of the same commit before it publishes anything. A release that
+# did not wait would publish a tree whose gates had not run.
 
 on:
   pull_request:
@@ -22,7 +26,7 @@ on:
       - ".github/dependabot.yml"
       - ".github/workflows/wiki.yml"
   push:
-    branches: [main]
+    branches: [main, beta]
     tags: ["v*"]
   # A CGO build against a moving runner image (Go, libyara, glibc) is the one
   # thing a push-only pipeline never exercises. The nightly run is the drift
@@ -42,10 +46,10 @@ concurrency:
 jobs:
   lint:
     name: lint, vet, vendor tree
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - uses: ./.github/actions/cau-env
 
@@ -81,13 +85,13 @@ jobs:
 
   test:
     name: unit tests (race)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # TestMeasureRealELF walks ~5k system files on an Ubuntu runner and the
     # Makefile gives the suite a 25-minute budget; the job has to be able to
     # reach that budget or a slow runner fails a green tree.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - uses: ./.github/actions/cau-env
 
@@ -96,10 +100,10 @@ jobs:
 
   gates:
     name: detection gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - uses: ./.github/actions/cau-env
 
@@ -132,7 +136,7 @@ jobs:
       # the failure, so a reviewer should never have to re-run the job to get it.
       - name: Publish the gate reports
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: eval-and-coverage
           path: |
@@ -142,7 +146,7 @@ jobs:
 
   selfscan:
     name: self-scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -152,7 +156,7 @@ jobs:
       # the tree is a review item instead of an artifact nobody opens.
       security-events: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - uses: ./.github/actions/cau-env
 
@@ -168,14 +172,14 @@ jobs:
         # The guard matters: if the scan step died there is no SARIF to upload,
         # and code scanning keeps the last good set rather than being wiped.
         if: always() && hashFiles('cau.sarif') != '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-        uses: github/codeql-action/upload-sarif@9418214df1f2c4b8128c770156c409013b07d6b9 # v3
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4
         with:
           sarif_file: cau.sarif
           category: cau-self-scan
 
       - name: Publish the self-scan reports
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: self-scan
           path: |
@@ -184,7 +188,7 @@ jobs:
 
   fuzz:
     name: fuzz the untrusted-input parsers
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Two budgets, one job. A push or pull request gets the smoke hunt (30s per
     # target, about 15 minutes in all). The nightly schedule gets the campaign:
     # 4 minutes per target across the Makefile's Fuzz* targets, which is where
@@ -194,7 +198,7 @@ jobs:
     env:
       FUZZTIME: ${{ github.event_name == 'schedule' && '4m' || '30s' }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - uses: ./.github/actions/cau-env
 
@@ -213,7 +217,7 @@ jobs:
 
       - name: Publish the crasher it found
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: fuzz-crashers
           path: |
@@ -221,10 +225,10 @@ jobs:
 
   reproducible:
     name: reproducible build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - uses: ./.github/actions/cau-env
 
@@ -253,165 +257,3 @@ jobs:
             echo "::error::the two builds differ: the build is not reproducible"
             exit 1
           fi
-
-  release:
-    name: build and sign release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [lint, test, gates, selfscan, fuzz, reproducible]
-    runs-on: ubuntu-latest
-    # Longer than a gate job: this job waits for the package workflow's run to
-    # finish before it signs, because the distro packages it covers are built
-    # there, and that run may still be in its last leg when this job starts.
-    timeout-minutes: 45
-    permissions:
-      contents: write
-      # The distro packages are staged in from that workflow's artifacts, and
-      # the GITHUB_TOKEN can read another run's artifacts with nothing less.
-      actions: read
-    env:
-      # Hex-encoded Ed25519 signing key (seed or full). Set this repository
-      # secret to produce signed releases; without it the release is published
-      # unsigned (and `cau verify-self` / `cau update` have nothing to trust).
-      CAU_RELEASE_SIGNING_KEY: ${{ secrets.CAU_RELEASE_SIGNING_KEY }}
-      # The matching Ed25519 public key (hex), a repository variable or secret.
-      # Published as a release asset and used to self-verify before publishing.
-      CAU_RELEASE_PUBLIC_KEY: ${{ vars.CAU_RELEASE_PUBLIC_KEY }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - uses: ./.github/actions/cau-env
-
-      - name: Build the release tarballs
-        run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
-          make build VERSION="$tag"
-          # cau-mcp ships with every package (Debian, Arch, make install) and was
-          # the only artifact the release job never built.
-          make build-mcp VERSION="$tag"
-          mkdir -p dist
-          for art in cau cau-mcp; do
-            cp "$art" "dist/${art}-${tag}-linux-amd64"
-            tar -czf "dist/${art}-${tag}-linux-amd64.tar.gz" "$art" rules signatures LICENSE README.md
-            # A CycloneDX SBOM per binary, read from the build information the
-            # linker embedded in that binary: the modules actually linked, not
-            # a manifest that might differ. It has no timestamp or serial, so
-            # it is reproducible, and it lands in dist/ before SHA256SUMS is
-            # signed, so the SBOM is covered by the release signature.
-            ./cau bundle sbom --binary "$art" --output "dist/${art}-${tag}-linux-amd64.cdx.json"
-          done
-          # Both packaging and release use one deterministic archive recipe.
-          # The fixed-byte asset is what the AUR checksum pins.
-          scripts/source-archive.sh "${tag#v}" "dist/cau-${tag#v}.tar.gz" "$tag"
-          ls -l dist
-
-      - name: Stage the distro packages before signing
-        env:
-          # gh authenticates from this variable, and reading the package run's
-          # artifacts needs the actions: read granted for this job above.
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          # The .deb and .pkg.tar.zst assets are built by the package workflow,
-          # in distro containers this job cannot enter. They used to reach the
-          # release after SHA256SUMS was signed, so the one file a user is told
-          # to trust did not cover the packages they are told to download. They
-          # are pulled in here instead, ahead of the signing step below, so the
-          # signed manifest authenticates every asset the release offers.
-          #
-          # Waiting for that run is the contract, not an optimisation: the
-          # signing step hashes what is in dist/, a package staged after it
-          # would ship unsigned, and a packaging leg that failed to build must
-          # fail the release rather than leave a hole in the manifest.
-          #
-          # Both workflows trigger on the same push, so the package run exists
-          # by now; the short retry only absorbs a slow run creation.
-          run_id=""
-          for _ in 1 2 3 4 5; do
-            run_id=$(gh run list -w package.yml -e push -c "$GITHUB_SHA" \
-              --branch "$GITHUB_REF_NAME" --limit 100 \
-              --json databaseId,createdAt \
-              --jq 'sort_by(.createdAt) | last | .databaseId // empty')
-            [ -n "$run_id" ] && break
-            sleep 15
-          done
-          if [ -z "$run_id" ]; then
-            echo "::error::no package workflow run for $GITHUB_SHA: the distro packages cannot be staged into the signed manifest"
-            exit 1
-          fi
-          echo "waiting for the package workflow run $run_id to finish"
-          if ! gh run watch "$run_id" --exit-status --interval 30; then
-            echo "::error::the package workflow run $run_id did not succeed: a distro package is missing, so the release would ship an unauthenticated one"
-            exit 1
-          fi
-          stage=$(mktemp -d)
-          trap 'rm -rf "$stage"' EXIT
-          # gh extracts each artifact under its own name, so the six legs do
-          # not collide on the way in.
-          gh run download "$run_id" --dir "$stage"
-          mkdir -p dist
-          # Assert each distro/architecture artifact individually. Debian and
-          # Kali use equal package filenames; staging renames the Kali assets
-          # so neither silently overwrites the other before signing.
-          scripts/stage-release-packages.sh "$stage" dist
-          ls -l dist/
-
-      - name: Sign the update bundle, the integrity baseline and the checksums
-        run: |
-          set -euo pipefail
-          if [ -z "$CAU_RELEASE_SIGNING_KEY" ]; then
-            echo "::warning::CAU_RELEASE_SIGNING_KEY is not set; publishing an UNSIGNED release"
-            (cd dist && find . -maxdepth 1 -type f ! -name 'SHA256SUMS*' -print0 |
-              sort -z | xargs -0 sha256sum > SHA256SUMS)
-            exit 0
-          fi
-          # Write the key to a private temp file, sign, then shred it.
-          umask 077
-          KEYFILE="$(mktemp)"
-          printf '%s' "$CAU_RELEASE_SIGNING_KEY" > "$KEYFILE"
-          trap 'shred -u "$KEYFILE" 2>/dev/null || rm -f "$KEYFILE"' EXIT
-          tag="${GITHUB_REF_NAME}"
-
-          # 1) Signed signature-DB bundle, for `cau update`.
-          ./cau bundle update --db signatures/hashes.txt --sign-key "$KEYFILE" \
-            --out dist --db-version "$tag" --min-engine "${tag#v}"
-
-          # 2) Signed detection-content integrity baseline (`cau selftest`).
-          ./cau selftest --record --sign-key "$KEYFILE" --manifest dist/integrity.json
-
-          # 3) The pinned public key, so `cau verify-self` has something to check
-          #    against on a machine that holds no repository secret.
-          if [ -n "$CAU_RELEASE_PUBLIC_KEY" ]; then
-            printf '%s' "$CAU_RELEASE_PUBLIC_KEY" > dist/release-pubkey.hex
-          else
-            echo "::warning::CAU_RELEASE_PUBLIC_KEY is not set; the release will not self-verify before publishing"
-          fi
-
-          # 4) Signed SHA256SUMS over everything now in dist/ — the tarballs,
-          #    both binaries, the bundle, the integrity manifest and the distro
-          #    packages staged above. Order is the contract: a file staged after
-          #    this line ships unsigned, which is how the integrity manifest and
-          #    the public key used to ship.
-          #    The binary thereby references itself: its own hash is in a file it
-          #    can fetch and verify against the pinned key.
-          mapfile -d '' release_files < <(find dist -maxdepth 1 -type f ! -name 'SHA256SUMS*' -print0 | sort -z)
-          ./cau bundle checksums --sign-key "$KEYFILE" --out dist "${release_files[@]}"
-
-      - name: Verify the signed artifacts before publishing
-        if: env.CAU_RELEASE_SIGNING_KEY != '' && env.CAU_RELEASE_PUBLIC_KEY != ''
-        run: |
-          # A release that cannot verify itself must not ship: the built binary
-          # computes its own SHA-256 and checks it against the signed
-          # SHA256SUMS above, signature before hash.
-          ./cau verify-self --from dist --pubkey dist/release-pubkey.hex \
-            --name "cau-${GITHUB_REF_NAME}-linux-amd64"
-
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          # dist/ in full, the distro packages included: they were staged from
-          # the package workflow before signing above, so this one step
-          # publishes every asset the signed SHA256SUMS covers.
-          files: dist/*
-          fail_on_unmatched_files: true
-          # v1.2.0-rc1 ships as a pre-release; v1.2.0 does not.
-          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -259,6 +259,15 @@ jobs:
     timeout-minutes: 30
     container: ${{ matrix.image }}
     steps:
+      # Git before the checkout, not after it. The checkout needs git to make a
+      # real clone: without it the action falls back to downloading the tree
+      # through the REST API, and then there is no repository — and the
+      # source archive below, which is made with `git archive`, has nothing to
+      # archive. The container's default user is root, so the checkout's
+      # safe.directory setting is what lets the clone proceed.
+      - name: Install git (the checkout needs it)
+        run: pacman -S --noconfirm --needed --noprogressbar git
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         # The Makefile derives the version from `git describe`, so a shallow checkout
         # silently stamps every package with a commit sha instead of the tag, and

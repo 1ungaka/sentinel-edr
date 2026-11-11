@@ -4,11 +4,14 @@ package harden
 
 import (
 	"crypto/rand"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"syscall"
 	"unsafe"
+
+	"github.com/s-b-repo/cau/internal/safefs"
 )
 
 // This file adds the self-concealment and anti-hook half of the hardening:
@@ -55,17 +58,47 @@ func randName() string {
 	return string(out)
 }
 
-// setComm sets the process comm via PR_SET_NAME. comm is capped at 16 bytes
-// including the terminator, so the name is truncated to 15. This is what
-// pgrep/pkill, top, and /proc/<pid>/comm read.
+// setComm sets the process comm. comm is capped at 16 bytes including the
+// terminator, so the name is truncated to 15. This is what pgrep/pkill, top,
+// and /proc/<pid>/comm read.
+//
+// The process name is the *thread group leader's*: /proc/<pid>/comm shows the
+// leader's comm, while PR_SET_NAME sets the calling thread's. In a Go program
+// the calling thread is usually not the leader's — the runtime moves the main
+// goroutine off it as soon as it blocks — so prctl would put the name on some
+// other thread and the process would keep the name a name hunt looks for.
+//
+// Writing to /proc/<pid>/comm sets the leader's comm, and the kernel allows
+// that from any thread of the same thread group, which is what we are. The
+// name therefore lands where a name hunt looks for it. prctl stays as the
+// fallback for a host without /proc mounted.
 func setComm(name string) error {
-	b := make([]byte, 0, 16)
 	if len(name) > 15 {
 		name = name[:15]
 	}
+	f, err := os.OpenFile("/proc/self/comm", os.O_WRONLY, 0)
+	if err == nil {
+		_, werr := f.WriteString(name)
+		f.Close()
+		if werr == nil {
+			// The write is the kernel setting the leader's comm, but the
+			// name is the thing the operator is told about, so it is read
+			// back: a name that did not take must not be reported as set.
+			got, rerr := safefs.ReadFile("/proc/self/comm", 64)
+			if rerr == nil && strings.TrimSpace(string(got)) == name {
+				return nil
+			}
+			return fmt.Errorf("the process name did not change")
+		}
+		err = werr
+	}
+	b := make([]byte, 0, 16)
 	b = append(b, name...)
 	b = append(b, 0)
 	if _, _, errno := syscall.Syscall(syscall.SYS_PRCTL, prSetName, uintptr(unsafe.Pointer(&b[0])), 0); errno != 0 {
+		if err != nil {
+			return err
+		}
 		return errno
 	}
 	return nil
@@ -139,14 +172,18 @@ func indexByte(b []byte, c byte) int {
 
 // obscureName applies a randomised (or supplied) process name to both comm and
 // the command line, and reports the chosen name and whether each took.
-func obscureName(name string) (chosen string, commSet, cmdline bool) {
+func obscureName(name string) (chosen string, commSet, cmdline bool, commNote string) {
 	if name == "" {
 		name = randName()
 	}
-	commSet = setComm(name) == nil
+	if err := setComm(name); err != nil {
+		commNote = err.Error()
+	} else {
+		commSet = true
+	}
 	overwriteArgv0(name)
 	cmdline = cmdlineMasked(name)
-	return name, commSet, cmdline
+	return name, commSet, cmdline, commNote
 }
 
 // sanitizeEnv clears the dynamic-loader injection variables from the process
@@ -184,11 +221,12 @@ func detectTracer() int {
 // checks for a tracer. It is the Linux implementation behind Apply()'s
 // concealment step; off Linux it is a no-op.
 func ConcealProcess() Concealment {
-	name, comm, cmdline := obscureName("")
+	name, comm, cmdline, note := obscureName("")
 	return Concealment{
 		Applied:       comm || cmdline,
 		ProcessName:   name,
 		CommSet:       comm,
+		CommNote:      note,
 		CmdlineMasked: cmdline,
 		EnvStripped:   sanitizeEnv(),
 		TracerPID:     detectTracer(),

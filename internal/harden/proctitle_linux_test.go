@@ -133,7 +133,7 @@ func TestConcealInSubprocess(t *testing.T) {
 		t.Fatal("concealment destroyed the program's own arguments")
 	}
 	if kv["commset"] != "1" {
-		t.Error("comm was not set in child")
+		t.Error("the concealment did not report that the process name was set")
 	}
 	// comm is capped at 15 chars; randName is <= 12, so it should match in full.
 	if kv["comm"] != name {

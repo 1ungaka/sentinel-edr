@@ -97,6 +97,20 @@ All notable changes to CAU EDR. The format follows
 
 ### The rest
 
+- **The daemon's process name was never actually hidden.** The concealment set
+  the *calling thread's* name with `PR_SET_NAME`, but the process name —
+  `/proc/<pid>/comm`, the surface `pgrep`, `pkill`, `top` and a `/proc` sweep
+  read — is the thread group leader's. In a Go program the calling thread is
+  usually not the leader's (the runtime moves the main goroutine off it as
+  soon as it blocks), so the random name landed on some other thread and the
+  process kept the name a name hunt looks for — while the report said the
+  comm was set. The name is now written through `/proc/<pid>/comm`, which the
+  kernel applies to the leader and allows from any thread of the same thread
+  group, and the report is verified by reading it back. The concealment also
+  runs **before** the process is made non-dumpable: `PR_SET_DUMPABLE(0)` hands
+  the `/proc` entries to root, and after that the daemon can no longer write
+  its own `comm`. `pgrep -x cau` no longer finds the daemon.
+
 - **The sidecar could be made to leak a goroutine and a file descriptor per
   connection.** A client that connected and never sent a frame held its
   handler for ever, and nothing bounded how many handlers ran at once. The

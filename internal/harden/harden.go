@@ -16,6 +16,11 @@ type Concealment struct {
 	// (pgrep/pkill, /proc/<pid>/comm) and the command line (ps, cmdline).
 	CommSet       bool
 	CmdlineMasked bool
+	// CommNote says why the process name did not take, when it did not. A
+	// concealment that reports success while the name a hunt looks for is
+	// unchanged is worse than no concealment: it is a claim that is not
+	// true.
+	CommNote string
 	// EnvStripped lists loader-injection variables (LD_PRELOAD, …) removed from
 	// the environment at launch — a non-empty list is a tamper signal.
 	EnvStripped []string
@@ -73,10 +78,21 @@ func (r Report) Summary() string {
 // Apply engages the available in-process protections and returns a report. It
 // never fails: a step the kernel refuses is recorded in Notes, because a host
 // that cannot be locked down must still be scanned.
+//
+// The concealment comes first, and the order matters. PR_SET_DUMPABLE(0) hands
+// the process's /proc entries to root, and after that the process can no longer
+// write its own /proc/<pid>/comm — which is how the *process* name (the one
+// pgrep, pkill and top read) is set. Once the process is non-dumpable only
+// PR_SET_NAME is left, and that sets the calling thread's name, which in a Go
+// program is usually not the process's.
 func Apply() Report {
 	r := Report{Supported: supported()}
 	if !r.Supported {
 		return r
+	}
+	r.Concealment = ConcealProcess()
+	if r.Concealment.CommNote != "" {
+		r.Notes = append(r.Notes, "the process name did not change: "+r.Concealment.CommNote)
 	}
 	if ok, err := ProtectMemory(); err != nil {
 		r.Notes = append(r.Notes, "memory protection unavailable: "+err.Error())
@@ -88,6 +104,5 @@ func Apply() Report {
 	} else {
 		r.PrivsLocked = ok
 	}
-	r.Concealment = ConcealProcess()
 	return r
 }

@@ -7,6 +7,33 @@ All notable changes to CAU EDR. The format follows
 
 ## [0.3.0] - 2026-11-11
 
+### Upgrading to 0.3.0
+
+Nothing has to be done to upgrade: the binary is the binary and the packages
+replace the packages. Two things changed what an operator sees, and one thing
+changed what the engine can do.
+
+- **The host-behaviour inventories no longer report the host's own systemd.**
+  They looked in `/run/systemd/generator`, which is where systemd's own
+  generators put their *output* at boot: every systemd host has entries there,
+  no package lists them, and every one of them was reported as an unowned
+  generator that adds itself at every boot — ten findings on an ordinary host.
+  A generator is installed in `/etc/systemd/system-generators` or
+  `/usr/local/lib/systemd/system-generators`, and those are where the
+  inventory looks now. A package that owns a path still clears it.
+- **The daemon's process name is really randomised now.** It was set with
+  `PR_SET_NAME`, which sets the calling *thread's* name; the process name that
+  `pgrep`, `pkill` and a `/proc` sweep read is the thread group leader's, and
+  the daemon was usually not running on it. The name goes through
+  `/proc/<pid>/comm` now, which the kernel applies to the leader, and the
+  daemon's own report says which surfaces took.
+- **The kernel sensor is released separately and the two have to be of the
+  same vintage.** The engine reads the process's start time out of the guard's
+  event log, which is what lets it attribute an event to the process it
+  happened to. A guard that does not write that field is read as context about
+  a PID rather than as evidence, so the feature works with `cau-kernel`
+  v0.1.0 and later.
+
 ### The pipeline: current runners, an automated security lane, and a release that names itself
 
 - **The workflows run on current runners and current actions.** The pinned

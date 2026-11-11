@@ -292,6 +292,26 @@ jobs:
           echo "archive_sha256=$sha" >> "$GITHUB_OUTPUT"
           echo "the source archive's digest is $sha"
 
+      # The release notes are the changelog's own section for this version, so
+      # there is one document to keep in step rather than two. GitHub's own
+      # generator cannot be used: it looks for "## 1.2.3" headings, and this
+      # changelog writes "## [0.3.0] - 2026-11-11", so every release so far
+      # carried nothing but a link to the comparison.
+      - name: Render the release notes
+        env:
+          RELEASE_SIGNED: ${{ env.CAU_RELEASE_SIGNING_KEY != '' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          ./scripts/release-notes.sh "${{ needs.prepare.outputs.version }}" "$RUNNER_TEMP/release-notes.md"
+          # The notes are published, so a section that is missing or empty is
+          # a failed release: a release that says nothing is worse than one
+          # that says little.
+          if [ ! -s "$RUNNER_TEMP/release-notes.md" ]; then
+            echo "::error::the release notes are empty"
+            exit 1
+          fi
+          head -20 "$RUNNER_TEMP/release-notes.md"
+
       - name: Sign the update bundle, the integrity baseline and the checksums
         run: |
           set -euo pipefail
@@ -350,11 +370,15 @@ jobs:
           files: dist/*
           fail_on_unmatched_files: true
           tag_name: ${{ needs.prepare.outputs.tag }}
+          # The notes are the changelog's section for this version, rendered
+          # above. GitHub's generator is not used: it does not recognise this
+          # changelog's headings, and a release that carries only a link to the
+          # comparison tells an operator nothing.
+          body_path: ${{ runner.temp }}/release-notes.md
           # A beta or a release candidate is a pre-release; v1.2.0 is not.
           prerelease: ${{ needs.prepare.outputs.prerelease }}
-          # The notes are generated from the commits since the last release, so
-          # a beta says what changed since the release it is a candidate for.
-          generate_release_notes: true
+          # The notes are written, so GitHub's own are not needed.
+          generate_release_notes: false
           # A beta is published from a branch, so the tag it is named after
           # does not exist yet: it is created here, at this commit.
           target_commitish: ${{ github.sha }}

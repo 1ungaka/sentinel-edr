@@ -11,13 +11,14 @@ runs:
     - name: Set up Go
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
       with:
-        go-version-file: go.mod
-        # The latest patch of the version go.mod names, not that exact
-        # version. go.mod states the minimum a distribution's toolchain has to
-        # satisfy (the Debian package builds with the distribution's Go), but
-        # the build here should carry the fixed standard library: the
-        # 1.24.1 that go.mod names has published vulnerabilities in net/http
-        # that 1.24.2 fixed, and the vulnerability lane says so on every run.
+        # The current Go, not the version go.mod names. go.mod states the
+        # minimum a distribution's toolchain has to satisfy — the Debian and
+        # Arch packages build with the distribution's Go — but the build here
+        # should carry a fixed standard library: the 1.24 line is past its
+        # support window and its net/http has a published vulnerability that
+        # was only fixed in 1.26.11. The vulnerability lane says so on every
+        # run otherwise.
+        go-version: "stable"
         check-latest: true
         cache: true
 

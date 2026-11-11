@@ -280,7 +280,14 @@ jobs:
         run: |
           set -eu
           cd packaging/arch
-          makepkg --printsrcinfo > "$RUNNER_TEMP/cau.SRCINFO"
+          # makepkg refuses to run as root, and the container's default user is
+          # root. The build below already builds as an unprivileged user; the
+          # metadata check has to as well, or it fails on the image's default
+          # user rather than on the recipe. It did: the Arch legs have been
+          # failing since the container's default user became root, and the
+          # v0.2.0 release therefore shipped without an Arch package.
+          useradd -m builder
+          sudo -u builder makepkg --printsrcinfo > "$RUNNER_TEMP/cau.SRCINFO"
           diff -u .SRCINFO "$RUNNER_TEMP/cau.SRCINFO"
 
       - name: Build the package as the unprivileged builder
@@ -299,7 +306,6 @@ jobs:
           # Only this disposable recipe changes. The AUR recipe retains its
           # published release URL and pinned checksum.
           printf '\nsource=("%s")\nsha256sums=("%s")\n' "$archive" "$checksum" >> "$builddir/PKGBUILD"
-          useradd -m builder
           chown -R builder "$builddir"
           cd "$builddir"
           sudo -u builder makepkg --noconfirm

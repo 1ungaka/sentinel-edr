@@ -23,3 +23,5 @@ pkgbase = cau
 	backup = etc/cau/cau.conf
 	source = https://github.com/s-b-repo/cau/releases/download/v0.3.0/cau-0.3.0.tar.gz
 	sha256sums = dd81ae94cd4ee4bb6864033b86cb2c2c3958e614f76d90d96f581d127b98541e
+
+pkgname = cau

@@ -88,11 +88,10 @@ jobs:
           stage=$(mktemp -d)
           trap 'rm -rf "$stage"' EXIT
           mkdir -p "$stage/cau"
-          # dpkg-source generates the orig tarball itself (there is no upstream
-          # release for a branch tip), so the exclusions below are about what
-          # belongs in that tarball, not about fetching one: the tree's own
-          # .gitignore build products, the nested cau-kernel repo, and the
-          # untracked local WIP paths.
+          # There is no upstream release for a branch tip, so the orig tarball
+          # is made from this copy further down. The exclusions are about what
+          # belongs in that tarball: the tree's own .gitignore build products,
+          # the nested cau-kernel repo, and the untracked local WIP paths.
           tar -C "$GITHUB_WORKSPACE" \
             --exclude=./.git \
             --exclude=./dist \
@@ -108,6 +107,10 @@ jobs:
             --exclude='*.build' --exclude='*.buildinfo' --exclude='*.changes' \
             -cf - . | tar -xf - -C "$stage/cau"
           cd "$stage/cau"
+          # 3.0 (quilt) will not build without ../cau_<version>.orig.tar.gz and
+          # dpkg-source does not make one, so pack the tree minus debian/.
+          upver=$(dpkg-parsechangelog -SVersion | sed 's/-[^-]*$//')
+          tar --exclude=./debian -czf "../cau_${upver}.orig.tar.gz" .
           dpkg-buildpackage -us -uc -S
           ls -l "$stage"
 

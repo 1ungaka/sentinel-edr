@@ -259,14 +259,25 @@ jobs:
     timeout-minutes: 30
     container: ${{ matrix.image }}
     steps:
-      # Git before the checkout, not after it. The checkout needs git to make a
-      # real clone: without it the action falls back to downloading the tree
-      # through the REST API, and then there is no repository — and the
-      # source archive below, which is made with `git archive`, has nothing to
-      # archive. The container's default user is root, so the checkout's
-      # safe.directory setting is what lets the clone proceed.
-      - name: Install git (the checkout needs it)
-        run: pacman -S --noconfirm --needed --noprogressbar git
+      # The toolchain before the checkout, not after it. The checkout needs git
+      # to make a real clone: without it the action falls back to downloading
+      # the tree through the REST API and leaves no repository behind — and the
+      # source archive below, which is made with `git archive`, then has
+      # nothing to archive. The container's default user is root, so the
+      # checkout's safe.directory setting is what lets the clone proceed.
+      - name: Install the build toolchain
+        run: |
+          set -eu
+          # Refresh and upgrade together: a partial upgrade can leave the Go
+          # toolchain or libyara linked against libraries absent in the image.
+          pacman -Syu --noconfirm --needed --noprogressbar base-devel go pkgconf yara sudo git
+          go version
+          pkg-config --modversion yara
+          # makepkg refuses to run as root, and the container's default user is
+          # root. The build below builds as this user; so does the metadata
+          # check, or it fails on the image's default user rather than on the
+          # recipe.
+          useradd -m builder
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         # The Makefile derives the version from `git describe`, so a shallow checkout
@@ -276,29 +287,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install the build toolchain
-        run: |
-          set -eu
-          # Refresh and upgrade together: a partial upgrade can leave the Go
-          # toolchain or libyara linked against libraries absent in the image.
-          pacman -Syu --noconfirm --needed base-devel go pkgconf yara sudo git
-          go version
-          pkg-config --modversion yara
-
       - name: Check the AUR metadata
         run: |
           set -euo pipefail
-          # makepkg refuses to run as root, and the container's default user is
-          # root. The build below already builds as an unprivileged user; the
-          # metadata check has to as well, or it fails on the image's default
-          # user rather than on the recipe. It did: the Arch legs have been
-          # failing since the container's default user became root, and the
-          # v0.2.0 release therefore shipped without an Arch package.
-          #
           # makepkg also insists on a writable build directory, and the
-          # checkout is not writable by that user, so the recipe is copied to
-          # a directory that is.
-          useradd -m builder
+          # checkout is not writable by the unprivileged user, so the recipe is
+          # copied to a directory that is.
           work="$RUNNER_TEMP/aur-metadata"
           rm -rf "$work"
           mkdir -p "$work"

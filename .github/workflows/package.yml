@@ -334,7 +334,7 @@ jobs:
           # images do not agree about where that is. The package is found
           # rather than globbed: an empty glob is a silent success, and a
           # release that stages no Arch package ships none.
-          packages=$(find "$builddir" -maxdepth 3 -name '*.pkg.tar.zst' | sort)
+          packages=$(find "$builddir" -maxdepth 3 \( -name '*.pkg.tar.zst' -o -name '*.pkg.tar.xz' \) | sort)
           if [ -z "$packages" ]; then
             echo "::error::no Arch package was built in $builddir"
             ls -la "$builddir"

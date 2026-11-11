@@ -2,6 +2,11 @@
 pkgname=cau
 pkgver=0.3.0
 pkgrel=1
+# The package's compression is the recipe's decision, not the builder's: the
+# arm64 image's makepkg defaults to xz while the amd64 one defaults to zstd,
+# and a release that stages "*.pkg.tar.zst" would then ship no arm64 package
+# at all. The same is true of the build image's own configuration.
+PKGEXT='.pkg.tar.zst'
 pkgdesc='transparent open-source malware detection engine: explained verdicts, labeled classes, ATT&CK techniques'
 arch=('x86_64' 'aarch64')
 url='https://github.com/s-b-repo/cau'

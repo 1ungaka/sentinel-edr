@@ -278,17 +278,26 @@ jobs:
 
       - name: Check the AUR metadata
         run: |
-          set -eu
-          cd packaging/arch
+          set -euo pipefail
           # makepkg refuses to run as root, and the container's default user is
           # root. The build below already builds as an unprivileged user; the
           # metadata check has to as well, or it fails on the image's default
           # user rather than on the recipe. It did: the Arch legs have been
           # failing since the container's default user became root, and the
           # v0.2.0 release therefore shipped without an Arch package.
+          #
+          # makepkg also insists on a writable build directory, and the
+          # checkout is not writable by that user, so the recipe is copied to
+          # a directory that is.
           useradd -m builder
-          sudo -u builder makepkg --printsrcinfo > "$RUNNER_TEMP/cau.SRCINFO"
-          diff -u .SRCINFO "$RUNNER_TEMP/cau.SRCINFO"
+          work="$RUNNER_TEMP/aur-metadata"
+          rm -rf "$work"
+          mkdir -p "$work"
+          cp packaging/arch/PKGBUILD packaging/arch/.SRCINFO "$work/"
+          chown -R builder "$work"
+          cd "$work"
+          sudo -u builder makepkg --printsrcinfo | tee "$work/cau.SRCINFO"
+          diff -u .SRCINFO "$work/cau.SRCINFO"
 
       - name: Build the package as the unprivileged builder
         run: |

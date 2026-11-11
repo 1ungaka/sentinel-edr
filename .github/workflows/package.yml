@@ -330,8 +330,20 @@ jobs:
           chown -R builder "$builddir"
           cd "$builddir"
           sudo -u builder makepkg --noconfirm
+          # makepkg writes the package into its output directory, and the two
+          # images do not agree about where that is. The package is found
+          # rather than globbed: an empty glob is a silent success, and a
+          # release that stages no Arch package ships none.
+          packages=$(find "$builddir" -maxdepth 3 -name '*.pkg.tar.zst' | sort)
+          if [ -z "$packages" ]; then
+            echo "::error::no Arch package was built in $builddir"
+            ls -la "$builddir"
+            find / -maxdepth 6 -name '*.pkg.tar.zst' 2>/dev/null | head -5
+            exit 1
+          fi
           mkdir -p "$GITHUB_WORKSPACE/dist"
-          cp ./*.pkg.tar.zst "$GITHUB_WORKSPACE/dist/"
+          # shellcheck disable=SC2086
+          cp $packages "$GITHUB_WORKSPACE/dist/"
           ls -l "$GITHUB_WORKSPACE/dist/"
 
       - name: Install the package

@@ -55,7 +55,9 @@ jobs:
         run: |
           # A pinned version, not @latest: the scanner is a build input here,
           # and an input that moves on its own is an input nobody reviewed.
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          # The version is pinned to one that understands the current Go: the
+          # older scanner crashes in its own analysis of a 1.27 module.
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
           "$(go env GOPATH)/bin/govulncheck" -version
 
       # The module graph, not the vendor tree: govulncheck needs the versions

@@ -222,7 +222,8 @@ func (m *Message) walk(h textproto.MIMEHeader, body io.Reader, depth int, text, 
 }
 
 // readDecoded undoes base64 / quoted-printable and reads at most limit bytes.
-// A decode error keeps whatever came out before it.
+// A decode error keeps whatever came out before it and reports the part as
+// truncated, since the rest of it is lost.
 func readDecoded(r io.Reader, encoding string, limit int64) (data []byte, truncated bool) {
 	switch strings.ToLower(strings.TrimSpace(encoding)) {
 	case "base64":
@@ -230,11 +231,11 @@ func readDecoded(r io.Reader, encoding string, limit int64) (data []byte, trunca
 	case "quoted-printable":
 		r = quotedprintable.NewReader(r)
 	}
-	data, _ = io.ReadAll(io.LimitReader(r, limit+1))
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
 	if int64(len(data)) > limit {
 		return data[:limit], true
 	}
-	return data, false
+	return data, err != nil
 }
 
 // toUTF8 handles the two charsets that cover nearly all mail. Anything else is

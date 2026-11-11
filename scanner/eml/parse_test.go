@@ -275,6 +275,9 @@ UEsDBA==!!!!not-base64
 	if len(m.Attachments) != 1 || !bytes.HasPrefix(m.Attachments[0].Data, []byte("PK\x03\x04")) {
 		t.Errorf("Attachments = %+v", m.Attachments)
 	}
+	if !m.Truncated || !m.Attachments[0].Truncated {
+		t.Error("a part cut short by a decode error should be marked truncated")
+	}
 }
 
 func FuzzParse(f *testing.F) {

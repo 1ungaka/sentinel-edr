@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/release"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/release"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // A binary built without ML-DSA (a Go toolchain older than 1.27, or the

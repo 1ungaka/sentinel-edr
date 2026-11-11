@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/eval"
-	"github.com/s-b-repo/cau/internal/honesty"
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/internal/selftest"
+	"github.com/1ungaka/sentinel-edr/internal/eval"
+	"github.com/1ungaka/sentinel-edr/internal/honesty"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/selftest"
 )
 
 var honestyTestClock = time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)

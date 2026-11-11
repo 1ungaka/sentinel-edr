@@ -11,7 +11,7 @@ import (
 
 	yara "github.com/hillu/go-yara/v4"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // RuleSource is a single unit of YARA source that can be compiled into a

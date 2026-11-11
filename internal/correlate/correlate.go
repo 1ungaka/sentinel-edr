@@ -22,7 +22,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/parallel"
+	"github.com/1ungaka/sentinel-edr/internal/parallel"
 )
 
 // Layer is the detection layer a signal came from.

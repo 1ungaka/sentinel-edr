@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // This file adds the self-concealment and anti-hook half of the hardening:

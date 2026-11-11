@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/selftest"
+	"github.com/1ungaka/sentinel-edr/internal/selftest"
 )
 
 func keyPair(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {

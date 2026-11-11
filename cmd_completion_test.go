@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // commandFromUsage extracts the top-level command names from the usage block,

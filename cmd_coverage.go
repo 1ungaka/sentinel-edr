@@ -7,11 +7,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/coverage"
-	"github.com/s-b-repo/cau/internal/frameworks"
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/scanner"
-	"github.com/s-b-repo/cau/scanner/static"
+	"github.com/1ungaka/sentinel-edr/internal/coverage"
+	"github.com/1ungaka/sentinel-edr/internal/frameworks"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner/static"
 )
 
 // ── coverage ─────────────────────────────────────────────────────────────────

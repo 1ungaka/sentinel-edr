@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/eval"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/eval"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 func evalUsage(w io.Writer) {

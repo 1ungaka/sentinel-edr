@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // maxKeyFileSize bounds what is even considered. A hex Ed25519 private key is

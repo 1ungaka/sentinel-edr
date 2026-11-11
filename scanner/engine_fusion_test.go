@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/scanner/fusion"
+	"github.com/1ungaka/sentinel-edr/scanner/fusion"
 )
 
 func TestEngineStegoPass(t *testing.T) {

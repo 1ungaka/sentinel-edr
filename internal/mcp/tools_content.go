@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/safefs"
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // ── yara_test_rule ───────────────────────────────────────────────────────────

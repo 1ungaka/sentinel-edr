@@ -3,7 +3,7 @@ package forward
 import (
 	"context"
 
-	"github.com/s-b-repo/cau/internal/forward/wazuh"
+	"github.com/1ungaka/sentinel-edr/internal/forward/wazuh"
 )
 
 // WazuhSender adapts a Wazuh Manager client to Sender, so the daemon forwards

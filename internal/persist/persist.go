@@ -28,9 +28,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/s-b-repo/cau/internal/parallel"
-	"github.com/s-b-repo/cau/internal/safefs"
-	"github.com/s-b-repo/cau/scanner/linuxpkg"
+	"github.com/1ungaka/sentinel-edr/internal/parallel"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/scanner/linuxpkg"
 )
 
 // DefaultThreshold is the per-finding score at which an entry is reported as a

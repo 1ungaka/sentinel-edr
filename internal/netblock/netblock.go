@@ -39,8 +39,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/netscan"
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/netscan"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // Backend is the firewall this host has.

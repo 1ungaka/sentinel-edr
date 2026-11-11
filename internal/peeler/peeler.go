@@ -37,7 +37,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/parallel"
+	"github.com/1ungaka/sentinel-edr/internal/parallel"
 )
 
 func itoa(n int) string { return strconv.Itoa(n) }

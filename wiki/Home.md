@@ -5,8 +5,8 @@ prevention* engine. Detection and prevention are free and unmetered on every
 host; only the multi-agent management console is paid.
 
 This wiki is generated from the repository (`wiki/`), so it tracks the code.
-The canonical, in-depth docs live in [`docs/`](https://github.com/s-b-repo/cau/tree/main/docs)
-and the roadmap in [`PLAN.md`](https://github.com/s-b-repo/cau/blob/main/PLAN.md).
+The canonical, in-depth docs live in [`docs/`](https://github.com/1ungaka/sentinel-edr/tree/main/docs)
+and the roadmap in [`PLAN.md`](https://github.com/1ungaka/sentinel-edr/blob/main/PLAN.md).
 
 ## Start here
 
@@ -50,4 +50,4 @@ and what was measured, with no overall score.
 
 Everything that finds and stops threats on a host is MIT and free. The paid
 artifact is only the web console that manages a *fleet* of these free agents from
-one pane. See [`PLAN.md` → Product shape](https://github.com/s-b-repo/cau/blob/main/PLAN.md).
+one pane. See [`PLAN.md` → Product shape](https://github.com/1ungaka/sentinel-edr/blob/main/PLAN.md).

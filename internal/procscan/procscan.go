@@ -55,10 +55,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/intel"
-	"github.com/s-b-repo/cau/internal/parallel"
-	"github.com/s-b-repo/cau/scanner/linuxpkg"
-	"github.com/s-b-repo/cau/scanner/tradecraft"
+	"github.com/1ungaka/sentinel-edr/internal/intel"
+	"github.com/1ungaka/sentinel-edr/internal/parallel"
+	"github.com/1ungaka/sentinel-edr/scanner/linuxpkg"
+	"github.com/1ungaka/sentinel-edr/scanner/tradecraft"
 )
 
 // DefaultThreshold is the per-process score at which a process is reported.

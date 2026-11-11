@@ -1,4 +1,4 @@
-module github.com/s-b-repo/cau
+module github.com/1ungaka/sentinel-edr
 
 go 1.24.1
 

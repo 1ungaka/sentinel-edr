@@ -7,7 +7,7 @@ import (
 	"os"
 	"sync/atomic"
 
-	"github.com/s-b-repo/cau/internal/selftest"
+	"github.com/1ungaka/sentinel-edr/internal/selftest"
 )
 
 // Guard is the agent's view of its own signed baseline: what its detection

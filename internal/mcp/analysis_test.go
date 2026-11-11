@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/eval"
-	"github.com/s-b-repo/cau/internal/selftest"
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/internal/eval"
+	"github.com/1ungaka/sentinel-edr/internal/selftest"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // End-to-end tests for the analysis tools, driven through the JSON-RPC

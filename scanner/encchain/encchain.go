@@ -16,7 +16,7 @@ import (
 	"encoding/hex"
 	"os"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // Tunables. Defaults are conservative to keep false positives low; the eval

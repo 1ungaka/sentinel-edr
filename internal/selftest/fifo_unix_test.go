@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // `cau selftest` runs as ExecStartPre. The "-" on that line forgives a failure

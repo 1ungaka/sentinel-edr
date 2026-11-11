@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/parallel"
-	"github.com/s-b-repo/cau/internal/peeler"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/parallel"
+	"github.com/1ungaka/sentinel-edr/internal/peeler"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // maxInputBytes caps how much a command reads from an arbitrary input file or

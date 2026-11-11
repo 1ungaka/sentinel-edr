@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // "3 of them" with four matches: the rule falls when three stop matching, so

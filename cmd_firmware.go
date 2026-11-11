@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/scanner"
-	"github.com/s-b-repo/cau/scanner/uefi"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner/uefi"
 )
 
 func firmwareUsage(w io.Writer) {

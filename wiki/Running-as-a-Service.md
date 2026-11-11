@@ -65,7 +65,7 @@ See [Anti-Tamper](Anti-Tamper).
 
 ## systemd (Linux)
 
-Units ship in [`packaging/systemd/`](https://github.com/s-b-repo/cau/tree/main/packaging/systemd).
+Units ship in [`packaging/systemd/`](https://github.com/1ungaka/sentinel-edr/tree/main/packaging/systemd).
 Prefer the timer-driven one-shot:
 
 ```sh

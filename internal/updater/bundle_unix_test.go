@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // --from is the air-gap path, so this directory can be whatever was on the media.

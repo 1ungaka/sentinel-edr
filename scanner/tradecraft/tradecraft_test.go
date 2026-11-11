@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/attack"
+	"github.com/1ungaka/sentinel-edr/internal/attack"
 )
 
 // The API-hash table is derived from names, so it must reproduce the published

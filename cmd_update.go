@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/intake"
-	"github.com/s-b-repo/cau/internal/release"
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/internal/safefs"
-	"github.com/s-b-repo/cau/internal/updater"
+	"github.com/1ungaka/sentinel-edr/internal/intake"
+	"github.com/1ungaka/sentinel-edr/internal/release"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/updater"
 )
 
 // pinnedUpdateKey is the release signing key the engine trusts. It is empty in

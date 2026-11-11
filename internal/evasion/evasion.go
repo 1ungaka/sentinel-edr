@@ -27,7 +27,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // Detector names one detector's fragility on one file.

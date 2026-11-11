@@ -5,8 +5,8 @@ import (
 	"debug/pe"
 	"encoding/binary"
 	"fmt"
-	"github.com/s-b-repo/cau/internal/safefs"
-	"github.com/s-b-repo/cau/scanner/static"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/scanner/static"
 	"os"
 	"regexp"
 	"sort"
@@ -15,7 +15,7 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
-	"github.com/s-b-repo/cau/internal/prefilter"
+	"github.com/1ungaka/sentinel-edr/internal/prefilter"
 )
 
 // Heuristic scoring model

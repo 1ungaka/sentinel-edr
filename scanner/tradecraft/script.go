@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/s-b-repo/cau/internal/prefilter"
+	"github.com/1ungaka/sentinel-edr/internal/prefilter"
 )
 
 // maxScriptBytes bounds the regular-expression pass. Larger text is not a

@@ -5,8 +5,8 @@ import (
 	"io"
 	"sort"
 
-	"github.com/s-b-repo/cau/internal/eval"
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/internal/eval"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // The bench measures the shipped detections against a corpus the operator

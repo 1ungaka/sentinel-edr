@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // swapToSymlink is the attack the identity check refuses: the path named a

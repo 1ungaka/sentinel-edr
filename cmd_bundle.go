@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/s-b-repo/cau/internal/release"
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/internal/updater"
+	"github.com/1ungaka/sentinel-edr/internal/release"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/updater"
 )
 
 func bundleUsage(w io.Writer) {

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/internal/updater"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/updater"
 )
 
 // writeBundle builds a signed bundle directory and returns the dir and the

@@ -13,7 +13,7 @@
 
 [Unit]
 Description=CAU EDR resident scan daemon
-Documentation=https://github.com/s-b-repo/cau
+Documentation=https://github.com/1ungaka/sentinel-edr
 After=network-online.target
 Wants=network-online.target
 # Crash-loop guard: if the service restarts 5 times within 5 minutes, stop

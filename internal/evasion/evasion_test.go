@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // A rule that fires on one string is one byte away from silence: that is the

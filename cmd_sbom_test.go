@@ -8,13 +8,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 func sbomInfo() *debug.BuildInfo {
 	return &debug.BuildInfo{
 		GoVersion: "go1.27.3",
-		Main:      debug.Module{Path: "github.com/s-b-repo/cau", Version: "v0.4.0"},
+		Main:      debug.Module{Path: "github.com/1ungaka/sentinel-edr", Version: "v0.4.0"},
 		Deps: []*debug.Module{
 			{Path: "golang.org/x/sys", Version: "v0.30.0", Sum: "h1:zzz="},
 			{Path: "github.com/hillu/go-yara/v4", Version: "v4.3.3", Sum: "h1:aaa="},
@@ -33,7 +33,7 @@ func TestBuildSBOM(t *testing.T) {
 		t.Errorf("envelope: %+v", doc)
 	}
 	mc := doc.Metadata.Component
-	if mc.Type != "application" || mc.Name != "cau" || mc.Version != "v0.4.0" || mc.PURL != "pkg:golang/github.com/s-b-repo/cau@v0.4.0" {
+	if mc.Type != "application" || mc.Name != "cau" || mc.Version != "v0.4.0" || mc.PURL != "pkg:golang/github.com/1ungaka/sentinel-edr@v0.4.0" {
 		t.Errorf("main component: %+v", mc)
 	}
 	if len(doc.Components) != 3 {
@@ -86,7 +86,7 @@ func TestBuildSBOM(t *testing.T) {
 	// A development build has no version to claim.
 	dev := sbomInfo()
 	dev.Main.Version = "(devel)"
-	if d := buildSBOM(dev, "cau"); d.Metadata.Component.Version != "" || d.Metadata.Component.PURL != "pkg:golang/github.com/s-b-repo/cau" {
+	if d := buildSBOM(dev, "cau"); d.Metadata.Component.Version != "" || d.Metadata.Component.PURL != "pkg:golang/github.com/1ungaka/sentinel-edr" {
 		t.Errorf("devel build: %+v", d.Metadata.Component)
 	}
 }

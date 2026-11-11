@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/intel"
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/internal/selftest"
+	"github.com/1ungaka/sentinel-edr/internal/intel"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/selftest"
 )
 
 // feedEnv is the environment variable that overrides the abuse-feed path.

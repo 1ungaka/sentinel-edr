@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/s-b-repo/cau/scanner/linuxpkg"
+	"github.com/1ungaka/sentinel-edr/scanner/linuxpkg"
 )
 
 func TestAuditDpkgFlagsMaliciousPostinst(t *testing.T) {

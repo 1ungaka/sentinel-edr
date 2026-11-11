@@ -16,7 +16,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // Parsing and safety limits.

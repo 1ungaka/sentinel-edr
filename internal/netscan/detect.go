@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/intel"
-	"github.com/s-b-repo/cau/internal/procscan"
+	"github.com/1ungaka/sentinel-edr/internal/intel"
+	"github.com/1ungaka/sentinel-edr/internal/procscan"
 )
 
 // handlerPorts are the default listen ports of the common reverse-shell and

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // The EFI System Partition, read as a mounted directory. The scan inventories

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // maxKernelStateBytes bounds one kernel-state file. The module list is the

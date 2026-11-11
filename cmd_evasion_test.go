@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // The report measures the shipped detections on one file: the bytes that must

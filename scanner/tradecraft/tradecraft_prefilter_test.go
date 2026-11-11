@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/prefilter/prefiltertest"
+	"github.com/1ungaka/sentinel-edr/internal/prefilter/prefiltertest"
 )
 
 // The rule the filter stands on, over the real detection table: text one of these

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/release"
+	"github.com/1ungaka/sentinel-edr/internal/release"
 )
 
 // A registry is refused when a model has no SBOM: an artifact nobody can

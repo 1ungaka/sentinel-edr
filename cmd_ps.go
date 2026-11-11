@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/procscan"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/procscan"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 func psUsage(w io.Writer) {

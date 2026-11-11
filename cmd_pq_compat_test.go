@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/release"
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/internal/updater"
+	"github.com/1ungaka/sentinel-edr/internal/release"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/updater"
 )
 
 // Backward compatibility of the Ed25519-only release chain through the CLI,

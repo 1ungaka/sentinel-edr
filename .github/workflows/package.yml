@@ -124,7 +124,7 @@ jobs:
             # and a .tar.gz from GitHub is accepted (the format matches the
             # name).
             curl -fsSL -o "../cau_${upver}.orig.tar.gz" \
-              "https://github.com/s-b-repo/cau/archive/refs/tags/v${upver}.tar.gz"
+              "https://github.com/1ungaka/sentinel-edr/archive/refs/tags/v${upver}.tar.gz"
             dpkg-buildpackage -us -uc        # source + binary, unsigned
           else
             # On a branch the tree has moved past the tag, and dpkg-source

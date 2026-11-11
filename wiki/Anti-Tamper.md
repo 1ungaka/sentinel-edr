@@ -88,7 +88,7 @@ daemon protects itself and recovers from attempts to crash it:
   key or baseline it cannot check vouches for nothing and is never reported as
   verified, and both are retried on every selftest cycle, so a repair needs no
   restart. The cost of staying up is listed in
-  [limitations](https://github.com/s-b-repo/cau/blob/main/docs/limitations.md).
+  [limitations](https://github.com/1ungaka/sentinel-edr/blob/main/docs/limitations.md).
 
 The shipped systemd units add the sandbox around all of this: an unprivileged
 user holding only `CAP_DAC_READ_SEARCH` (not root), `ProtectProc=invisible` (no

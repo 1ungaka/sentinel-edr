@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/coverage"
-	"github.com/s-b-repo/cau/internal/frameworks"
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/internal/coverage"
+	"github.com/1ungaka/sentinel-edr/internal/frameworks"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // maxListItems bounds every list a tool returns so a scan of a large tree or a

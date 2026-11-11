@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // This file reads a YARA rule's condition back and works out how many of the

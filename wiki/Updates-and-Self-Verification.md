@@ -28,7 +28,7 @@ The binary computes its own SHA-256 and checks it against the signed
 `SHA256SUMS` — fetched over HTTPS or read from an air-gapped copy:
 
 ```sh
-cau verify-self --url https://github.com/s-b-repo/cau/releases/download/vX.Y.Z \
+cau verify-self --url https://github.com/1ungaka/sentinel-edr/releases/download/vX.Y.Z \
                 --pubkey release-pubkey.hex --name cau-vX.Y.Z-linux-amd64
 # or, offline:
 cau verify-self --from /media/usb/cau-release --pubkey release-pubkey.hex --name cau-...
@@ -44,7 +44,7 @@ download cannot substitute a matching hash. Exit `0` verified, `1` failed.
 ## Update the signature database (fail-closed)
 
 ```sh
-cau update --url https://github.com/s-b-repo/cau/releases/download/vX.Y.Z \
+cau update --url https://github.com/1ungaka/sentinel-edr/releases/download/vX.Y.Z \
            --pubkey release-pubkey.hex
 # or offline:
 cau update --from /media/usb/cau-release --pubkey release-pubkey.hex

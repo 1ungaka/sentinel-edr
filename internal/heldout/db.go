@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // magic identifies an encrypted held-out database and versions its on-disk

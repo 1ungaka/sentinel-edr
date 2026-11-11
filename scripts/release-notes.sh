@@ -137,8 +137,8 @@ date=$(awk -v want="$version" '
     echo "recomputes the running binary's digest and compares it with the signed"
     echo "one, so a tampered download is refused rather than run."
     echo
-    echo "Full changelog: [CHANGELOG.md](https://github.com/s-b-repo/cau/blob/main/CHANGELOG.md)."
-    echo "Comparison with the previous release: <https://github.com/s-b-repo/cau/compare/v${version}%5E...v${version}>."
+    echo "Full changelog: [CHANGELOG.md](https://github.com/1ungaka/sentinel-edr/blob/main/CHANGELOG.md)."
+    echo "Comparison with the previous release: <https://github.com/1ungaka/sentinel-edr/compare/v${version}%5E...v${version}>."
 } > "$output"
 
 echo "release-notes: wrote $output ($(wc -l < "$output") lines)"

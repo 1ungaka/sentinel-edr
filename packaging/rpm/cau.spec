@@ -21,8 +21,8 @@ Version:        %{cau_version}
 Release:        1%{?dist}
 Summary:        Transparent open-source malware detection engine
 License:        MIT
-URL:            https://github.com/s-b-repo/cau
-Source0:        https://github.com/s-b-repo/cau/releases/download/v%{version}/cau-%{version}.tar.gz
+URL:            https://github.com/1ungaka/sentinel-edr
+Source0:        https://github.com/1ungaka/sentinel-edr/releases/download/v%{version}/cau-%{version}.tar.gz
 
 BuildRequires:  golang >= 1.24
 BuildRequires:  yara-devel >= 4.3

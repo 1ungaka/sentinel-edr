@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // Firmware inventory from sysfs: ACPI tables (WPBT), PCI option ROMs and the

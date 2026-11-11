@@ -9,11 +9,11 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/model"
-	"github.com/s-b-repo/cau/internal/release"
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/internal/safefs"
-	"github.com/s-b-repo/cau/internal/sidecar"
+	"github.com/1ungaka/sentinel-edr/internal/model"
+	"github.com/1ungaka/sentinel-edr/internal/release"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/sidecar"
 )
 
 // The model registry is the signed catalogue of the artifacts the engine may

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/intake"
-	"github.com/s-b-repo/cau/internal/release"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/intake"
+	"github.com/1ungaka/sentinel-edr/internal/release"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 func verifySelfUsage(w io.Writer) {

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // firmwareFixture writes an image with a gzip member inside it.

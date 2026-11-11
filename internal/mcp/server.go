@@ -23,8 +23,8 @@ import (
 	"io"
 	"sync"
 
-	"github.com/s-b-repo/cau/scanner"
-	"github.com/s-b-repo/cau/scanner/static"
+	"github.com/1ungaka/sentinel-edr/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner/static"
 )
 
 // ProtocolVersion is the MCP revision this server implements. When a client

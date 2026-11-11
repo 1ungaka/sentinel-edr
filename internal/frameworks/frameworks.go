@@ -17,7 +17,7 @@ package frameworks
 import (
 	"sort"
 
-	"github.com/s-b-repo/cau/internal/attack"
+	"github.com/1ungaka/sentinel-edr/internal/attack"
 )
 
 // UKC phase names (canonical Unified Kill Chain v2 ordering).

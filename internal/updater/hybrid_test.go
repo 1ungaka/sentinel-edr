@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/release"
+	"github.com/1ungaka/sentinel-edr/internal/release"
 )
 
 func hybridKey(t testing.TB) release.SignKey {

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/s-b-repo/cau/internal/prefilter/prefiltertest"
+	"github.com/1ungaka/sentinel-edr/internal/prefilter/prefiltertest"
 )
 
 // The expressions here are chosen to break the extraction, not to look realistic.

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/correlate"
+	"github.com/1ungaka/sentinel-edr/internal/correlate"
 )
 
 // A response that failed is unfinished business: the implant is still there. It has

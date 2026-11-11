@@ -9,7 +9,7 @@
 # Reports are written under ReadWritePaths; adjust the path and --output to taste.
 [Unit]
 Description=CAU EDR scheduled scan
-Documentation=https://github.com/s-b-repo/cau
+Documentation=https://github.com/1ungaka/sentinel-edr
 After=network-online.target
 Wants=network-online.target
 

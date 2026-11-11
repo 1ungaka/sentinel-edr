@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // provenanceTestRoot builds a merged-/usr dpkg tree under a temp root with

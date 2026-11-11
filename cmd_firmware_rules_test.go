@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // firmwareImage builds a one-volume UEFI image holding one DXE driver whose

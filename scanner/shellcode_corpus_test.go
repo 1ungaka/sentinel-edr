@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/s-b-repo/cau/scanner/tradecraft"
+	"github.com/1ungaka/sentinel-edr/scanner/tradecraft"
 )
 
 // The shellcode corpus.

@@ -501,24 +501,24 @@ p, li, td, th { orphans: 2; widows: 2; }
       <tr><td>
         <span class="step-n">01</span>
         <h3>Clone the repositories</h3>
-<pre><code class="c-mono">$ git clone https://github.com/s-b-repo/cau.git cau
+<pre><code class="c-mono">$ git clone https://github.com/1ungaka/sentinel-edr.git cau
 $ cd cau
 $ git clone https://github.com/s-b-repo/cau-kernel.git cau-kernel</code></pre>
         <p>Cloning downloads the full source history. You need the cau repository (engine + agent) and cau-kernel (kernel-integrity sensor). Clone cau-kernel inside or alongside cau; they are independent Go modules.</p>
         <div class="notice-err">
           <h4>Error: repository not found / authentication required</h4>
           <p><strong>Meaning:</strong> You mistyped the URL, the repo is private, or you lack network access to GitHub.</p>
-          <p><strong>Fix:</strong> Verify the URL is <code>https://github.com/s-b-repo/cau.git</code>. If behind a proxy, set <code>git config --global http.proxy</code>. If the repo requires auth, generate a GitHub personal access token and use <code>https://&lt;token&gt;@github.com/s-b-repo/cau.git</code>.</p>
+          <p><strong>Fix:</strong> Verify the URL is <code>https://github.com/1ungaka/sentinel-edr.git</code>. If behind a proxy, set <code>git config --global http.proxy</code>. If the repo requires auth, generate a GitHub personal access token and use <code>https://&lt;token&gt;@github.com/1ungaka/sentinel-edr.git</code>.</p>
         </div>
       </td></tr>
       <tr><td>
         <span class="step-n">02</span>
         <h3>Or download a release tarball</h3>
-        <p>Every v tag triggers CI, which builds cau-tag-linux-amd64.tar.gz with the rules and signature databases, plus SHA256SUMS. Download from https://github.com/s-b-repo/cau/releases/tag/v0.1.0 (first tag v0.1.0, cut 2026-11-02) or build from source.</p>
+        <p>Every v tag triggers CI, which builds cau-tag-linux-amd64.tar.gz with the rules and signature databases, plus SHA256SUMS. Download from https://github.com/1ungaka/sentinel-edr/releases/tag/v0.1.0 (first tag v0.1.0, cut 2026-11-02) or build from source.</p>
         <div class="notice-err">
           <h4>Error: 404 or file not found on release page</h4>
           <p><strong>Meaning:</strong> The tag does not exist yet, or the CI release job has not finished uploading artifacts.</p>
-          <p><strong>Fix:</strong> Check https://github.com/s-b-repo/cau/releases for the latest tag. Wait for the CI release job to complete (green checkmark), then download the tarball and its SHA256SUMS file.</p>
+          <p><strong>Fix:</strong> Check https://github.com/1ungaka/sentinel-edr/releases for the latest tag. Wait for the CI release job to complete (green checkmark), then download the tarball and its SHA256SUMS file.</p>
         </div>
       </td></tr>
     </table>
@@ -530,7 +530,7 @@ $ git clone https://github.com/s-b-repo/cau-kernel.git cau-kernel</code></pre>
 
     <table>
       <tr><th>Source</th><th>Command / location</th><th>Notes</th></tr>
-      <tr><td>Source (Git)</td><td>git clone https://github.com/s-b-repo/cau.git cau</td><td>Engine + agent, MIT</td></tr>
+      <tr><td>Source (Git)</td><td>git clone https://github.com/1ungaka/sentinel-edr.git cau</td><td>Engine + agent, MIT</td></tr>
       <tr><td>Kernel sensor (Git)</td><td>git clone https://github.com/s-b-repo/cau-kernel.git cau-kernel</td><td>Kernel guards, MIT userspace</td></tr>
       <tr><td>Release tarball</td><td>cau-tag-linux-amd64.tar.gz</td><td>Rules + signatures attached to the GitHub release</td></tr>
       <tr><td>Debian / Kali .deb</td><td>cau_version-1_amd64.deb</td><td>From GitHub release or signed apt repo</td></tr>
@@ -587,7 +587,7 @@ brew install go yara pkg-config</code></pre>
       <tr><td>
         <span class="step-n">02</span>
         <h3>Build the engine</h3>
-<pre><code class="c-mono">git clone https://github.com/s-b-repo/cau.git cau
+<pre><code class="c-mono">git clone https://github.com/1ungaka/sentinel-edr.git cau
 cd cau
 make build          # -> ./cau  (version stamped from git describe)
 ./cau version</code></pre>

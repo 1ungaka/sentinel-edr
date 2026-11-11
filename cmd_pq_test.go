@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/release"
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/internal/updater"
+	"github.com/1ungaka/sentinel-edr/internal/release"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/updater"
 )
 
 // End-to-end tests of the hybrid (Ed25519 + ML-DSA-65) chain through the CLI:

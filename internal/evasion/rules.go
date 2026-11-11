@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // maxRuleFileBytes bounds a rule file. A rule file is content, not a

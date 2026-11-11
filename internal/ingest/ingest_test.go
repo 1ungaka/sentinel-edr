@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/correlate"
-	"github.com/s-b-repo/cau/internal/forward"
+	"github.com/1ungaka/sentinel-edr/internal/correlate"
+	"github.com/1ungaka/sentinel-edr/internal/forward"
 )
 
 func parse(t *testing.T, line string, opts Options) []correlate.Signal {

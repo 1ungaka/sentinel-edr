@@ -26,7 +26,7 @@ brew install go yara pkg-config
 ## Build from source
 
 ```sh
-git clone https://github.com/s-b-repo/cau.git cau
+git clone https://github.com/1ungaka/sentinel-edr.git cau
 cd cau
 make build          # -> ./cau
 ./cau version
@@ -174,7 +174,7 @@ the `cau_<version>-1_amd64.deb`, the `cau-kali_<version>-1_amd64.deb` and the
 packages, the release job downloads their artifacts and publishes them itself,
 so a release carries them next to the source tarball and the signed update
 bundle (the maintainer checklist is in [packaging.md](packaging.md)). Download
-them from [the v0.1.0 release](https://github.com/s-b-repo/cau/releases/tag/v0.1.0),
+them from [the v0.1.0 release](https://github.com/1ungaka/sentinel-edr/releases/tag/v0.1.0),
 or build from source.
 
 ### Which release assets are authenticated

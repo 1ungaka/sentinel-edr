@@ -3,7 +3,7 @@ package scanner
 import (
 	"fmt"
 
-	"github.com/s-b-repo/cau/internal/peeler"
+	"github.com/1ungaka/sentinel-edr/internal/peeler"
 )
 
 // The decode-to-indicator pass. The peeler reveals what a chain hid; this

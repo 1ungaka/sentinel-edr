@@ -8,9 +8,9 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/internal/rulelint"
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/rulelint"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 func rulesUsage(w io.Writer) {

@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/procscan"
+	"github.com/1ungaka/sentinel-edr/internal/procscan"
 )
 
 // TestArmedActions backs the warning a fixture /proc root deserves. The hazard

@@ -8,9 +8,9 @@ Build-Depends:
  libyara-dev (>= 4.3),
  pkg-config,
 Standards-Version: 4.7.0
-Homepage: https://github.com/s-b-repo/cau
-Vcs-Browser: https://github.com/s-b-repo/cau
-Vcs-Git: https://github.com/s-b-repo/cau.git
+Homepage: https://github.com/1ungaka/sentinel-edr
+Vcs-Browser: https://github.com/1ungaka/sentinel-edr
+Vcs-Git: https://github.com/1ungaka/sentinel-edr.git
 Rules-Requires-Root: no
 
 Package: cau

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/scanner"
-	"github.com/s-b-repo/cau/scanner/static"
+	"github.com/1ungaka/sentinel-edr/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner/static"
 )
 
 // Hermetic static fixtures: hand-built static.Result values, no parsing.

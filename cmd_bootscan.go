@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/bootscan"
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/bootscan"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 func bootScanUsage(w io.Writer) {

@@ -16,7 +16,7 @@
 # name are yours to set:
 #   systemctl edit cau-update.service
 #   [Service]
-#   Environment=CAU_UPDATE_URL=https://github.com/s-b-repo/cau/releases/latest/download
+#   Environment=CAU_UPDATE_URL=https://github.com/1ungaka/sentinel-edr/releases/latest/download
 #   Environment=CAU_UPDATE_PUBKEY=/etc/cau/release-pubkey.hex
 #   Environment=CAU_UPDATE_NAME=cau-v<version>-linux-amd64
 # Then:
@@ -37,7 +37,7 @@
 # and run `cau update --from <dir>` by hand.
 [Unit]
 Description=CAU EDR signed signature-database update
-Documentation=https://github.com/s-b-repo/cau
+Documentation=https://github.com/1ungaka/sentinel-edr
 After=network-online.target
 Wants=network-online.target
 # Refuse to run unconfigured rather than guess a source.

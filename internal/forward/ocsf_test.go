@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/correlate"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/correlate"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 func confirmedIncident() correlate.Incident {

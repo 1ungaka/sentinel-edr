@@ -41,7 +41,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // indexName is the JSON index at the root of the store; blobSubdir holds the

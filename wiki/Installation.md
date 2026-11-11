@@ -6,7 +6,7 @@ Requires Go (see `go.mod`) and libyara with its development headers.
 
 ```sh
 sudo apt-get install -y libyara-dev yara pkg-config   # Debian/Kali/Ubuntu
-git clone https://github.com/s-b-repo/cau.git
+git clone https://github.com/1ungaka/sentinel-edr.git
 cd cau
 make build            # produces ./cau
 ./cau version

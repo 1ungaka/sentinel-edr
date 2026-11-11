@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/provenance"
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/internal/provenance"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // provenanceInput is a run with --provenance: a clean, intact binary; a

@@ -1,6 +1,6 @@
 package archive
 
-import "github.com/s-b-repo/cau/scanner/ole"
+import "github.com/1ungaka/sentinel-edr/scanner/ole"
 
 // Class describes one finding class the archive detector can emit, for the
 // ATT&CK coverage matrix. Field names and tags match the sibling

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/selftest"
+	"github.com/1ungaka/sentinel-edr/internal/selftest"
 )
 
 // baseline writes a signed-or-unsigned manifest over one resource file and

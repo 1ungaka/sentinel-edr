@@ -5,9 +5,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/s-b-repo/cau/internal/intel"
-	"github.com/s-b-repo/cau/internal/parallel"
-	"github.com/s-b-repo/cau/internal/prefilter"
+	"github.com/1ungaka/sentinel-edr/internal/intel"
+	"github.com/1ungaka/sentinel-edr/internal/parallel"
+	"github.com/1ungaka/sentinel-edr/internal/prefilter"
 )
 
 // ── ATT&CK technique ids ───────────────────────────────────────────────────────

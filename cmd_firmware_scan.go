@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/scanner"
-	"github.com/s-b-repo/cau/scanner/firmware"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner/firmware"
 )
 
 // The firmware scan is the "at the scan node" half of the firmware phase: the

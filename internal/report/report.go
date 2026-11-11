@@ -41,21 +41,21 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/s-b-repo/cau/internal/peeler"
-	"github.com/s-b-repo/cau/internal/provenance"
-	"github.com/s-b-repo/cau/scanner"
-	"github.com/s-b-repo/cau/scanner/archive"
-	"github.com/s-b-repo/cau/scanner/chm"
-	"github.com/s-b-repo/cau/scanner/encchain"
-	"github.com/s-b-repo/cau/scanner/fusion"
-	"github.com/s-b-repo/cau/scanner/iso"
-	"github.com/s-b-repo/cau/scanner/linuxpkg"
-	"github.com/s-b-repo/cau/scanner/lnk"
-	"github.com/s-b-repo/cau/scanner/ole"
-	"github.com/s-b-repo/cau/scanner/pdf"
-	"github.com/s-b-repo/cau/scanner/static"
-	"github.com/s-b-repo/cau/scanner/stego"
-	"github.com/s-b-repo/cau/scanner/tradecraft"
+	"github.com/1ungaka/sentinel-edr/internal/peeler"
+	"github.com/1ungaka/sentinel-edr/internal/provenance"
+	"github.com/1ungaka/sentinel-edr/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner/archive"
+	"github.com/1ungaka/sentinel-edr/scanner/chm"
+	"github.com/1ungaka/sentinel-edr/scanner/encchain"
+	"github.com/1ungaka/sentinel-edr/scanner/fusion"
+	"github.com/1ungaka/sentinel-edr/scanner/iso"
+	"github.com/1ungaka/sentinel-edr/scanner/linuxpkg"
+	"github.com/1ungaka/sentinel-edr/scanner/lnk"
+	"github.com/1ungaka/sentinel-edr/scanner/ole"
+	"github.com/1ungaka/sentinel-edr/scanner/pdf"
+	"github.com/1ungaka/sentinel-edr/scanner/static"
+	"github.com/1ungaka/sentinel-edr/scanner/stego"
+	"github.com/1ungaka/sentinel-edr/scanner/tradecraft"
 )
 
 // Branding defaults. main.go owns the canonical version string; these are the
@@ -64,7 +64,7 @@ const (
 	DefaultToolName       = "CAU EDR"
 	DefaultToolTagline    = "Certs Are Useless"
 	DefaultToolVersion    = "unknown"
-	DefaultInformationURI = "https://github.com/s-b-repo/cau"
+	DefaultInformationURI = "https://github.com/1ungaka/sentinel-edr"
 )
 
 // Truncation defaults. These are deliberately small: a report is uploaded to

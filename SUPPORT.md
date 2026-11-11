@@ -10,7 +10,7 @@ nobody has to guess.
 
 | | Free engine (`cau`, `cau-mcp`, content, updates) | Console (`cau-console`) |
 |---|---|---|
-| Channel | GitHub [issues](https://github.com/s-b-repo/cau/issues) — public | Support address named in your agreement; public email `support@cybersec.org.za` |
+| Channel | GitHub [issues](https://github.com/1ungaka/sentinel-edr/issues) — public | Support address named in your agreement; public email `support@cybersec.org.za` |
 | Hours | Best effort, whenever a maintainer picks it up | Per tier (below) |
 | Response target | None — community best effort | Per tier, contractual |
 | Who answers | Maintainers and contributors | CAU support, escalated to engineering |

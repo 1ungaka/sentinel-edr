@@ -1,6 +1,13 @@
-# CAU EDR == Certs Are Useless
+# Sentinel EDR
 
-[![ci](https://github.com/s-b-repo/cau/actions/workflows/ci.yml/badge.svg)](https://github.com/s-b-repo/cau/actions/workflows/ci.yml)
+> **Sentinel EDR is a fork of [CAU](https://github.com/s-b-repo/cau) by s-b-repo**
+> ("CAU EDR == Certs Are Useless"), maintained by
+> [Lunga Ngaka](https://github.com/1ungaka) under the same MIT licence. The
+> engine, detectors and documentation are the original project's work; changes
+> made in this fork are in its commit history. The command-line tool is still
+> called `cau`, so every example below works as written.
+
+[![ci](https://github.com/1ungaka/sentinel-edr/actions/workflows/ci.yml/badge.svg)](https://github.com/1ungaka/sentinel-edr/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/go-1.24+-00ADD8?logo=go)](go.mod)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -118,7 +125,7 @@ corroborate each other, and never lowers anything.
 
 ```sh
 sudo apt install golang-go libyara-dev pkg-config build-essential   # or: pacman -S go yara pkgconf, or: brew install go yara pkg-config
-git clone https://github.com/s-b-repo/cau.git cau && cd cau
+git clone https://github.com/1ungaka/sentinel-edr.git cau && cd cau
 make build
 ./cau scan --file corpus/smoke/malicious/mimikatz_strings.bin --db corpus/smoke/hashes.txt
 ```

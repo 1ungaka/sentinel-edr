@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/bootscan"
-	"github.com/s-b-repo/cau/internal/hwanchor"
-	"github.com/s-b-repo/cau/internal/peeler"
-	"github.com/s-b-repo/cau/internal/safefs"
-	"github.com/s-b-repo/cau/scanner/uefi"
+	"github.com/1ungaka/sentinel-edr/internal/bootscan"
+	"github.com/1ungaka/sentinel-edr/internal/hwanchor"
+	"github.com/1ungaka/sentinel-edr/internal/peeler"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/scanner/uefi"
 )
 
 // The analysis tools: read-only views over one sandboxed path (peel_file,

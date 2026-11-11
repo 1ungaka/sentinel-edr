@@ -1,6 +1,6 @@
 # CLI Reference
 
-Full detail: [`docs/cli.md`](https://github.com/s-b-repo/cau/blob/main/docs/cli.md).
+Full detail: [`docs/cli.md`](https://github.com/1ungaka/sentinel-edr/blob/main/docs/cli.md).
 `cau <command> --help` prints usage for any command. Flags can go before or after
 the paths, and everything after `--` is a path.
 

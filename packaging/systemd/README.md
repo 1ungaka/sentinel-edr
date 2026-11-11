@@ -104,7 +104,7 @@ install -m 0644 release-pubkey.hex /etc/cau/release-pubkey.hex
 chown -R cau:cau /usr/share/cau/signatures
 systemctl edit cau-update.service
 #   [Service]
-#   Environment=CAU_UPDATE_URL=https://github.com/s-b-repo/cau/releases/latest/download
+#   Environment=CAU_UPDATE_URL=https://github.com/1ungaka/sentinel-edr/releases/latest/download
 #   Environment=CAU_UPDATE_NAME=cau-v<installed-version>-linux-amd64
 systemctl enable --now cau-update.timer
 ```

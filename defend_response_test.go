@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/correlate"
-	"github.com/s-b-repo/cau/internal/procscan"
-	"github.com/s-b-repo/cau/internal/quarantine"
+	"github.com/1ungaka/sentinel-edr/internal/correlate"
+	"github.com/1ungaka/sentinel-edr/internal/procscan"
+	"github.com/1ungaka/sentinel-edr/internal/quarantine"
 )
 
 // A file back at a quarantined path is a new attack, and the fingerprint of the old

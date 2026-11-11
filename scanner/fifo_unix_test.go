@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 func mkfifo(t *testing.T, path string) {

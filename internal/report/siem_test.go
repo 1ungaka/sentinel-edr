@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // The conformance fixtures: one committed artifact per standard, each

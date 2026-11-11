@@ -12,7 +12,7 @@ import (
 
 	yara "github.com/hillu/go-yara/v4"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // DefaultScanTimeout is the per-scan wall-clock budget handed to libyara when

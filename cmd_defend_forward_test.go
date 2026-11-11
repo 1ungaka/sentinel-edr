@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/forward"
+	"github.com/1ungaka/sentinel-edr/internal/forward"
 )
 
 // recordSender stands in for a Wazuh manager. hang makes it unreachable in the

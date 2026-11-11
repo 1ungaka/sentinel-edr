@@ -9,7 +9,7 @@ pkgrel=1
 PKGEXT='.pkg.tar.zst'
 pkgdesc='transparent open-source malware detection engine: explained verdicts, labeled classes, ATT&CK techniques'
 arch=('x86_64' 'aarch64')
-url='https://github.com/s-b-repo/cau'
+url='https://github.com/1ungaka/sentinel-edr'
 license=('MIT')
 depends=('glibc' 'yara')
 makedepends=('go' 'pkgconf')
@@ -25,7 +25,7 @@ provides=('cau-edr')
 # The rotation config is the one installed file an operator is expected to tune
 # (retention, size, compression), so pacman must not overwrite their edits.
 backup=('etc/logrotate.d/cau' 'etc/cau/cau.conf')
-source=("https://github.com/s-b-repo/cau/releases/download/v${pkgver}/${pkgname}-${pkgver}.tar.gz")
+source=("https://github.com/1ungaka/sentinel-edr/releases/download/v${pkgver}/${pkgname}-${pkgver}.tar.gz")
 # The release asset, not the per-request /archive/ URL: GitHub regenerates the
 # archive for every request and the bytes are not stable, so a checksum taken
 # from one fetch is not the bytes the next fetcher downloads.

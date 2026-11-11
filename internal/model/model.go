@@ -35,7 +35,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/release"
+	"github.com/1ungaka/sentinel-edr/internal/release"
 )
 
 // SchemaVersion is the registry document format version this package reads

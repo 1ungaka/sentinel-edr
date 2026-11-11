@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: cau
 Upstream-Contact: Stephan Botes <stephanbotes0@gmail.com>
-Source: https://github.com/s-b-repo/cau
+Source: https://github.com/1ungaka/sentinel-edr
 
 Files: *
 Copyright: 2026 CAU

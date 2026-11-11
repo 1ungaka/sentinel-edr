@@ -22,7 +22,7 @@ import (
 	"bytes"
 	"os"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // ── ATT&CK technique ids ───────────────────────────────────────────────────────

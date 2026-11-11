@@ -35,7 +35,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/s-b-repo/cau/scanner/ole"
+	"github.com/1ungaka/sentinel-edr/scanner/ole"
 )
 
 // OOXML inspection caps. Together with the magic peeks (maxMembersPeeked x

@@ -33,8 +33,8 @@ package linuxpkg
 import (
 	"os"
 
-	"github.com/s-b-repo/cau/internal/intel"
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/intel"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // DefaultThreshold is the shipped score at which a package is reported

@@ -9,11 +9,11 @@ import (
 	"sort"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/coverage"
-	"github.com/s-b-repo/cau/internal/eval"
-	"github.com/s-b-repo/cau/internal/honesty"
-	"github.com/s-b-repo/cau/internal/safefs"
-	"github.com/s-b-repo/cau/internal/selftest"
+	"github.com/1ungaka/sentinel-edr/internal/coverage"
+	"github.com/1ungaka/sentinel-edr/internal/eval"
+	"github.com/1ungaka/sentinel-edr/internal/honesty"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/selftest"
 )
 
 // ── honesty_index ────────────────────────────────────────────────────────────

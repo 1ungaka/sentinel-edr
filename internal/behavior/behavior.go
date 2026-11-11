@@ -24,8 +24,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/provenance"
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/provenance"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // The novel-technique ids this package reports. They are the plan's

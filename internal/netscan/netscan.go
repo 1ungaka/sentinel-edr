@@ -53,7 +53,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/intel"
+	"github.com/1ungaka/sentinel-edr/internal/intel"
 )
 
 // DefaultThreshold is the per-subject score at which a network finding is

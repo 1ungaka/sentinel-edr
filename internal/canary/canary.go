@@ -35,8 +35,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/parallel"
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/parallel"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // manifestVersion guards the on-disk format against silent misparsing.

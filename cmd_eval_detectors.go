@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/eval"
-	"github.com/s-b-repo/cau/internal/eval/scannerbridge"
-	"github.com/s-b-repo/cau/scanner"
-	"github.com/s-b-repo/cau/scanner/encchain"
-	"github.com/s-b-repo/cau/scanner/static"
-	"github.com/s-b-repo/cau/scanner/stego"
+	"github.com/1ungaka/sentinel-edr/internal/eval"
+	"github.com/1ungaka/sentinel-edr/internal/eval/scannerbridge"
+	"github.com/1ungaka/sentinel-edr/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner/encchain"
+	"github.com/1ungaka/sentinel-edr/scanner/static"
+	"github.com/1ungaka/sentinel-edr/scanner/stego"
 )
 
 // The detector setup is shared by every harness subcommand that scans a

@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // DefaultMaxSize is the largest file AnalyzeFile reads into memory.

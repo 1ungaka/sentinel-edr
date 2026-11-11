@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/netblock"
-	"github.com/s-b-repo/cau/internal/netscan"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/netblock"
+	"github.com/1ungaka/sentinel-edr/internal/netscan"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 func netUsage(w io.Writer) {

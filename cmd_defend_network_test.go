@@ -12,11 +12,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/correlate"
-	"github.com/s-b-repo/cau/internal/ingest"
-	"github.com/s-b-repo/cau/internal/netblock"
-	"github.com/s-b-repo/cau/internal/netscan"
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/internal/correlate"
+	"github.com/1ungaka/sentinel-edr/internal/ingest"
+	"github.com/1ungaka/sentinel-edr/internal/netblock"
+	"github.com/1ungaka/sentinel-edr/internal/netscan"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // netFixture is a defender whose only layers are the network one and whatever

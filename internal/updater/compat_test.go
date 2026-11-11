@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/release"
+	"github.com/1ungaka/sentinel-edr/internal/release"
 )
 
 // These run in every build, with or without ML-DSA, and pin that an

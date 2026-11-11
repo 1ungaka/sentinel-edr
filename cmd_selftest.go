@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/internal/selftest"
-	"github.com/s-b-repo/cau/internal/trust"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/selftest"
+	"github.com/1ungaka/sentinel-edr/internal/trust"
 )
 
 // envSelftestKey supplies the Ed25519 public key (hex) that a signed integrity

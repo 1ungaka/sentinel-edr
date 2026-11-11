@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // A software bill of materials for a released binary, in CycloneDX 1.5 JSON.

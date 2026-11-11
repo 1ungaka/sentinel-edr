@@ -14,7 +14,7 @@ import (
 	"github.com/glaslos/ssdeep"
 	"github.com/glaslos/tlsh"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // FuzzyHashes are the similarity digests computed for a file.

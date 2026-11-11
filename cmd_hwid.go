@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/hwanchor"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/hwanchor"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 func hwidUsage(w io.Writer) {

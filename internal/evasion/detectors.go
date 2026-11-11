@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	"github.com/s-b-repo/cau/scanner"
-	"github.com/s-b-repo/cau/scanner/encchain"
-	"github.com/s-b-repo/cau/scanner/static"
-	"github.com/s-b-repo/cau/scanner/stego"
+	"github.com/1ungaka/sentinel-edr/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner/encchain"
+	"github.com/1ungaka/sentinel-edr/scanner/static"
+	"github.com/1ungaka/sentinel-edr/scanner/stego"
 )
 
 // The detectors below do not all key on a byte range, and the report says so

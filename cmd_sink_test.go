@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // The --sink-* flags are validated before the scan starts: a mistyped

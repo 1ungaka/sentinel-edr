@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/correlate"
+	"github.com/1ungaka/sentinel-edr/internal/correlate"
 )
 
 // A network incident must carry its peer where a SIEM rule can find it, not

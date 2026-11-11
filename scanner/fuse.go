@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/s-b-repo/cau/scanner/fusion"
-	"github.com/s-b-repo/cau/scanner/static"
+	"github.com/1ungaka/sentinel-edr/scanner/fusion"
+	"github.com/1ungaka/sentinel-edr/scanner/static"
 )
 
 // fuse builds the fusion lattice's view of one scan: every detector the

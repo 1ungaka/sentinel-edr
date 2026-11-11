@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/attack"
+	"github.com/1ungaka/sentinel-edr/internal/attack"
 )
 
 // Expectation states. They are the four coverage states the plan's Phase 11

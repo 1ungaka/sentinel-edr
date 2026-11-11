@@ -9,10 +9,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/intel"
-	"github.com/s-b-repo/cau/internal/parallel"
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/scanner/linuxpkg"
+	"github.com/1ungaka/sentinel-edr/internal/intel"
+	"github.com/1ungaka/sentinel-edr/internal/parallel"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/scanner/linuxpkg"
 )
 
 // cau installed audits the maintainer/install scripts of ALREADY-installed

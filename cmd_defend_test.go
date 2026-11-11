@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/canary"
-	"github.com/s-b-repo/cau/internal/correlate"
-	"github.com/s-b-repo/cau/internal/quarantine"
-	"github.com/s-b-repo/cau/internal/selftest"
-	"github.com/s-b-repo/cau/internal/watch"
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/internal/canary"
+	"github.com/1ungaka/sentinel-edr/internal/correlate"
+	"github.com/1ungaka/sentinel-edr/internal/quarantine"
+	"github.com/1ungaka/sentinel-edr/internal/selftest"
+	"github.com/1ungaka/sentinel-edr/internal/watch"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // inert text with the shape the file layer flags. It never runs: the fixture

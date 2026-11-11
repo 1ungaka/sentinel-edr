@@ -20,12 +20,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/mcp"
-	"github.com/s-b-repo/cau/internal/resources"
-	"github.com/s-b-repo/cau/internal/safefs"
-	"github.com/s-b-repo/cau/internal/selftest"
-	"github.com/s-b-repo/cau/scanner"
-	"github.com/s-b-repo/cau/scanner/static"
+	"github.com/1ungaka/sentinel-edr/internal/mcp"
+	"github.com/1ungaka/sentinel-edr/internal/resources"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/selftest"
+	"github.com/1ungaka/sentinel-edr/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner/static"
 )
 
 // version is overridden at build time: -ldflags "-X main.version=v1.2.3".

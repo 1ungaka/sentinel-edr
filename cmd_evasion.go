@@ -10,9 +10,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/evasion"
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/internal/evasion"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // The evasion report is the credibility instrument the plan asks for: a

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/intel"
+	"github.com/1ungaka/sentinel-edr/internal/intel"
 )
 
 // hexEP renders an address the way the kernel writes it in /proc/net/tcp: each

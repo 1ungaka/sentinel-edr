@@ -84,7 +84,7 @@
 
 [Unit]
 Description=CAU EDR layered defence (correlation, real-time file watch, response)
-Documentation=https://github.com/s-b-repo/cau
+Documentation=https://github.com/1ungaka/sentinel-edr
 After=network-online.target cau-kernel-guard.service
 Wants=network-online.target
 # Never give up. A limit here turns any fault that survives a restart into a host

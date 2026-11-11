@@ -10,7 +10,7 @@ import (
 	"testing"
 	"unicode/utf16"
 
-	"github.com/s-b-repo/cau/scanner/ole"
+	"github.com/1ungaka/sentinel-edr/scanner/ole"
 )
 
 // ── synthetic vbaProject.bin builders ───────────────────────────────────────────

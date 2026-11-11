@@ -6,8 +6,8 @@ import (
 	"io"
 	"text/tabwriter"
 
-	"github.com/s-b-repo/cau/internal/canary"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/canary"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 func canaryUsage(w io.Writer) {

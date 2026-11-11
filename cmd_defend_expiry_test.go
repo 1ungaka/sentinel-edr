@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/correlate"
-	"github.com/s-b-repo/cau/internal/ingest"
+	"github.com/1ungaka/sentinel-edr/internal/correlate"
+	"github.com/1ungaka/sentinel-edr/internal/ingest"
 )
 
 // TestRemoteEvidenceExpires: an identification is a statement about an address

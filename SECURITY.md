@@ -36,7 +36,7 @@ channels, pick either:
    how you found it, and the impact you believe it has.
 2. **GitHub private vulnerability reporting** — the repository's *Security*
    tab → *Report a vulnerability* on
-   `github.com/s-b-repo/cau`. Reports stay private to the maintainers until
+   `github.com/1ungaka/sentinel-edr`. Reports stay private to the maintainers until
    they are disclosed. This is the preferred path for anything involving the
    public repository itself.
 

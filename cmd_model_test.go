@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/model"
-	"github.com/s-b-repo/cau/internal/release"
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/internal/sidecar"
+	"github.com/1ungaka/sentinel-edr/internal/model"
+	"github.com/1ungaka/sentinel-edr/internal/release"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/sidecar"
 )
 
 // modelFixture writes a signed registry, its artifacts and a key pair.

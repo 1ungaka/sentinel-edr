@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/intake"
-	"github.com/s-b-repo/cau/scanner"
+	"github.com/1ungaka/sentinel-edr/internal/intake"
+	"github.com/1ungaka/sentinel-edr/scanner"
 )
 
 // ── an independent STIX 2.1 reader ───────────────────────────────────────────

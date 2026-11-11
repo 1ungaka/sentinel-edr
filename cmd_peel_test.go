@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // buildChain base64(gzip(base64(payload))) — a depth-3 chain the peeler flags.

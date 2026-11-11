@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/correlate"
-	"github.com/s-b-repo/cau/internal/selftest"
-	"github.com/s-b-repo/cau/internal/trust"
+	"github.com/1ungaka/sentinel-edr/internal/correlate"
+	"github.com/1ungaka/sentinel-edr/internal/selftest"
+	"github.com/1ungaka/sentinel-edr/internal/trust"
 )
 
 func boolp(b bool) *bool { return &b }

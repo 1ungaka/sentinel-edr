@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/eval"
-	"github.com/s-b-repo/cau/scanner"
-	"github.com/s-b-repo/cau/scanner/encchain"
-	"github.com/s-b-repo/cau/scanner/fusion"
-	"github.com/s-b-repo/cau/scanner/static"
-	"github.com/s-b-repo/cau/scanner/stego"
+	"github.com/1ungaka/sentinel-edr/internal/eval"
+	"github.com/1ungaka/sentinel-edr/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner/encchain"
+	"github.com/1ungaka/sentinel-edr/scanner/fusion"
+	"github.com/1ungaka/sentinel-edr/scanner/static"
+	"github.com/1ungaka/sentinel-edr/scanner/stego"
 )
 
 // HashDetector wraps the signature database. It is not configured when db is

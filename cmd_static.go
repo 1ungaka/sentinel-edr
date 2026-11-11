@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/report"
-	"github.com/s-b-repo/cau/internal/safefs"
-	"github.com/s-b-repo/cau/scanner/static"
+	"github.com/1ungaka/sentinel-edr/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/scanner/static"
 )
 
 // ── hash ─────────────────────────────────────────────────────────────────────

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/prefilter"
-	"github.com/s-b-repo/cau/internal/prefilter/prefiltertest"
+	"github.com/1ungaka/sentinel-edr/internal/prefilter"
+	"github.com/1ungaka/sentinel-edr/internal/prefilter/prefiltertest"
 )
 
 // serialScan is the scan as one loop: every vector in table order, first script to

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/s-b-repo/cau/internal/persist"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/persist"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 func persistUsage(w io.Writer) {

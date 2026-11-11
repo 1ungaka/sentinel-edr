@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/intel"
+	"github.com/1ungaka/sentinel-edr/internal/intel"
 )
 
 func TestResolvers(t *testing.T) {

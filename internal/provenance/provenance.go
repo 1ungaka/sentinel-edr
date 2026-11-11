@@ -47,7 +47,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // Bounds. A Kali install has about 4,300 packages and 650,000 database paths;

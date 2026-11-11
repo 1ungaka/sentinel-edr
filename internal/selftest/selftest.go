@@ -33,7 +33,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // ManifestSchema guards the on-disk format.

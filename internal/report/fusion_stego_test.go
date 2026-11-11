@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/scanner"
-	"github.com/s-b-repo/cau/scanner/fusion"
-	"github.com/s-b-repo/cau/scanner/stego"
+	"github.com/1ungaka/sentinel-edr/scanner"
+	"github.com/1ungaka/sentinel-edr/scanner/fusion"
+	"github.com/1ungaka/sentinel-edr/scanner/stego"
 )
 
 // Hermetic stego and fusion fixtures: hand-built results, no scanning.

@@ -27,9 +27,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/attack"
-	"github.com/s-b-repo/cau/internal/correlate"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/attack"
+	"github.com/1ungaka/sentinel-edr/internal/correlate"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // Product identifies the agent that observed the incident. Host is the agent's

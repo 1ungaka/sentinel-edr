@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/attack"
+	"github.com/1ungaka/sentinel-edr/internal/attack"
 )
 
 // STIX 2.1 output: one bundle per run, so a threat-intelligence platform

@@ -7,7 +7,7 @@
 # Inspect: systemctl list-timers cau-scan.timer
 [Unit]
 Description=Schedule for CAU EDR scheduled scan
-Documentation=https://github.com/s-b-repo/cau
+Documentation=https://github.com/1ungaka/sentinel-edr
 
 [Timer]
 OnCalendar=*-*-* 02:00:00

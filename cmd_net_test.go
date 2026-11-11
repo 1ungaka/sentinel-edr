@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/netscan"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/netscan"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // netCLIHost writes a /proc and an /etc for the CLI to read, with one process

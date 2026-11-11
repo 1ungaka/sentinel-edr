@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/procscan"
+	"github.com/1ungaka/sentinel-edr/internal/procscan"
 )
 
 // Beaconing bounds. A command channel checks in on a schedule; an application

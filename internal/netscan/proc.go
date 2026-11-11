@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/s-b-repo/cau/internal/parallel"
+	"github.com/1ungaka/sentinel-edr/internal/parallel"
 )
 
 // Caps keep a hostile or very large host bounded. None of them is a security

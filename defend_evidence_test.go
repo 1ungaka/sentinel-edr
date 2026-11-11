@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/correlate"
-	"github.com/s-b-repo/cau/internal/netblock"
-	"github.com/s-b-repo/cau/internal/procscan"
+	"github.com/1ungaka/sentinel-edr/internal/correlate"
+	"github.com/1ungaka/sentinel-edr/internal/netblock"
+	"github.com/1ungaka/sentinel-edr/internal/procscan"
 )
 
 // A rewrite that keeps the size and restores the mtime is what `touch -r` does.

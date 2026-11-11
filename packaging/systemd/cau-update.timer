@@ -6,7 +6,7 @@
 # Inspect: systemctl list-timers cau-update.timer
 [Unit]
 Description=Schedule for the CAU EDR signed signature-database update
-Documentation=https://github.com/s-b-repo/cau
+Documentation=https://github.com/1ungaka/sentinel-edr
 
 [Timer]
 OnCalendar=Mon *-*-* 03:30:00

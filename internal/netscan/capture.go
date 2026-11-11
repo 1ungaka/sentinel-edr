@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/procscan"
+	"github.com/1ungaka/sentinel-edr/internal/procscan"
 )
 
 // Protocols that are not a conversation with a peer. They are read from the

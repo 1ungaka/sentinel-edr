@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/s-b-repo/cau/internal/canary"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/canary"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // An emptied manifest is how a set is silenced: it parses, so the tamper state

@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/s-b-repo/cau/internal/safefs"
+	"github.com/1ungaka/sentinel-edr/internal/safefs"
 )
 
 // Firmware variables, read from efivarfs. Each file is named <Name>-<GUID>

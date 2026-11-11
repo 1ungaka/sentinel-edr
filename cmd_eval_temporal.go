@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/eval"
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/eval"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // evalTemporal measures the shipped content across a time boundary.

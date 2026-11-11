@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/s-b-repo/cau/internal/report"
+	"github.com/1ungaka/sentinel-edr/internal/report"
 )
 
 // bootDisk writes a small MBR disk image: GRUB-marked boot code and one

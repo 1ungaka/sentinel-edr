@@ -270,7 +270,12 @@ jobs:
           set -eu
           # Refresh and upgrade together: a partial upgrade can leave the Go
           # toolchain or libyara linked against libraries absent in the image.
-          pacman -Syu --noconfirm --needed --noprogressbar base-devel go pkgconf yara sudo git
+          # The downloader's sandbox is off: it switches to an unprivileged
+          # user and applies Landlock, and neither works in every container
+          # (the arm64 image has neither the alpm user nor kernel Landlock),
+          # so pacman fails before it installs anything.
+          pacman --disable-sandbox -Syu --noconfirm --needed --noprogressbar \
+            base-devel go pkgconf yara sudo git
           go version
           pkg-config --modversion yara
           # makepkg refuses to run as root, and the container's default user is
@@ -305,6 +310,10 @@ jobs:
       - name: Build the package as the unprivileged builder
         run: |
           set -eu
+          # The checkout put the workspace in a temporary global git config
+          # that only its own step sees, so this step's git does not trust the
+          # directory it is about to archive: "detected dubious ownership".
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           # Build the commit under review, rather than downloading the last
           # release. This also breaks the tag-release dependency cycle: release
           # publishing waits for these packages before the source asset exists.

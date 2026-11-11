@@ -2523,20 +2523,24 @@ func discoverCanaryManifest(status func(string, ...interface{})) string {
 	return ""
 }
 
+// kernelEventPaths are the places the cau-kernel guard's event log is looked
+// for.
+//
+// The first one is where the guard's shipped systemd unit writes it
+// (`cau-kernel enforce netshell --log /run/cau/kernel-events.jsonl`). A path
+// the daemon does not look at is a log nobody reads, so the unit's path and
+// the daemon's list are one thing and are pinned by a test.
+var kernelEventPaths = []string{
+	"/run/cau/kernel-events.jsonl",
+	"/var/log/cau-kernel/events.jsonl",
+	"/var/lib/cau-kernel/events.jsonl",
+}
+
 // discoverKernelEvents looks in standard locations for the cau-kernel exec-guard
 // event log, so the kernel layer joins the daemon without extra flags on a host
 // where cau-kernel is installed.
-//
-// The first candidate is the one the shipped unit writes to: the guard's
-// systemd unit runs it with `--log /run/cau/kernel-events.jsonl`, and a path
-// the daemon does not look at is a log nobody reads.
 func discoverKernelEvents(status func(string, ...interface{})) string {
-	candidates := []string{
-		os.Getenv("CAU_KERNEL_EVENTS"),
-		"/run/cau/kernel-events.jsonl",
-		"/var/log/cau-kernel/events.jsonl",
-		"/var/lib/cau-kernel/events.jsonl",
-	}
+	candidates := append([]string{os.Getenv("CAU_KERNEL_EVENTS")}, kernelEventPaths...)
 	for _, p := range candidates {
 		if p == "" {
 			continue

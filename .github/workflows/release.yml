@@ -222,7 +222,9 @@ jobs:
             ./cau bundle sbom --binary "$art" --output "dist/${art}-${version}-linux-amd64.cdx.json"
           done
           # Both packaging and release use one deterministic archive recipe.
-          scripts/source-archive.sh "$version" "dist/cau-${version}.tar.gz" "$version"
+          # HEAD is the tree being released: the checkout is at the tag, and a
+          # beta is released from the branch it was cut on.
+          scripts/source-archive.sh "$version" "dist/cau-${version}.tar.gz"
           ls -l dist
 
       # A tagged release carries the distro packages; a beta does not, because
@@ -380,6 +382,7 @@ jobs:
         run: |
           set -euo pipefail
           pkgbuild=packaging/arch/PKGBUILD
+          srcinfo=packaging/arch/.SRCINFO
           branch="release/${VERSION}-arch-pin"
           current=$(grep -oP "^sha256sums=\('\K[0-9a-f]+" "$pkgbuild" || true)
           pkgver=$(bash -c '. packaging/arch/PKGBUILD; printf "%s" "$pkgver"')
@@ -389,9 +392,15 @@ jobs:
           fi
           sed -i "s|^pkgver=.*|pkgver=$VERSION|" "$pkgbuild"
           sed -i "s|^sha256sums=.*|sha256sums=('$SHA256')|" "$pkgbuild"
+          # The .SRCINFO is the recipe's generated form, and the packaging gate
+          # compares it with what makepkg generates: a recipe and its .SRCINFO
+          # that disagree fail that gate, so both are updated here.
+          sed -i "s|^\tpkgver = .*|\tpkgver = $VERSION|" "$srcinfo"
+          sed -i "s|^\tsha256sums = .*|\tsha256sums = $SHA256|" "$srcinfo"
+          sed -i "s|^\tsource = .*|\tsource = https://github.com/s-b-repo/cau/releases/download/v${VERSION}/cau-${VERSION}.tar.gz|" "$srcinfo"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "$pkgbuild"
+          git add "$pkgbuild" "$srcinfo"
           git commit -m "packaging/arch: pin $VERSION's source archive"
           title="packaging/arch: pin $VERSION's source archive"
           # The values are printf's arguments, not the format's: the format is

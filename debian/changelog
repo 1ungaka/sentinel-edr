@@ -1,3 +1,30 @@
+cau (0.3.0-1) unstable; urgency=medium
+
+  * New upstream release v0.3.0.
+  * The kernel guard's events say which process they happened to: the sensor
+    records the process's start time in the same clock and unit as field 22 of
+    /proc/<pid>/stat, so the engine can attribute an event to that process
+    and to no other.
+  * The host-behaviour inventories (an auditor library, a fanotify listener, a
+    systemd generator, a pinned BPF object) no longer report the host's own
+    systemd, and a package database that cannot answer is a note rather than a
+    finding.
+  * The model registry is a signed catalogue of the artifacts the engine may
+    run, each with an SBOM and a model card.
+  * The inference sidecar: the engine never loads a model into its own
+    process; it asks a sidecar over a unix socket and gets scores back.
+  * Firmware images are scanned as containers (squashfs, cramfs, ext, FAT,
+    tar, zip, xz, zstd, uImage, ISO), not as one blob.
+  * An evasion report measures how fragile each shipped detector is, and a
+    temporal gate asks whether the content still catches what it caught in an
+    earlier period of the corpus.
+  * The pipeline runs on current runners and current actions, with an
+    automated security lane (govulncheck, CodeQL, dependency review) and a
+    release pipeline that publishes a main release, a patch release and a beta
+    from one path.
+
+ -- Stephan Botes <stephanbotes0@gmail.com>  Wed, 11 Nov 2026 14:01:28 +0200
+
 cau (0.2.0-1) unstable; urgency=medium
 
   * New upstream release v0.2.0.

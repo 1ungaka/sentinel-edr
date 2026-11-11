@@ -5,6 +5,8 @@ All notable changes to CAU EDR. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-11
+
 ### The pipeline: current runners, an automated security lane, and a release that names itself
 
 - **The workflows run on current runners and current actions.** The pinned

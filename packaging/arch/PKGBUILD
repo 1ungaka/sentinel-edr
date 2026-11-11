@@ -1,6 +1,6 @@
 # Maintainer: Stephan Botes <stephanbotes0@gmail.com>
 pkgname=cau
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc='transparent open-source malware detection engine: explained verdicts, labeled classes, ATT&CK techniques'
 arch=('x86_64' 'aarch64')
